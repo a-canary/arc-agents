@@ -1,0 +1,6 @@
+.private/
+node_modules/
+*.log
+*.tsbuildinfo
+.DS_Store
+bun.lockb
