@@ -37,9 +37,9 @@ function sessionExists(): boolean {
 
 function paneCommand(p: Pane): string {
   if (p.role === "interviewer") return `${CLAUDE}`;
-  // worker panes: tail the waiter so /loop has signal, then run claude with /loop 5m
-  const waiterArg = p.role === "admin" ? "--role admin" : "--role developer";
-  return `(bun ${WAITER} ${waiterArg} &) ; ${CLAUDE} --append-system-prompt 'role=${p.role}; loop 5m polling ledger.' /loop 5m`;
+  const role = p.role === "admin" ? "admin" : "developer";
+  const loopPrompt = `/loop 5m claim one ready ${role} task from ledger (\`bun ${join(REPO, "bin", "ledger.ts")} claim ${role} ${p.title}\`), execute it in a worktree, commit as a-canary, update ledger state=merged with evidence; if no task claimable, exit quietly`;
+  return `${CLAUDE} --append-system-prompt 'role=${p.role}; arc-agents worker; autonomous AFK; commit as a-canary' "${loopPrompt}"`;
 }
 
 export function buildScript(): string[] {
