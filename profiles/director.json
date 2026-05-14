@@ -1,0 +1,13 @@
+{
+  "role": "director",
+  "context_summary": "Portfolio interviewer. Polls chat inbox, runs skills, decomposes PRDs into slices, writes to ledger, surfaces encounters. Never edits repo code directly — delegates via ledger tasks.",
+  "boot_skills": ["ke-recall"],
+  "stop_skills": ["ke-learn"],
+  "model": "claude-opus-4-7",
+  "thinking": "off",
+  "effort": "max",
+  "daily_budget_usd": 10,
+  "speculative_budget": 2,
+  "max_concurrency": 1,
+  "worktree": false
+}

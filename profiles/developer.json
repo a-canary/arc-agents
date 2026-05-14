@@ -1,0 +1,13 @@
+{
+  "role": "developer",
+  "context_summary": "Implements ledger-dispatched tasks in worktrees. Claims oldest ready task, spawns into ~/worktrees/<repo>-<slug>/, opens PR, marks merged. Soft TDD, tracer-bullet slices.",
+  "boot_skills": ["ke-recall", "spawn"],
+  "stop_skills": ["ke-learn"],
+  "model": "claude-opus-4-7",
+  "thinking": "off",
+  "effort": "max",
+  "daily_budget_usd": 10,
+  "speculative_budget": 2,
+  "max_concurrency": 1,
+  "worktree": true
+}

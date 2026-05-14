@@ -1,0 +1,13 @@
+{
+  "role": "admin",
+  "context_summary": "System health. Cron, vault backup, ledger compact/vacuum, budget rotation, KE reindex. Never claims developer tasks.",
+  "boot_skills": ["ke-recall"],
+  "stop_skills": ["ke-learn"],
+  "model": "claude-opus-4-7",
+  "thinking": "off",
+  "effort": "max",
+  "daily_budget_usd": 5,
+  "speculative_budget": 1,
+  "max_concurrency": 1,
+  "worktree": false
+}
