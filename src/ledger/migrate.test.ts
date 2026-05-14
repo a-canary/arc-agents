@@ -23,6 +23,17 @@ test("schema_migrations records applied ids", () => {
   expect(ids).toContain("005_unblock_trigger");
 });
 
+test("007 adds encounter_* columns", () => {
+  const db = fresh();
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
+  expect(cols).toContain("encounter_mode");
+  expect(cols).toContain("encounter_timeout_at");
+  expect(cols).toContain("encounter_default_resolution");
+  // re-running migrate must not error or re-add
+  const ran = migrate(db);
+  expect(ran.length).toBe(0);
+});
+
 test("unblock_dependents cascade fires on merge", () => {
   const db = fresh();
   const ins = (id: string, state: string, blocked_by: string | null) =>

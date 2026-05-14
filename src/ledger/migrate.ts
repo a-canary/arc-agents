@@ -107,6 +107,15 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "007_encounter_ext",
+    up: (db) => {
+      const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
+      if (!cols.includes("encounter_mode")) db.exec("ALTER TABLE issues ADD COLUMN encounter_mode TEXT");
+      if (!cols.includes("encounter_timeout_at")) db.exec("ALTER TABLE issues ADD COLUMN encounter_timeout_at INTEGER");
+      if (!cols.includes("encounter_default_resolution")) db.exec("ALTER TABLE issues ADD COLUMN encounter_default_resolution TEXT");
+    },
+  },
 ];
 
 export function migrate(db: Database): string[] {
