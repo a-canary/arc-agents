@@ -5,7 +5,8 @@
   "private": true,
   "bin": {
     "ledger": "./bin/ledger.ts",
-    "agent": "./bin/agent.ts"
+    "arc-launch": "./bin/launch.ts",
+    "wait-for-ledger": "./bin/wait-for-ledger.ts"
   },
   "scripts": {
     "test": "bun test",

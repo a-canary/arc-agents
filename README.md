@@ -12,6 +12,31 @@ bun bin/ledger.ts init
 bun bin/launch.ts
 ```
 
+## Install bins on PATH
+
+```
+# from repo root:
+bun install
+bun link            # registers package
+bun link arc-agents # installs ledger, arc-launch, wait-for-ledger into ~/.bun/bin (or ~/.local/bin if symlinked)
+
+# verify
+ledger --help
+which ledger        # → /home/<you>/.bun/bin/ledger
+```
+
+If a stale `director` binary from the old pi install exists, remove it:
+
+```
+rm -f ~/.local/bin/director ~/.local/bin/agent
+```
+
+Uninstall:
+
+```
+bun unlink arc-agents
+```
+
 ## Layout
 
 ```
