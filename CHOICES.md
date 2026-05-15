@@ -46,7 +46,7 @@ User-owned repos prefixed `arc-`. Third-party keeps upstream name.
 ## Design
 
 ### G-0001: Ledger Schema is Canon
-`issues` + `issue_events`. `kind`, `role`, `state`, `blockers`, `thread_id` fields. Schema changes require CHOICES update.
+`issues` + `issue_events`. `kind`, `type`, `state`, `blocked_by`, `thread_id` fields. `kind`/`type`/`state` are CHECK-constrained enums (migration 008). Schema changes require CHOICES update.
 
 ### G-0002: Atomic Claim
 Workers claim via single SQL `UPDATE...RETURNING`. No race conditions, no advisory locks.

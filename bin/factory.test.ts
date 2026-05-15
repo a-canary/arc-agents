@@ -82,6 +82,22 @@ test("factory --once spawns one worker per ready task up to N_MAX", () => {
   expect(result.spawned.length).toBe(2); // capped at N_MAX, not ready count
 });
 
+test("factory --once sweeps stale claims back to ready before counting work", async () => {
+  const id = createTask("hung");
+  const threeHrsAgo = Math.floor(Date.now() / 1000) - 3 * 3600;
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(dbPath);
+  db.run("UPDATE issues SET state='claimed', claimed_by='ghost', claimed_at=? WHERE id=?", [threeHrsAgo, id]);
+  db.close();
+
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+  expect(result.swept).toEqual([id]);
+  expect(result.ready).toBe(1);
+  expect(result.spawned.length).toBe(1);
+});
+
 test("factory --reap kills sessions older than MAX_AGE", () => {
   // Spawn a session manually that will look stale (MAX_AGE=0 makes everything stale)
   const sessName = `${prefix}-stale1`;

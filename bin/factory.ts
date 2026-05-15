@@ -20,6 +20,8 @@
 import { spawnSync } from "node:child_process";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
+import { openWithMigrate } from "../src/ledger/db";
+import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SHELL = join(REPO, "bin", "worker-shell.sh");
@@ -86,15 +88,18 @@ export function spawnWorker(): string {
   return name;
 }
 
-export function tick(): { reaped: string[]; live: number; ready: number; spawned: string[] } {
+export function tick(): { reaped: string[]; swept: string[]; live: number; ready: number; spawned: string[] } {
   const reaped = reapStale();
+  const db = openWithMigrate(process.env.ARC_LEDGER_DB);
+  const sweep = sweepStaleClaims(db);
+  db.close();
   const live = listWorkers().length;
   const ready = countReady();
   const slots = Math.max(0, N_MAX - live);
   const toSpawn = Math.min(slots, ready);
   const spawned: string[] = [];
   for (let i = 0; i < toSpawn; i++) spawned.push(spawnWorker());
-  return { reaped, live: live + spawned.length, ready, spawned };
+  return { reaped, swept: sweep.ids, live: live + spawned.length, ready, spawned };
 }
 
 async function sleep(s: number): Promise<void> {
@@ -105,7 +110,7 @@ async function loop(): Promise<void> {
   // eslint-disable-next-line no-constant-condition
   while (true) {
     const r = tick();
-    if (r.reaped.length || r.spawned.length) {
+    if (r.reaped.length || r.spawned.length || r.swept.length) {
       console.log(JSON.stringify({ ts: new Date().toISOString(), ...r }));
     }
     await sleep(INTERVAL);
