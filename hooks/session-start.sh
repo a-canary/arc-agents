@@ -9,7 +9,7 @@ REPO="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.."
 echo "[arc-agents] role=$ROLE worktree=$(pwd) ledger=$LEDGER"
 
 if [ -f "$LEDGER" ] && command -v bun >/dev/null 2>&1; then
-  ready=$(bun "$REPO/bin/ledger.ts" list --role "$ROLE" --state ready 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
+  ready=$(bun "$REPO/bin/ledger.ts" list --kind task --state ready 2>/dev/null | python3 -c "import json,sys; print(len(json.load(sys.stdin)))" 2>/dev/null || echo "?")
   echo "[arc-agents] ready tasks for $ROLE: $ready"
 fi
 
