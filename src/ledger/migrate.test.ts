@@ -38,8 +38,8 @@ test("unblock_dependents cascade fires on merge", () => {
   const db = fresh();
   const ins = (id: string, state: string, blocked_by: string | null) =>
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, role, state, blocked_by, kind)
-       VALUES (?, 'p', 't', 'b', 'task', 'developer', ?, ?, 'task')`,
+      `INSERT INTO issues (id, project, title, body_md, type, state, blocked_by, kind)
+       VALUES (?, 'p', 't', 'b', 'mvp', ?, ?, 'task')`,
       [id, state, blocked_by],
     );
 
@@ -53,5 +53,61 @@ test("unblock_dependents cascade fires on merge", () => {
 
   db.run("UPDATE issues SET state='merged' WHERE id='b'");
   c = db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='c'").get();
+  expect(c?.state).toBe("ready");
+});
+
+test("008 drops role column", () => {
+  const db = fresh();
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
+  expect(cols).not.toContain("role");
+});
+
+test("008 enforces type enum", () => {
+  const db = fresh();
+  expect(() =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+       VALUES ('x','p','t','b','garbage','ready','task')`,
+    ),
+  ).toThrow();
+});
+
+test("008 enforces kind enum", () => {
+  const db = fresh();
+  expect(() =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+       VALUES ('x','p','t','b','mvp','ready','--project')`,
+    ),
+  ).toThrow();
+});
+
+test("008 enforces blocked_by shape", () => {
+  const db = fresh();
+  expect(() =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind, blocked_by)
+       VALUES ('x','p','t','b','mvp','blocked','task','not-json')`,
+    ),
+  ).toThrow();
+  // NULL still ok
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, blocked_by)
+     VALUES ('y','p','t','b','mvp','blocked','task',NULL)`,
+  );
+});
+
+test("008 normalized trigger fires even when no '[]' filter present", () => {
+  const db = fresh();
+  const ins = (id: string, state: string, blocked_by: string | null) =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, blocked_by, kind)
+       VALUES (?, 'p', 't', 'b', 'mvp', ?, ?, 'task')`,
+      [id, state, blocked_by],
+    );
+  ins("a", "ready", null);
+  ins("c", "blocked", JSON.stringify(["a"]));
+  db.run("UPDATE issues SET state='merged' WHERE id='a'");
+  const c = db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='c'").get();
   expect(c?.state).toBe("ready");
 });

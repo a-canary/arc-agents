@@ -116,6 +116,115 @@ export const migrations: Migration[] = [
       if (!cols.includes("encounter_default_resolution")) db.exec("ALTER TABLE issues ADD COLUMN encounter_default_resolution TEXT");
     },
   },
+  {
+    id: "008_guardrails",
+    up: (db) => {
+      // Backfill `type` to priority enum before any CHECK is applied.
+      // Existing values (task/impl/implement-slice/research) → 'mvp' default.
+      db.exec(`
+        UPDATE issues SET type = 'mvp'
+        WHERE type NOT IN ('HITL','cron','mvp','security','quality','scale','efficiency','deferred');
+      `);
+
+      // Backfill `kind` for any pre-003 row still on legacy default.
+      db.exec(`
+        UPDATE issues SET kind = 'task'
+        WHERE kind NOT IN ('task','chat_in','encounter_reply','prd');
+      `);
+
+      // Normalize blocked_by: empty string → NULL, '[]' → NULL.
+      db.exec(`UPDATE issues SET blocked_by = NULL WHERE blocked_by IN ('', '[]')`);
+
+      // Abort migration if any row still violates target constraints. Forces
+      // owner to remediate before schema CHECKs lock in.
+      const bad = db
+        .query<{ n: number }, []>(
+          `SELECT COUNT(*) AS n FROM issues
+           WHERE kind NOT IN ('task','chat_in','encounter_reply','prd')
+              OR type NOT IN ('HITL','cron','mvp','security','quality','scale','efficiency','deferred')
+              OR (blocked_by IS NOT NULL AND blocked_by NOT LIKE '[%]')`,
+        )
+        .get()!;
+      if (bad.n > 0) throw new Error(`008: ${bad.n} rows still violate guardrails — remediate before retry`);
+
+      // SQLite has no ALTER TABLE ADD CHECK. Rebuild the table.
+      db.exec("DROP TRIGGER IF EXISTS unblock_dependents");
+      db.exec("DROP INDEX IF EXISTS idx_issues_ready");
+
+      db.exec(`
+        CREATE TABLE issues_new (
+          id            TEXT PRIMARY KEY,
+          project       TEXT NOT NULL,
+          parent_id     TEXT REFERENCES issues_new(id),
+          title         TEXT NOT NULL,
+          body_md       TEXT NOT NULL,
+          acceptance_md TEXT NOT NULL DEFAULT '',
+          type          TEXT NOT NULL
+                        CHECK (type IN ('HITL','cron','mvp','security','quality','scale','efficiency','deferred')),
+          state         TEXT NOT NULL DEFAULT 'ready'
+                        CHECK (state IN ('ready','claimed','wip','blocked','review','merged','cancelled','failed')),
+          hitl          INTEGER NOT NULL DEFAULT 0 CHECK (hitl IN (0,1)),
+          kind          TEXT NOT NULL DEFAULT 'task'
+                        CHECK (kind IN ('task','chat_in','encounter_reply','prd')),
+          blocked_by    TEXT CHECK (blocked_by IS NULL OR blocked_by LIKE '[%]'),
+          worktree_path TEXT,
+          branch        TEXT,
+          pr_url        TEXT,
+          evidence_md   TEXT,
+          thread_id     TEXT,
+          encounter_mode TEXT,
+          encounter_timeout_at INTEGER,
+          encounter_default_resolution TEXT,
+          created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          claimed_at    INTEGER,
+          claimed_by    TEXT
+        );
+      `);
+
+      db.exec(`
+        INSERT INTO issues_new (
+          id, project, parent_id, title, body_md, acceptance_md, type, state, hitl,
+          kind, blocked_by, worktree_path, branch, pr_url, evidence_md,
+          thread_id, encounter_mode, encounter_timeout_at, encounter_default_resolution,
+          created_at, updated_at, claimed_at, claimed_by
+        )
+        SELECT id, project, parent_id, title, body_md, acceptance_md, type, state, hitl,
+               kind, blocked_by, worktree_path, branch, pr_url, evidence_md,
+               thread_id, encounter_mode, encounter_timeout_at, encounter_default_resolution,
+               created_at, updated_at, claimed_at, claimed_by
+        FROM issues;
+      `);
+
+      db.exec("DROP TABLE issues");
+      db.exec("ALTER TABLE issues_new RENAME TO issues");
+
+      // Re-create indexes (role is gone, so index keys drop it).
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_ready ON issues(state, kind, type) WHERE state='ready'");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_thread ON issues(thread_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_parent ON issues(parent_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_claimed_at ON issues(claimed_at) WHERE state='claimed'");
+
+      // Normalized unblock trigger: blocked_by IS NULL now means no deps, so no extra '[]' check needed.
+      db.exec(`
+        CREATE TRIGGER unblock_dependents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state = 'merged' AND OLD.state != 'merged'
+        BEGIN
+          UPDATE issues
+          SET state = 'ready', updated_at = strftime('%s','now')
+          WHERE state = 'blocked'
+            AND blocked_by IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state != 'merged'
+            );
+        END;
+      `);
+    },
+  },
 ];
 
 export function migrate(db: Database): string[] {

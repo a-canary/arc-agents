@@ -4,7 +4,7 @@
 // Consumed by claude Monitor tool in interactive panes.
 //
 // Modes:
-//   --role <role>       worker: kind='task' AND role=<role>
+//   --kind <kind>       worker: kind=<kind> (e.g. task)
 //   --interviewer       interviewer: kind IN ('chat_in','encounter_reply')
 //
 // Optional:
@@ -23,10 +23,10 @@ function has(name: string): boolean {
   return args.includes(name);
 }
 
-const role = flag("--role");
+const kind = flag("--kind");
 const interviewer = has("--interviewer");
-if (!!role === interviewer) {
-  console.error("usage: wait-for-ledger.ts (--role <role> | --interviewer) [--interval sec] [--heartbeat sec] [--db path]");
+if (!!kind === interviewer) {
+  console.error("usage: wait-for-ledger.ts (--kind <kind> | --interviewer) [--interval sec] [--heartbeat sec] [--db path]");
   process.exit(2);
 }
 
@@ -42,10 +42,10 @@ const query = interviewer
       "SELECT COUNT(*) AS n FROM issues WHERE kind IN ('chat_in','encounter_reply') AND state='ready' AND claimed_by IS NULL",
     )
   : db.query<{ n: number }, [string]>(
-      "SELECT COUNT(*) AS n FROM issues WHERE kind='task' AND role=? AND state='ready' AND claimed_by IS NULL",
+      "SELECT COUNT(*) AS n FROM issues WHERE kind=? AND state='ready' AND claimed_by IS NULL",
     );
 
-const mode = interviewer ? "interviewer" : `worker:${role}`;
+const mode = interviewer ? "interviewer" : `worker:${kind}`;
 let lastEmit = 0;
 let lastCount = -1;
 
@@ -65,7 +65,7 @@ function emit(n: number, reason: "edge" | "heartbeat") {
 function tick() {
   let n: number;
   try {
-    const row = interviewer ? query.get() : query.get(role!);
+    const row = interviewer ? query.get() : query.get(kind!);
     n = row?.n ?? 0;
   } catch (e) {
     process.stderr.write(`poll error: ${(e as Error).message}\n`);

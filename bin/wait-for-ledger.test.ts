@@ -8,20 +8,20 @@ import { migrate } from "../src/ledger/migrate";
 
 const cli = new URL("./wait-for-ledger.ts", import.meta.url).pathname;
 
-test("emits json line when ready row exists for role", async () => {
+test("emits json line when ready row exists for kind", async () => {
   const dir = mkdtempSync(join(tmpdir(), "wfl-"));
   const dbPath = join(dir, "t.db");
   try {
     const db = new Database(dbPath);
     migrate(db);
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, role, state, kind)
-       VALUES ('t-1','p','t','b','task','developer','ready','task')`,
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+       VALUES ('t-1','p','t','b','mvp','ready','task')`,
     );
     db.close();
 
     const proc = spawn({
-      cmd: ["bun", cli, "--role", "developer", "--db", dbPath, "--interval", "1"],
+      cmd: ["bun", cli, "--kind", "task", "--db", dbPath, "--interval", "1"],
       stdout: "pipe",
       stderr: "pipe",
     });
@@ -38,7 +38,7 @@ test("emits json line when ready row exists for role", async () => {
     const parsed = JSON.parse(line);
     expect(parsed.wake).toBe(true);
     expect(parsed.available).toBe(1);
-    expect(parsed.mode).toBe("worker:developer");
+    expect(parsed.mode).toBe("worker:task");
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -52,7 +52,7 @@ test("silent when no rows", async () => {
     migrate(db);
     db.close();
     const proc = spawn({
-      cmd: ["bun", cli, "--role", "developer", "--db", dbPath, "--interval", "1"],
+      cmd: ["bun", cli, "--kind", "task", "--db", dbPath, "--interval", "1"],
       stdout: "pipe",
       stderr: "pipe",
     });
