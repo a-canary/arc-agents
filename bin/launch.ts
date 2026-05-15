@@ -42,8 +42,10 @@ function paneCommand(p: Pane): string {
   // Waiter writes edge-trigger JSON to a file (not the tty, so it never becomes pane input).
   // /loop prompt tells claude to Monitor that file each tick — wakes on ledger edge, /loop 5m is fallback heartbeat.
   const waiterCmd = `nohup bun ${WAITER} --role ${role} >${waiterFile} 2>/dev/null &`;
-  const loopPrompt = `/loop 5m Monitor ${waiterFile} for new lines; on each wake claim one ready ${role} task (\`bun ${join(REPO, "bin", "ledger.ts")} claim ${role} ${p.title}\`), execute in a worktree, commit as a-canary, update ledger state=merged with evidence; if no task claimable, exit quietly`;
-  return `${waiterCmd} ${CLAUDE} --append-system-prompt 'role=${p.role}; arc-agents worker; autonomous AFK; commit as a-canary' "${loopPrompt}"`;
+  const claimCmd = `bun ${join(REPO, "bin", "ledger.ts")} claim ${role} ${p.title}`;
+  // Single-quote the prompt so backticks/$() inside survive bash without being command-substituted before tmux forwards them to claude.
+  const loopPrompt = `/loop 5m Monitor ${waiterFile} for new lines; on each wake run: ${claimCmd} ; if the result has claimed=null exit quietly, else execute the claimed task in a worktree, commit as a-canary, update ledger state=merged with evidence`;
+  return `${waiterCmd} ${CLAUDE} --append-system-prompt 'role=${p.role}; arc-agents worker; autonomous AFK; commit as a-canary' '${loopPrompt}'`;
 }
 
 export function buildScript(): string[] {
