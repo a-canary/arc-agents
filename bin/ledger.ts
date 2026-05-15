@@ -1,9 +1,12 @@
 #!/usr/bin/env bun
-// Ledger CLI. Verbs per PRD-v1 §4.
+// Ledger CLI. Flag-only create per PRD-v1 §4; positional args are rejected.
 // JSON to stdout when not a TTY; table otherwise.
 
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
+import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
+import { TYPE_PRIORITY_SQL } from "../src/ledger/type-priority-sort";
+import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -37,6 +40,21 @@ function getFlag(name: string): string | undefined {
   return args[i + 1];
 }
 
+// Positional args after the verb, excluding any --flag tokens and their values.
+function positionalAfterVerb(): string[] {
+  const rest = args.slice(1);
+  const out: string[] = [];
+  for (let i = 0; i < rest.length; i++) {
+    const a = rest[i]!;
+    if (a.startsWith("--")) {
+      if (!a.includes("=")) i++; // skip value
+      continue;
+    }
+    out.push(a);
+  }
+  return out;
+}
+
 switch (cmd) {
   case "init": {
     const db = open(getFlag("db"));
@@ -46,24 +64,37 @@ switch (cmd) {
   }
 
   case "create": {
-    // ledger create <kind> <role> <title>
-    const kind = args[1] ?? die("kind required");
-    const role = args[2] ?? die("role required");
-    const title = args[3] ?? die("title required");
-    const project = getFlag("project") ?? "arc-agents";
-    const type = getFlag("type") ?? "task";
-    const body = getFlag("body") ?? "";
-    const acceptance = getFlag("acceptance") ?? "";
-    const parent = getFlag("parent") ?? null;
-    const blockedBy = getFlag("blocked-by");
+    // Flag-only. No positional args allowed.
+    const input: CreateInput = {
+      title: getFlag("title"),
+      kind: getFlag("kind"),
+      type: getFlag("type"),
+      body: getFlag("body"),
+      acceptance: getFlag("acceptance"),
+      parent: getFlag("parent"),
+      blockedBy: getFlag("blocked-by"),
+      project: getFlag("project"),
+    };
+    const errs = validateCreate(input, positionalAfterVerb());
+    if (errs.length > 0) {
+      die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+    }
+    const project = input.project ?? "arc-agents";
+    const kind = input.kind!;
+    const type = input.type!;
+    const title = input.title!;
+    const body = input.body ?? "";
+    const acceptance = input.acceptance ?? "";
+    const parent = input.parent ?? null;
+    const blockedBy = input.blockedBy ?? null;
     const state = blockedBy ? "blocked" : "ready";
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
     db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, role, state, kind, blocked_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, project, parent, title, body, acceptance, type, role, state, kind, blockedBy ?? null],
+      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy],
     );
     db.run(
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
@@ -74,17 +105,17 @@ switch (cmd) {
   }
 
   case "claim": {
-    // ledger claim <role> <worker>
-    const role = args[1] ?? die("role required");
-    const worker = args[2] ?? die("worker required");
+    // ledger claim <worker>  (no role; type priority does the picking)
+    const worker = args[1] ?? die("worker required");
+    if (worker.startsWith("--")) die("worker required (positional)");
     const db = openWithMigrate(getFlag("db"));
     const row = db
-      .query<{ id: string }, [string, string]>(
-        `UPDATE issues SET state='claimed', claimed_by=?2, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind='task' AND role=?1 ORDER BY id LIMIT 1)
+      .query<{ id: string }, [string]>(
+        `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind='task' ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
          RETURNING id`,
       )
-      .get(role, worker);
+      .get(worker);
     if (!row) {
       out({ claimed: null });
       break;
@@ -98,6 +129,67 @@ switch (cmd) {
     break;
   }
 
+  case "decompose": {
+    // ledger decompose <parent-id> --child "t1" --child "t2" ...
+    // Atomic: insert N HITL children, set parent.blocked_by=[ids], parent.state='blocked'.
+    const parent = args[1];
+    if (!parent || parent.startsWith("--")) die("parent id required (positional)");
+    const children: string[] = [];
+    for (let i = 2; i < args.length; i++) {
+      const a = args[i]!;
+      if (a === "--child") {
+        const v = args[++i];
+        if (v !== undefined) children.push(v);
+      } else if (a.startsWith("--child=")) {
+        children.push(a.slice("--child=".length));
+      }
+    }
+    const errs = validateDecompose({ parent, children });
+    if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+
+    const db = openWithMigrate(getFlag("db"));
+    const parentRow = db.query<{ id: string; project: string; state: string }, [string]>(
+      "SELECT id, project, state FROM issues WHERE id=?",
+    ).get(parent);
+    if (!parentRow) die(`no such issue: ${parent}`);
+    if (parentRow.state === "merged" || parentRow.state === "cancelled") {
+      die(`cannot decompose from terminal state '${parentRow.state}'`);
+    }
+    const agent = getFlag("agent") ?? "bookie";
+    const created: { id: string; title: string }[] = [];
+    db.exec("BEGIN");
+    try {
+      for (const title of children) {
+        const id = mintId(db, title);
+        db.run(
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by)
+           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL)`,
+          [id, parentRow.project, parent, title],
+        );
+        db.run(
+          `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
+          [id, agent, `decomposed from ${parent}: ${title}`],
+        );
+        created.push({ id, title });
+      }
+      const blockedBy = JSON.stringify(created.map((c) => c.id));
+      db.run(
+        `UPDATE issues SET state='blocked', blocked_by=?, updated_at=strftime('%s','now') WHERE id=?`,
+        [blockedBy, parent],
+      );
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'progress', ?, ?)`,
+        [parent, agent, `decomposed into ${created.length} children: ${created.map((c) => c.id).join(", ")}`],
+      );
+      db.exec("COMMIT");
+    } catch (e) {
+      db.exec("ROLLBACK");
+      throw e;
+    }
+    out({ parent, children: created });
+    break;
+  }
+
   case "update": {
     const id = args[1] ?? die("id required");
     const state = getFlag("state");
@@ -105,7 +197,16 @@ switch (cmd) {
     const pr = getFlag("pr");
     const branch = getFlag("branch");
     const worktree = getFlag("worktree");
+    const hitl = getFlag("hitl");
     const db = openWithMigrate(getFlag("db"));
+
+    if (state) {
+      const cur = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(id);
+      if (!cur) die(`no such issue: ${id}`);
+      const errs = validateStateTransition(cur.state as never, state as never);
+      if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+    }
+
     const sets: string[] = ["updated_at=strftime('%s','now')"];
     const vals: (string | number)[] = [];
     if (state) {
@@ -127,6 +228,11 @@ switch (cmd) {
     if (worktree) {
       sets.push("worktree_path=?");
       vals.push(worktree);
+    }
+    if (hitl !== undefined) {
+      if (hitl !== "0" && hitl !== "1") die("--hitl must be 0 or 1");
+      sets.push("hitl=?");
+      vals.push(Number(hitl));
     }
     vals.push(id);
     db.run(`UPDATE issues SET ${sets.join(", ")} WHERE id=?`, vals);
@@ -156,16 +262,12 @@ switch (cmd) {
   }
 
   case "list": {
-    const role = getFlag("role");
     const state = getFlag("state");
     const kind = getFlag("kind");
+    const type = getFlag("type");
     const limit = parseInt(getFlag("limit") ?? "100", 10);
     const where: string[] = [];
     const vals: (string | number)[] = [];
-    if (role) {
-      where.push("role=?");
-      vals.push(role);
-    }
     if (state) {
       where.push("state=?");
       vals.push(state);
@@ -174,9 +276,13 @@ switch (cmd) {
       where.push("kind=?");
       vals.push(kind);
     }
-    const sql = `SELECT id, state, kind, role, title FROM issues ${
+    if (type) {
+      where.push("type=?");
+      vals.push(type);
+    }
+    const sql = `SELECT id, state, kind, type, title FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
-    } ORDER BY id LIMIT ?`;
+    } ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT ?`;
     vals.push(limit);
     const db = openWithMigrate(getFlag("db"));
     out(db.query(sql).all(...vals));
@@ -194,9 +300,9 @@ switch (cmd) {
   }
 
   case "tick": {
-    // Backstop sweep: any blocked row whose blockers are all merged → ready.
+    // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr).
     const db = openWithMigrate(getFlag("db"));
-    const r = db.run(`
+    const u = db.run(`
       UPDATE issues SET state='ready', updated_at=strftime('%s','now')
       WHERE state='blocked' AND blocked_by IS NOT NULL AND blocked_by != '[]'
         AND NOT EXISTS (
@@ -205,17 +311,18 @@ switch (cmd) {
           WHERE b.state != 'merged'
         )
     `);
-    out({ unblocked: r.changes });
+    const s = sweepStaleClaims(db);
+    out({ unblocked: u.changes, reclaimed: s.reset, reclaimed_ids: s.ids });
     break;
   }
 
   case "spawn-ready": {
-    const role = getFlag("role");
+    const type = getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const sql = `SELECT id, role, kind, title FROM issues WHERE state='ready' AND kind='task' ${
-      role ? "AND role=?" : ""
-    } ORDER BY id`;
-    out(role ? db.query(sql).all(role) : db.query(sql).all());
+    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind='task' ${
+      type ? "AND type=?" : ""
+    } ORDER BY ${TYPE_PRIORITY_SQL}, id`;
+    out(type ? db.query(sql).all(type) : db.query(sql).all());
     break;
   }
 
@@ -244,19 +351,24 @@ switch (cmd) {
     console.log(`ledger <verb> [args]
 
   init                                 run migrations
-  create <kind> <role> <title> [...]   insert row
-                                       flags: --project --type --body --acceptance --parent --blocked-by --agent
-  claim <role> <worker>                atomic claim of oldest ready task
-  update <id> --state <s> [--evidence --pr --branch --worktree --agent]
+  create --kind --type --title [...]   insert row (flag-only)
+                                       flags: --project --body --acceptance --parent --blocked-by --agent
+  claim <worker>                       atomic claim of highest-priority ready task
+  decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked (cap 5)
+  update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
   event <id> <kind> <payload>          append event row
-  list [--role --state --kind --limit]
+  list [--state --kind --type --limit]
   show <id>
-  tick                                 cascade-unblock sweep
-  spawn-ready [--role]                 emit JSON for ready rows
+  tick                                 cascade-unblock + reclaim stale (>2hr) claims
+  spawn-ready [--type]                 emit JSON for ready rows
   compact                              archive merged/cancelled > 30d
   vacuum
 
-  global flags: --db <path>`);
+  global flags: --db <path>
+
+NOTE: agents must route all WRITES (create, update, decompose, event) through
+the bookie subagent. Direct CLI writes are reserved for bootstrap (worker-shell
+claim) and human operators. Reads (list, show, spawn-ready) are unrestricted.`);
     break;
   }
 

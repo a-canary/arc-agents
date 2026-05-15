@@ -15,6 +15,9 @@ Runtime is always-on `claude` panes. No headless `claude -p` subprocesses (billi
 ### M-0003: Universal Across CLI Runtimes
 Primary: claude code. Adapters: pi, qwen, opencode. Agents defined once.
 
+### M-0004: Ephemeral Workers via Factory
+Workers are one-shot tmux sessions, not long-lived panes. `bin/factory.ts` supervises: reaps sessions older than 4hr, spawns fresh `bash worker-shell.sh` (which atomically claims one task then `exec`s interactive `claude`) up to N=4 concurrent. Session dies on completion → next tick respawns if more work. Eliminates context pollution and stale-code drift. Compatible with M-0002 — workers remain interactive `claude` invocations (positional prompt, no `-p`).
+
 ---
 
 ## Architecture
@@ -99,8 +102,8 @@ TS over Python where reasonable. Bun runtime.
 ### I-0001: CLI Surface
 `ledger` binary (TS, bun). Verbs: init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum.
 
-### I-0002: Pane Launcher
-`bin/launch.ts` — tmux 4-pane (interviewer + 3 workers). Each pane `claude /loop 5m` watching `wait-for-ledger.ts`.
+### I-0002: Launcher + Factory
+`bin/launch.ts` — single-pane interviewer tmux session `arc`. `bin/factory.ts` — supervisor daemon spawning ephemeral worker sessions (see M-0004). `bin/worker-shell.sh` — bootstrap: atomic claim → exec interactive `claude`.
 
 ### I-0003: Bookie Subagent
 Writes ledger rows on behalf of agents. Single point of validation.

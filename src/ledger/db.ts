@@ -2,7 +2,7 @@ import { Database } from "bun:sqlite";
 import { migrate } from "./migrate";
 
 export function open(path?: string): Database {
-  const p = path ?? `${process.env.HOME}/vault/ledger.db`;
+  const p = path ?? process.env.ARC_LEDGER_DB ?? `${process.env.HOME}/vault/ledger.db`;
   const db = new Database(p);
   db.exec("PRAGMA journal_mode=WAL;");
   return db;

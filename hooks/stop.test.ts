@@ -1,0 +1,81 @@
+// E2E: Stop hook behavior against a real ledger.
+// We exec the hook directly with controlled env + stdin and inspect decision JSON.
+
+import { test, expect, beforeEach, afterEach } from "bun:test";
+import { spawnSync } from "node:child_process";
+import { mkdtempSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
+
+const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
+const HOOK = join(REPO, "hooks", "stop.sh");
+const LEDGER = join(REPO, "bin", "ledger.ts");
+
+let workDir: string;
+let dbPath: string;
+
+function ledger(args: string[]): { stdout: string; status: number } {
+  const r = spawnSync("bun", [LEDGER, ...args, "--db", dbPath], { encoding: "utf8" });
+  return { stdout: r.stdout, status: r.status ?? 1 };
+}
+
+function runHook(env: Record<string, string>, stdin = "{}"): { stdout: string; status: number } {
+  const r = spawnSync("bash", [HOOK], {
+    encoding: "utf8",
+    input: stdin,
+    env: { ...process.env, ARC_LEDGER_DB: dbPath, ...env },
+  });
+  return { stdout: r.stdout, status: r.status ?? 1 };
+}
+
+beforeEach(() => {
+  workDir = mkdtempSync(join(tmpdir(), "arc-stop-test-"));
+  dbPath = join(workDir, "ledger.db");
+  ledger(["init"]);
+});
+
+afterEach(() => {
+  rmSync(workDir, { recursive: true, force: true });
+});
+
+test("passes through when ARC_TASK_ID is unset (non-worker session)", () => {
+  const r = runHook({});
+  expect(r.status).toBe(0);
+  expect(r.stdout.trim()).toBe("");
+});
+
+test("blocks with checklist when task is in non-terminal state", () => {
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger(["update", c.id, "--state", "claimed"]);
+  const r = runHook({ ARC_TASK_ID: c.id });
+  expect(r.status).toBe(0);
+  const payload = JSON.parse(r.stdout);
+  expect(payload.decision).toBe("block");
+  expect(payload.reason).toMatch(/AFK shutdown checklist/);
+  expect(payload.reason).toMatch(/claimed/);
+});
+
+test("passes through when task is merged", () => {
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger(["update", c.id, "--state", "merged", "--evidence", "ok", "--pr", "branch/x"]);
+  const r = runHook({ ARC_TASK_ID: c.id });
+  expect(r.status).toBe(0);
+  expect(r.stdout.trim()).toBe("");
+});
+
+test("passes through when task is blocked (decomposed)", () => {
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger(["decompose", c.id, "--child", "step a"]);
+  const r = runHook({ ARC_TASK_ID: c.id });
+  expect(r.status).toBe(0);
+  expect(r.stdout.trim()).toBe("");
+});
+
+test("passes through when stop_hook_active is true (avoids infinite loop)", () => {
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger(["update", c.id, "--state", "claimed"]);
+  const r = runHook({ ARC_TASK_ID: c.id }, '{"stop_hook_active": true}');
+  expect(r.status).toBe(0);
+  expect(r.stdout.trim()).toBe("");
+});
