@@ -44,8 +44,9 @@ function paneCommand(p: Pane): string {
   const waiterCmd = `nohup bun ${WAITER} --role ${role} >${waiterFile} 2>/dev/null &`;
   const claimCmd = `bun ${join(REPO, "bin", "ledger.ts")} claim ${role} ${p.title}`;
   // Single-quote the prompt so backticks/$() inside survive bash without being command-substituted before tmux forwards them to claude.
-  const loopPrompt = `/loop 5m Monitor ${waiterFile} for new lines; on each wake run: ${claimCmd} ; if the result has claimed=null exit quietly, else execute the claimed task in a worktree, commit as a-canary, update ledger state=merged with evidence`;
-  return `${waiterCmd} ${CLAUDE} --append-system-prompt 'role=${p.role}; arc-agents worker; autonomous AFK; commit as a-canary' '${loopPrompt}'`;
+  // Waiter has its own 300s heartbeat — no need for an additional /loop schedule.
+  const prompt = `Monitor ${waiterFile} for new lines. On each new line run: ${claimCmd} ; if the result has claimed=null exit quietly, else execute the claimed task in a worktree, commit as a-canary, update ledger state=merged with evidence. Loop back to monitoring when done.`;
+  return `${waiterCmd} ${CLAUDE} --append-system-prompt 'role=${p.role}; arc-agents worker; autonomous AFK; commit as a-canary' '${prompt}'`;
 }
 
 export function buildScript(): string[] {

@@ -9,9 +9,9 @@ test("buildScript emits 4 panes worth of commands with session arc", () => {
   expect(cmds.filter((c) => c.startsWith("send-keys")).length).toBe(4);
 });
 
-test("worker panes invoke claude with /loop, waiter, and ledger claim", () => {
+test("worker panes invoke claude with waiter monitor and ledger claim (no /loop schedule)", () => {
   const cmds = buildScript().join("\n");
-  expect(cmds).toContain("/loop 5m");
+  expect(cmds).not.toContain("/loop");
   expect(cmds).toContain("wait-for-ledger");
   expect(cmds).toContain("--role developer");
   expect(cmds).toContain("--role admin");
