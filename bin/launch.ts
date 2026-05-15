@@ -38,8 +38,12 @@ function sessionExists(): boolean {
 function paneCommand(p: Pane): string {
   if (p.role === "interviewer") return `${CLAUDE}`;
   const role = p.role === "admin" ? "admin" : "developer";
-  const loopPrompt = `/loop 5m claim one ready ${role} task from ledger (\`bun ${join(REPO, "bin", "ledger.ts")} claim ${role} ${p.title}\`), execute it in a worktree, commit as a-canary, update ledger state=merged with evidence; if no task claimable, exit quietly`;
-  return `${CLAUDE} --append-system-prompt 'role=${p.role}; arc-agents worker; autonomous AFK; commit as a-canary' "${loopPrompt}"`;
+  const waiterFile = `/tmp/arc-waiter-${p.title}.jsonl`;
+  // Waiter writes edge-trigger JSON to a file (not the tty, so it never becomes pane input).
+  // /loop prompt tells claude to Monitor that file each tick — wakes on ledger edge, /loop 5m is fallback heartbeat.
+  const waiterCmd = `nohup bun ${WAITER} --role ${role} >${waiterFile} 2>/dev/null &`;
+  const loopPrompt = `/loop 5m Monitor ${waiterFile} for new lines; on each wake claim one ready ${role} task (\`bun ${join(REPO, "bin", "ledger.ts")} claim ${role} ${p.title}\`), execute in a worktree, commit as a-canary, update ledger state=merged with evidence; if no task claimable, exit quietly`;
+  return `${waiterCmd} ${CLAUDE} --append-system-prompt 'role=${p.role}; arc-agents worker; autonomous AFK; commit as a-canary' "${loopPrompt}"`;
 }
 
 export function buildScript(): string[] {
