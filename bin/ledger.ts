@@ -7,6 +7,7 @@ import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
 import { TYPE_PRIORITY_SQL } from "../src/ledger/type-priority-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
+import { renderSystemPrompt } from "../src/worker/templates";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -329,6 +330,20 @@ switch (cmd) {
     break;
   }
 
+  case "render-prompt": {
+    // Emit the rendered worker system prompt for <id>. Pure read; no side effects.
+    // worker-shell.sh shells out to this after claim so prompt logic lives in TS.
+    const id = args[1] ?? die("id required");
+    const worker = getFlag("worker") ?? "unknown";
+    const db = openWithMigrate(getFlag("db"));
+    const row = db
+      .query<{ kind: string; type: string }, [string]>(`SELECT kind, type FROM issues WHERE id=?`)
+      .get(id);
+    if (!row) die(`no issue ${id}`);
+    process.stdout.write(renderSystemPrompt({ kind: row.kind, type: row.type, worker, task: id }));
+    break;
+  }
+
   case "compact": {
     const db = openWithMigrate(getFlag("db"));
     const cutoff = Math.floor(Date.now() / 1000) - 30 * 24 * 3600;
@@ -365,6 +380,7 @@ switch (cmd) {
   show <id>
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
+  render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
   vacuum
 

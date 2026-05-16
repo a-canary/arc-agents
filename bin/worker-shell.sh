@@ -33,22 +33,12 @@ fi
 export ARC_WORKER_SESSION="$WORKER"
 export ARC_TASK_ID="$CLAIM_ID"
 
-PROMPT="You are arc-agents worker ${WORKER}. Task id=${CLAIM_ID}.
+# Per-(kind,type) system prompt resolved in TS — see src/worker/templates.ts.
+SYS_PROMPT="$(bun "$LEDGER_BIN" render-prompt "$CLAIM_ID" --worker "$WORKER" "${DB_FLAG[@]}")"
 
-Steps:
-1. Run \`bun ${LEDGER_BIN} ${DB_FLAG[*]} show ${CLAIM_ID}\` to read the task.
-2. Provision a worktree under ~/worktrees/ if the task needs code changes.
-3. Execute the task. All ledger WRITES (update, decompose, event, create) must
-   be delegated to the bookie subagent. Reads (show, list) are fine direct.
-4. On completion: ask bookie to update state=merged with --evidence <one-line>
-   and --pr <url-or-branch>. On unrecoverable failure: state=failed with
-   evidence. If you discover sub-work a human must do: ask bookie to decompose
-   into HITL deps (state=blocked).
-5. Clean up: remove your worktree (\`git worktree remove\`), no uncommitted changes.
+USER_PROMPT="Task ${CLAIM_ID}. Run \`bun ${LEDGER_BIN} ${DB_FLAG[*]} show ${CLAIM_ID}\` to
+read it, then execute. On terminal state, ask bookie to update (merged + evidence
++ pr, or failed + evidence, or decompose into HITL children). Clean up worktree
+before exit. tmux dies on exit; factory respawns if more work."
 
-When done, exit naturally — the Stop hook will verify terminal state and let
-the session end. tmux session dies → factory respawns next tick if more work."
-
-exec "$CLAUDE" \
-  --append-system-prompt "kind=worker; worker=${WORKER}; task=${CLAIM_ID}; ephemeral; autonomous AFK; commit as the configured git user (\`git config user.name\`); route all ledger writes through bookie subagent" \
-  "$PROMPT"
+exec "$CLAUDE" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
