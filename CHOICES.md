@@ -116,3 +116,27 @@ Writes ledger rows on behalf of agents. Single point of validation.
 
 ### I-0006: Git Author
 Commits as `a-canary <noreply>`.
+
+---
+
+## UX
+
+Pointers; the why lives in [ADR 0002 — UX Module Contract](docs/adr/0002-ux-module-contract.md).
+
+### U-0001: Pluggable UX, Harness Owns No Transport
+The harness defines a contract; modules (TUI, webui, Discord, email) fulfill it. Sync mediums pull from the ledger; async mediums ship their own pusher daemon. Bookie refuses HITL writes when no alive module implements the verb, atomically spawning a bootstrap install task instead.
+
+### U-0002: Two HITL Classes
+`taste` (60s timeout, recommendation written at create, dependent work proceeds speculatively) vs `impact` (no timeout, dependent work blocks). Workers may emit taste directly; impact must come from interviewer (workers decompose).
+
+### U-0003: Speculative Execution + Anchor
+Taste prompts capture `(repo, branch, HEAD sha)` at create. Divergent user replies reconcile via `forward_fix` (default — spawn follow-up task) or `replay` (reset and re-run from anchor). No per-commit tagging; `G-0005` guarantees the anchor is sufficient. Taste prompts serialize per worktree.
+
+### U-0004: Two-Table HITL Schema
+`hitl_prompts` + `hitl_deliveries` (one delivery row per alive module per prompt). Broadcast on create, first-reply-wins via atomic UPDATE on `hitl_prompts.state`, SQL cascade flips loser deliveries to `retracted`. Same primitives as `issues` + `issue_events`.
+
+### U-0005: Config Declares, Ledger Tracks
+`~/.config/arc/config.yaml` is the declarative contract (verbs implemented, artifact render capabilities, can_retract, cli, pusher). Ledger holds liveness via heartbeats. No transport, auth, or endpoint fields in config — those are the module's internal business.
+
+### U-0006: Canonical Artifact Types
+Interviewer produces medium-agnostic artifacts (`text/markdown`, `text/diff`, `chart/vega-lite`, `diagram/mermaid`, `image/png`, `table/rows`). Modules declare per-type render strategy (`native`, `rasterize-png`, `ascii-degrade`, …, `unsupported`). Conversion is the module's job; agents never produce per-medium variants.

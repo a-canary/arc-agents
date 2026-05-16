@@ -111,3 +111,55 @@ test("008 normalized trigger fires even when no '[]' filter present", () => {
   const c = db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='c'").get();
   expect(c?.state).toBe("ready");
 });
+
+test("009 hitl tables exist with check constraints", () => {
+  const db = fresh();
+  // class=taste requires recommended
+  expect(() =>
+    db.run(
+      `INSERT INTO hitl_prompts (id, kind, class, payload, timeout_sec)
+       VALUES ('p1', 'ask_choice', 'taste', '{}', 60)`,
+    ),
+  ).toThrow();
+  // class=impact rejects timeout_sec
+  expect(() =>
+    db.run(
+      `INSERT INTO hitl_prompts (id, kind, class, payload, timeout_sec)
+       VALUES ('p2', 'ask_choice', 'impact', '{}', 60)`,
+    ),
+  ).toThrow();
+  db.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, timeout_sec)
+     VALUES ('p3', 'ask_choice', 'taste', '{}', 'blue', 60)`,
+  );
+  const row = db.query<{ state: string }, []>("SELECT state FROM hitl_prompts WHERE id='p3'").get();
+  expect(row?.state).toBe("open");
+});
+
+test("009 retract cascade flips loser deliveries on answer", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, timeout_sec)
+     VALUES ('p1', 'ask_choice', 'taste', '{}', 'blue', 60)`,
+  );
+  for (const m of ["arc-tui", "arc-webui", "arc-discord"]) {
+    db.run(
+      `INSERT INTO hitl_deliveries (prompt_id, module_name, state, delivered_at)
+       VALUES ('p1', ?, 'delivered', strftime('%s','now'))`,
+      [m],
+    );
+  }
+  db.run(
+    `UPDATE hitl_prompts SET state='answered', answer='green', answered_by='arc-webui',
+            answered_at=strftime('%s','now') WHERE id='p1'`,
+  );
+  const states = db
+    .query<{ module_name: string; state: string }, []>(
+      "SELECT module_name, state FROM hitl_deliveries WHERE prompt_id='p1' ORDER BY module_name",
+    )
+    .all();
+  const map = Object.fromEntries(states.map((r) => [r.module_name, r.state]));
+  expect(map["arc-webui"]).toBe("delivered"); // winner stays
+  expect(map["arc-tui"]).toBe("retracted");
+  expect(map["arc-discord"]).toBe("retracted");
+});

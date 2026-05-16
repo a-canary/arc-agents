@@ -225,6 +225,77 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "009_hitl_prompts",
+    // ADR 0002 — UX Module Contract. Two-table HITL schema, broadcast + retract.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS hitl_prompts (
+          id                   TEXT PRIMARY KEY,
+          created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          kind                 TEXT NOT NULL CHECK (kind IN
+                                 ('ask_text','ask_choice','ask_confirm','notify','show_artifact')),
+          class                TEXT NOT NULL CHECK (class IN ('taste','impact')),
+          payload              TEXT NOT NULL,
+          recommended          TEXT,
+          divergence_strategy  TEXT CHECK (divergence_strategy IN ('forward_fix','replay')),
+          timeout_sec          INTEGER,
+          state                TEXT NOT NULL DEFAULT 'open' CHECK (state IN
+                                 ('open','timeout_locked','user_confirmed','user_diverged',
+                                  'answered','cancelled')),
+          answer               TEXT,
+          answered_by          TEXT,
+          answered_at          INTEGER,
+          anchor_repo          TEXT,
+          anchor_branch        TEXT,
+          anchor_commit        TEXT,
+          expires_at           INTEGER,
+          emitted_by           TEXT,
+          CHECK (class != 'taste' OR recommended IS NOT NULL),
+          CHECK (class != 'impact' OR timeout_sec IS NULL)
+        );
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS hitl_deliveries (
+          prompt_id      TEXT NOT NULL REFERENCES hitl_prompts(id) ON DELETE CASCADE,
+          module_name    TEXT NOT NULL,
+          state          TEXT NOT NULL DEFAULT 'pending' CHECK (state IN
+                           ('pending','delivered','retracted','acked','failed')),
+          external_ref   TEXT,
+          delivered_at   INTEGER,
+          retracted_at   INTEGER,
+          PRIMARY KEY (prompt_id, module_name)
+        );
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS ux_heartbeats (
+          module_name TEXT PRIMARY KEY,
+          last_beat   INTEGER NOT NULL
+        );
+      `);
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_hitl_prompts_open ON hitl_prompts(state) WHERE state='open'",
+      );
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_hitl_deliveries_pending ON hitl_deliveries(module_name, state) WHERE state IN ('pending','delivered')",
+      );
+      // Retract cascade: when a prompt is answered (or diverges/locks), flip all
+      // still-delivered loser rows to retracted so each module can scrub its surface.
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS hitl_retract_losers
+        AFTER UPDATE OF state ON hitl_prompts
+        WHEN NEW.state IN ('answered','user_confirmed','user_diverged','timeout_locked','cancelled')
+         AND OLD.state = 'open'
+        BEGIN
+          UPDATE hitl_deliveries
+          SET state = 'retracted', retracted_at = strftime('%s','now')
+          WHERE prompt_id = NEW.id
+            AND state IN ('pending','delivered')
+            AND (NEW.answered_by IS NULL OR module_name != NEW.answered_by);
+        END;
+      `);
+    },
+  },
 ];
 
 export function migrate(db: Database): string[] {

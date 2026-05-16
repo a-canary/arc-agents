@@ -45,3 +45,24 @@ A git working copy under `~/worktrees/<repo>-<slug>/` created by a worker for th
 
 ## Reap
 The factory's act of killing a worker tmux session that has exceeded the max-age threshold (4hr). Independent of ledger state — a reaped worker's task remains whatever state it last left.
+
+## UX Module
+An external installable that fulfills the [UX Module Contract](docs/adr/0002-ux-module-contract.md). Surfaces HITL prompts to the user in some medium (TUI, webui, Discord, email). Declared in `~/.config/arc/config.yaml`; liveness via ledger heartbeats. The harness owns no transport code — modules pull from the ledger (sync mediums) or ship their own pusher daemon (async mediums).
+
+## HITL Prompt
+A row in `hitl_prompts`. The vocabulary by which the interviewer (or a `class=taste` worker) asks the user something. Has a `kind` (ask_text, ask_choice, ask_confirm, notify, show_artifact), a `class` (taste or impact), and the usual state machine. Distinct from a HITL **Issue** in the issues table — issues are units of work; prompts are questions about work.
+
+## HITL Class
+Either `taste` or `impact`. Taste prompts have a 60s timeout, a `recommended` answer, and let dependent work continue speculatively. Impact prompts hard-block dependent work until the user replies. Workers may emit taste prompts directly; impact prompts must come from the interviewer (workers decompose instead).
+
+## Delivery
+A row in `hitl_deliveries`. One per (prompt, alive module) pair. Tracks render/retract state and the module-specific `external_ref` (e.g. Discord message id) used to scrub the surface when another module wins the reply.
+
+## Pusher
+A daemon shipped by an async UX module (Discord, email) that watches the ledger for deliveries addressed to its module and forwards them to the remote API. The module's heartbeat liveness is the pusher's heartbeat. The harness never opens a socket to a remote service itself.
+
+## Retract
+The act of undoing a prompt's render in one medium because the user already answered in another. Modules with `can_retract: true` edit/delete their external message; others (email) mark `state=retracted` without action. Triggered by the SQL cascade when `hitl_prompts.state` transitions to `answered` or `user_diverged`.
+
+## Anchor
+The `(repo, branch, HEAD sha)` captured at insert time on a `class=taste` prompt. Marks the divergence point: any commit on `anchor_branch` from `anchor_commit..HEAD` descends from the speculative answer. Used to drive `forward_fix` or `replay` reconciliation when the user picks a non-recommended option. Relies on `G-0005` (one slice per worktree per commit).
