@@ -23,7 +23,18 @@ A short-lived `claude` invocation that claims one task, executes it, and exits. 
 The supervisor daemon (`bin/factory.ts`) that reaps stale worker sessions and spawns fresh ones when the ledger has ready tasks. The factory is always-on; workers are not.
 
 ## Interviewer
-The single long-lived `claude` session attached by `bin/launch.ts`. User-facing chat. Not a worker — does not claim tasks. Writes to the ledger via the bookie subagent the same way workers do.
+The single long-lived `claude` session attached by `bin/launch.ts`. User-facing chat. Not a worker — does not claim tasks. Writes to the ledger via the bookie subagent the same way workers do. Owns the two user-facing UX flows: **Intake** (UX_1) and **HITL Prompt** (UX_2).
+
+## Intake (UX_1)
+The interviewer's new-thread workflow. User posts a brief description or link — could be a new project, new feature, pivot on an existing feature, a bug, a one-off question, or an artifact-generation request. The interviewer's job:
+1. **Align** scope, intent, and success criteria via the `grill-with-docs` skill, anchored on `CONTEXT.md` + relevant ADRs.
+2. **Cascade** design choices via the `choose-wisely` skill, which iterates `CHOICES.md` to surface and resolve up/downstream design and architectural implications.
+3. **Decompose** the aligned, choice-resolved intent into ledger rows (tasks for workers, HITL prompts for the user) via the bookie.
+
+CHOICES vs ADRs (not redundant): `CHOICES.md` is the working ledger of scoped decisions (M/A/G/S/D/I tiers), one line each, cheap to add and revise — `choose-wisely` operates here. ADRs are the long-form record of hard-to-reverse architectural trade-offs (context, alternatives, consequences). A CHOICES entry graduates to an ADR when the trade-off is heavy enough to warrant the narrative. `grill-with-docs` reads ADRs (and `CONTEXT.md`) as anchor documents so questions are grounded in existing decisions.
+
+## HITL Prompt Flow (UX_2)
+The user-facing surface for an in-flight task that needs a high-impact decision or a human-taste judgement between multiple options. The interviewer (or a `class=taste` worker) writes a row to `hitl_prompts`; the UX Module Contract fans it out to every alive `arc-ux` module; the first reply wins; losing deliveries retract. See [HITL Prompt](#hitl-prompt), [HITL Class](#hitl-class), [Delivery](#delivery), [Retract](#retract).
 
 ## Claim
 The atomic transition `state=ready → state=claimed` performed by a single SQL `UPDATE…RETURNING`. Race-safe by construction — exactly one worker wins per task. Performed in bash by `worker-shell.sh` before the agent boots; the **only** ledger write that does not go through the bookie subagent.
