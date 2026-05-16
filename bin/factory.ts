@@ -7,12 +7,21 @@
 //   `bun bin/factory.ts --reap`    reap only, then exit
 //
 // Env:
-//   ARC_WORKER_MAX        max concurrent workers              (default 4)
+//   ARC_SLOTS_ANY         general-pool slots (any type)       (default 4)
+//   ARC_SLOTS_INTERACTIVE fast-pass slots reserved for type=interactive  (default 2)
+//   ARC_WORKER_MAX        legacy: if set, overrides ARC_SLOTS_ANY and disables fast-pass
 //   ARC_WORKER_MAX_AGE    seconds before reap                 (default 14400 = 4hr)
 //   ARC_FACTORY_INTERVAL  loop sleep seconds                  (default 5)
 //   ARC_WORKER_PREFIX     tmux session name prefix            (default "arc-worker")
 //   CLAUDE_BIN            claude binary                       (default "claude")
 //   ARC_LEDGER_DB         ledger path (forwarded to ledger.ts via --db)
+//
+// Two slot pools:
+//   - "any" pool serves the highest-priority ready row of any type.
+//   - "interactive" pool ONLY serves type=interactive (fast-pass for work the user
+//     is actively waiting on — next grill question, prefetch/precache, UX reply).
+//   Interactive rows may also consume "any" slots when fast-pass is full; "any" rows
+//   never consume interactive slots.
 //
 // One worker = one tmux session = one claude invocation = one task.
 // Session dies on completion → next tick respawns if more work exists.
@@ -27,7 +36,10 @@ const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SHELL = join(REPO, "bin", "worker-shell.sh");
 const LEDGER = join(REPO, "bin", "ledger.ts");
 
-const N_MAX = parseInt(process.env.ARC_WORKER_MAX ?? "4", 10);
+// Legacy ARC_WORKER_MAX collapses both pools into one general bucket.
+const LEGACY_MAX = process.env.ARC_WORKER_MAX ? parseInt(process.env.ARC_WORKER_MAX, 10) : null;
+const SLOTS_ANY = LEGACY_MAX ?? parseInt(process.env.ARC_SLOTS_ANY ?? "4", 10);
+const SLOTS_INTERACTIVE = LEGACY_MAX !== null ? 0 : parseInt(process.env.ARC_SLOTS_INTERACTIVE ?? "2", 10);
 const MAX_AGE = parseInt(process.env.ARC_WORKER_MAX_AGE ?? "14400", 10);
 const INTERVAL = parseInt(process.env.ARC_FACTORY_INTERVAL ?? "5", 10);
 const PREFIX = process.env.ARC_WORKER_PREFIX ?? "arc-worker";
@@ -65,41 +77,107 @@ export function reapStale(now: number = Math.floor(Date.now() / 1000)): string[]
   return reaped;
 }
 
-export function countReady(): number {
-  const r = spawnSync("bun", [LEDGER, "spawn-ready", ...DB_FLAG], { encoding: "utf8" });
-  if (r.status !== 0) return 0;
+type ReadyRow = { id: string; kind: string; type: string; title: string };
+
+export function listReady(typeFilter?: string): ReadyRow[] {
+  const args = [LEDGER, "spawn-ready", ...DB_FLAG];
+  if (typeFilter) args.push("--type", typeFilter);
+  const r = spawnSync("bun", args, { encoding: "utf8" });
+  if (r.status !== 0) return [];
   try {
     const rows = JSON.parse(r.stdout ?? "[]");
-    return Array.isArray(rows) ? rows.length : 0;
+    return Array.isArray(rows) ? rows : [];
   } catch {
-    return 0;
+    return [];
   }
+}
+
+export function countReady(): number {
+  return listReady().length;
 }
 
 function shortId(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
-export function spawnWorker(): string {
-  const name = `${PREFIX}-${shortId()}`;
+export function spawnWorker(pool: "any" | "interactive" = "any"): string {
+  // Embed pool in session name so listWorkers can re-derive pool membership without
+  // a sidecar registry. `-i-` = interactive fast-pass; `-a-` = any pool.
+  const infix = pool === "interactive" ? "i" : "a";
+  const name = `${PREFIX}-${infix}-${shortId()}`;
   // `tmux new-session -d -s <name> <cmd>` — detached, runs cmd, session dies when cmd exits.
   // Pass worker name as arg so the shell can pass it to `ledger claim`.
-  tmux(["new-session", "-d", "-s", name, "bash", SHELL, name]);
+  // For interactive pool, restrict the claim to type=interactive so a fast-pass slot
+  // never wastes itself on a backlog task that landed in the queue first.
+  const env = pool === "interactive" ? { ...process.env, ARC_CLAIM_TYPE: "interactive" } : process.env;
+  spawnSync("tmux", ["new-session", "-d", "-s", name, "bash", SHELL, name], { env });
   return name;
 }
 
-export function tick(): { reaped: string[]; swept: string[]; live: number; ready: number; spawned: string[] } {
+export type TickResult = {
+  reaped: string[];
+  swept: string[];
+  live: number;
+  ready: number;
+  spawned: string[];
+  pools: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
+};
+
+export function tick(): TickResult {
   const reaped = reapStale();
   const db = openWithMigrate(process.env.ARC_LEDGER_DB);
   const sweep = sweepStaleClaims(db);
   db.close();
-  const live = listWorkers().length;
-  const ready = countReady();
-  const slots = Math.max(0, N_MAX - live);
-  const toSpawn = Math.min(slots, ready);
+
+  // tmux sessions don't carry pool identity — track via prefix suffix `-i-` / `-a-`.
+  // Legacy sessions (no infix) count as "any".
+  const sessions = listWorkers();
+  const liveInteractive = sessions.filter((s) => s.name.startsWith(`${PREFIX}-i-`)).length;
+  const liveAny = sessions.length - liveInteractive;
+
+  const interactiveReady = listReady("interactive");
+  const allReady = listReady();
+  // Non-interactive ready rows: take from allReady, subtract interactive.
+  const interactiveIds = new Set(interactiveReady.map((r) => r.id));
+  const nonInteractiveReady = allReady.filter((r) => !interactiveIds.has(r.id));
+
   const spawned: string[] = [];
-  for (let i = 0; i < toSpawn; i++) spawned.push(spawnWorker());
-  return { reaped, swept: sweep.ids, live: live + spawned.length, ready, spawned };
+  let curInteractive = liveInteractive;
+  let curAny = liveAny;
+
+  // Phase 1: fill fast-pass slots with interactive work.
+  let iIdx = 0;
+  while (curInteractive < SLOTS_INTERACTIVE && iIdx < interactiveReady.length) {
+    spawned.push(spawnWorker("interactive"));
+    curInteractive++;
+    iIdx++;
+  }
+
+  // Phase 2: fill general slots — interactive overflow first (still highest priority),
+  // then non-interactive in priority order.
+  while (curAny < SLOTS_ANY && iIdx < interactiveReady.length) {
+    spawned.push(spawnWorker("any"));
+    curAny++;
+    iIdx++;
+  }
+  let nIdx = 0;
+  while (curAny < SLOTS_ANY && nIdx < nonInteractiveReady.length) {
+    spawned.push(spawnWorker("any"));
+    curAny++;
+    nIdx++;
+  }
+
+  return {
+    reaped,
+    swept: sweep.ids,
+    live: curAny + curInteractive,
+    ready: allReady.length,
+    spawned,
+    pools: {
+      any: { live: curAny, cap: SLOTS_ANY },
+      interactive: { live: curInteractive, cap: SLOTS_INTERACTIVE },
+    },
+  };
 }
 
 async function sleep(s: number): Promise<void> {

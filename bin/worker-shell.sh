@@ -18,7 +18,10 @@ DB_FLAG=()
 [ -n "${ARC_LEDGER_DB:-}" ] && DB_FLAG=(--db "${ARC_LEDGER_DB}")
 
 # Atomic claim. Race-safe — losers get claimed=null and exit.
-CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}")"
+# ARC_CLAIM_TYPE (set by factory for fast-pass pool) restricts claim to one type.
+TYPE_FLAG=()
+[ -n "${ARC_CLAIM_TYPE:-}" ] && TYPE_FLAG=(--type "${ARC_CLAIM_TYPE}")
+CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${TYPE_FLAG[@]}")"
 CLAIM_ID="$(echo "$CLAIM_JSON" | grep -oE '"claimed":[[:space:]]*"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/' || true)"
 
 if [ -z "$CLAIM_ID" ]; then

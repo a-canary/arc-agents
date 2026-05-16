@@ -105,17 +105,20 @@ switch (cmd) {
   }
 
   case "claim": {
-    // ledger claim <worker>  (no role; type priority does the picking)
+    // ledger claim <worker> [--type X]
+    // --type restricts the claim to a single priority class (used by fast-pass
+    // interactive pool so a reserved slot doesn't burn on backlog work).
     const worker = args[1] ?? die("worker required");
     if (worker.startsWith("--")) die("worker required (positional)");
+    const typeFilter = getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const row = db
-      .query<{ id: string }, [string]>(
-        `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind='task' ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
-         RETURNING id`,
-      )
-      .get(worker);
+    const typeClause = typeFilter ? "AND type=?2" : "";
+    const sql = `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind='task' ${typeClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
+         RETURNING id`;
+    const row = typeFilter
+      ? db.query<{ id: string }, [string, string]>(sql).get(worker, typeFilter)
+      : db.query<{ id: string }, [string]>(sql).get(worker);
     if (!row) {
       out({ claimed: null });
       break;
@@ -353,7 +356,8 @@ switch (cmd) {
   init                                 run migrations
   create --kind --type --title [...]   insert row (flag-only)
                                        flags: --project --body --acceptance --parent --blocked-by --agent
-  claim <worker>                       atomic claim of highest-priority ready task
+  claim <worker> [--type T]            atomic claim of highest-priority ready task
+                                       (--type restricts to one priority class)
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked (cap 5)
   update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
   event <id> <kind> <payload>          append event row
