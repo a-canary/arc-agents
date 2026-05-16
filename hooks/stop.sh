@@ -47,7 +47,7 @@ esac
 cat <<EOF
 {
   "decision": "block",
-  "reason": "AFK shutdown checklist — task $ARC_TASK_ID is still in state '$STATE'.\n\nBefore exiting, route ONE of these through the bookie subagent:\n  • Done?  → update --state merged --evidence \"<one-line>\" --pr <url-or-branch>\n  • Unrecoverable? → update --state failed --evidence \"<one-line>\"\n  • Needs a human? → decompose <task> --child \"<HITL step>\" [--child ...]  (cap 5)\n\nAlso suggested (not enforced): check that docs in scope are still accurate; commit as a-canary; remove your worktree with 'git worktree remove'.\n\nOnce the ledger is in a terminal or blocked state, this hook will pass through automatically."
+  "reason": "AFK shutdown checklist — task $ARC_TASK_ID is still in state '$STATE'.\n\nBefore exiting, route ONE of these through the bookie subagent:\n  • Done?  → update --state merged --evidence \"<one-line>\" --pr <url-or-branch>\n  • Unrecoverable? → update --state failed --evidence \"<one-line>\"\n  • Needs a human? → decompose <task> --child \"<HITL step>\" [--child ...]  (cap 5)\n\nAlso suggested (not enforced): check that docs in scope are still accurate; commit as the configured git user; remove your worktree with 'git worktree remove'.\n\nOnce the ledger is in a terminal or blocked state, this hook will pass through automatically."
 }
 EOF
 exit 0

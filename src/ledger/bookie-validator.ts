@@ -2,10 +2,18 @@
 // Used by bin/ledger.ts to reject positional create and bad enums before they
 // hit the schema CHECK and corrupt error messages with raw SQLITE_CONSTRAINT.
 
-export const KIND_VALUES = ["task", "chat_in", "encounter_reply", "prd"] as const;
+export const KIND_VALUES = [
+  "task",
+  "chat_in",
+  "chat_out",
+  "encounter_reply",
+  "prd",
+  "prefetch",
+] as const;
 export type Kind = (typeof KIND_VALUES)[number];
 
 export const TYPE_VALUES = [
+  "interactive",
   "HITL",
   "cron",
   "mvp",

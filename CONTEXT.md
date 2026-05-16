@@ -8,13 +8,16 @@ Glossary of domain terms. Definitions only — no implementation details, no spe
 The SQLite database at `~/vault/ledger.db` that is the system of record for all work. Two tables: `issues` (rows of work) and `issue_events` (append-only audit log). Every meaningful state change goes through it.
 
 ## Issue
-A row in the ledger representing a unit of work. Has a `kind` (task, chat_in, encounter_reply, prd), a `type` (priority class — HITL, mvp, security, …, deferred), and a `state` (ready → claimed → wip → review → merged, or → blocked / failed / cancelled).
+A row in the ledger representing a unit of work. Has a `kind` (task, chat_in, chat_out, encounter_reply, prd, prefetch), a `type` (priority class — interactive, HITL, mvp, security, …, deferred), and a `state` (ready → claimed → wip → review → merged, or → blocked / failed / cancelled).
+
+## Interactive (type)
+A `type` reserved for work the user is *actively waiting on*: next interviewer reply (`chat_out`), prefetch/precache for a pending taste/impact decision, UX request. Ranks above HITL in priority. Served by the fast-pass slot pool in the factory (see CHOICES `I-0007`).
+
+## HITL
+"Human-In-The-Loop." A `type` reserved for issues that an autonomous AFK worker cannot complete alone — they require a human decision, action, or external account. Distinct from the [HITL Prompt](#hitl-prompt) (a row in `hitl_prompts`, which is a *question to the user* surfaced via the UX Module Contract).
 
 ## Task
 An issue with `kind=task`. The only kind that workers claim and execute.
-
-## HITL
-"Human-In-The-Loop." A `type` reserved for issues that an autonomous AFK worker cannot complete alone — they require a human decision, action, or external account. HITL is the highest priority class.
 
 ## Worker
 A short-lived `claude` invocation that claims one task, executes it, and exits. Workers run inside ephemeral tmux sessions named `arc-worker-<rand>`. One worker = one tmux session = one claude process = one task. There is no long-lived worker.
@@ -49,7 +52,7 @@ The act of breaking a parent task into N HITL children atomically: insert N chil
 An issue state from which there is no exit: `merged` and `cancelled`. Once a row reaches a terminal state, no writes are accepted against it.
 
 ## AFK Shutdown
-The checklist a worker runs through before exiting its claude session: drive the task to a terminal state (merged + evidence + pr, or failed + evidence), or decompose it into HITL children (state=blocked). Suggested but not enforced: verify in-scope docs are still accurate; commit as `a-canary`; remove the worktree. The Stop hook (`hooks/stop.sh`) reminds the worker of this checklist; it does not enforce stale-doc checks.
+The checklist a worker runs through before exiting its claude session: drive the task to a terminal state (merged + evidence + pr, or failed + evidence), or decompose it into HITL children (state=blocked). Suggested but not enforced: verify in-scope docs are still accurate; commit as the configured git user; remove the worktree. The Stop hook (`hooks/stop.sh`) reminds the worker of this checklist; it does not enforce stale-doc checks.
 
 ## Worktree
 A git working copy under `~/worktrees/<repo>-<slug>/` created by a worker for the lifetime of one task. Removed by the worker as part of AFK shutdown.

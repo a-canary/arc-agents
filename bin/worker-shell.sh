@@ -47,5 +47,5 @@ When done, exit naturally — the Stop hook will verify terminal state and let
 the session end. tmux session dies → factory respawns next tick if more work."
 
 exec "$CLAUDE" \
-  --append-system-prompt "kind=worker; worker=${WORKER}; task=${CLAIM_ID}; ephemeral; autonomous AFK; commit as a-canary; route all ledger writes through bookie subagent" \
+  --append-system-prompt "kind=worker; worker=${WORKER}; task=${CLAIM_ID}; ephemeral; autonomous AFK; commit as the configured git user (\`git config user.name\`); route all ledger writes through bookie subagent" \
   "$PROMPT"

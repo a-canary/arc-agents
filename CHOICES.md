@@ -115,7 +115,7 @@ Writes ledger rows on behalf of agents. Single point of validation.
 `bun link` from `~/repos/arc-agents/` → `~/.local/bin/{ledger,agent}`. Only after merge to main.
 
 ### I-0006: Git Author
-Commits as `a-canary <noreply>`.
+Commits use the deployer's configured git user (`git config user.name` / `user.email`). No hardcoded author in framework code — repo is public, deployed by many.
 
 ---
 

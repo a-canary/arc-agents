@@ -78,9 +78,9 @@ External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine), `
 - **Vault overrides repo** (`A-0004`) where both exist. Vault never pushed.
 - **TypeScript default** (`G-0008`), Bun runtime.
 - **Two-tier model policy** (`G-0006`): Opus 4.7 for synthesis (≤$10/day), minimax-m2.7 for implementation (direct API).
-- **Commit author** is `a-canary <noreply>` (`I-0006`).
+- **Commit author** is whatever `git config user.name` / `user.email` resolve to (`I-0006`). No hardcoded usernames.
 - **One slice per worktree per commit** (`G-0005`), 100k token smart-zone cap.
 
 ## AFK shutdown (workers)
 
-Before exiting, drive the task to terminal: either `merged` (with evidence + PR) or `failed` (with evidence), or `decompose` into HITL children (state=blocked). The `hooks/stop.sh` Stop hook reminds — it does not enforce. Commit as `a-canary`, remove the worktree.
+Before exiting, drive the task to terminal: either `merged` (with evidence + PR) or `failed` (with evidence), or `decompose` into HITL children (state=blocked). The `hooks/stop.sh` Stop hook reminds — it does not enforce. Commit as the configured git user, remove the worktree.

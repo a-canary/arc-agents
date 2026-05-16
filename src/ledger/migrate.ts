@@ -296,6 +296,81 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "010_expand_kind_type_for_path_b",
+    // Path B: interviewer goes ephemeral. Expand `kind` to cover chat_out + prefetch.
+    // Expand `type` with `interactive` for the fast-pass slot pool (user-is-waiting work:
+    // next chat reply, prefetch for pending taste/impact decision, UX request).
+    up: (db) => {
+      db.exec("DROP TRIGGER IF EXISTS unblock_dependents");
+      db.exec("DROP INDEX IF EXISTS idx_issues_ready");
+      db.exec("DROP INDEX IF EXISTS idx_issues_thread");
+      db.exec("DROP INDEX IF EXISTS idx_issues_parent");
+      db.exec("DROP INDEX IF EXISTS idx_issues_claimed_at");
+
+      db.exec(`
+        CREATE TABLE issues_new (
+          id            TEXT PRIMARY KEY,
+          project       TEXT NOT NULL,
+          parent_id     TEXT REFERENCES issues_new(id),
+          title         TEXT NOT NULL,
+          body_md       TEXT NOT NULL,
+          acceptance_md TEXT NOT NULL DEFAULT '',
+          type          TEXT NOT NULL
+                        CHECK (type IN ('interactive','HITL','cron','mvp','security','quality','scale','efficiency','deferred')),
+          state         TEXT NOT NULL DEFAULT 'ready'
+                        CHECK (state IN ('ready','claimed','wip','blocked','review','merged','cancelled','failed')),
+          hitl          INTEGER NOT NULL DEFAULT 0 CHECK (hitl IN (0,1)),
+          kind          TEXT NOT NULL DEFAULT 'task'
+                        CHECK (kind IN ('task','chat_in','chat_out','encounter_reply','prd','prefetch')),
+          blocked_by    TEXT CHECK (blocked_by IS NULL OR blocked_by LIKE '[%]'),
+          worktree_path TEXT,
+          branch        TEXT,
+          pr_url        TEXT,
+          evidence_md   TEXT,
+          thread_id     TEXT,
+          encounter_mode TEXT,
+          encounter_timeout_at INTEGER,
+          encounter_default_resolution TEXT,
+          created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          claimed_at    INTEGER,
+          claimed_by    TEXT
+        );
+      `);
+
+      db.exec(`
+        INSERT INTO issues_new
+        SELECT * FROM issues;
+      `);
+
+      db.exec("DROP TABLE issues");
+      db.exec("ALTER TABLE issues_new RENAME TO issues");
+
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_ready ON issues(state, kind, type) WHERE state='ready'");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_thread ON issues(thread_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_parent ON issues(parent_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_claimed_at ON issues(claimed_at) WHERE state='claimed'");
+
+      db.exec(`
+        CREATE TRIGGER unblock_dependents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state = 'merged' AND OLD.state != 'merged'
+        BEGIN
+          UPDATE issues
+          SET state = 'ready', updated_at = strftime('%s','now')
+          WHERE state = 'blocked'
+            AND blocked_by IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state != 'merged'
+            );
+        END;
+      `);
+    },
+  },
 ];
 
 export function migrate(db: Database): string[] {
