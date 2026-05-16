@@ -66,11 +66,15 @@ export function resolveTemplate(kind: string, type: string): Template {
   return TABLE[`${kind}/${type}` as keyof typeof TABLE] ?? DEFAULT_TEMPLATE;
 }
 
+export type ThreadTurn = { id: string; kind: string; title: string; body: string };
+
 export type RenderInput = {
   kind: string;
   type: string;
   worker: string;
   task: string;
+  thread_id?: string;
+  thread_history?: ThreadTurn[];
 };
 
 export function renderSystemPrompt(input: RenderInput): string {
@@ -78,15 +82,30 @@ export function renderSystemPrompt(input: RenderInput): string {
   const skillsLine = t.opening_skills.length
     ? `Opening skills (load on first turn): ${t.opening_skills.map((s) => `/${s}`).join(", ")}.`
     : "";
+  const header = input.thread_id
+    ? `kind=${input.kind}; type=${input.type}; worker=${input.worker}; task=${input.task}; thread=${input.thread_id}; ephemeral.`
+    : `kind=${input.kind}; type=${input.type}; worker=${input.worker}; task=${input.task}; ephemeral.`;
+  const replay = renderThreadReplay(input.thread_history);
   return [
-    `kind=${input.kind}; type=${input.type}; worker=${input.worker}; task=${input.task}; ephemeral.`,
+    header,
     FRAMES[t.frame],
     CAVEMAN,
     skillsLine,
     BOOKIE_ROUTING,
     COMMIT_AUTHOR,
+    replay,
     ...(t.extras ?? []),
   ]
     .filter(Boolean)
     .join("\n\n");
+}
+
+function renderThreadReplay(turns: ThreadTurn[] | undefined): string {
+  if (!turns || turns.length === 0) return "";
+  const lines = turns.map((t) => {
+    const speaker = t.kind === "chat_in" ? "user" : "you";
+    const body = t.body.trim() || t.title;
+    return `[${speaker}] ${body}`;
+  });
+  return `Prior turns in this thread (oldest first):\n${lines.join("\n")}`;
 }

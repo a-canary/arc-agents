@@ -26,7 +26,7 @@ A short-lived `claude` invocation that claims one task, executes it, and exits. 
 The supervisor daemon (`bin/factory.ts`) that reaps stale worker sessions and spawns fresh ones when the ledger has ready tasks. The factory is always-on; workers are not.
 
 ## Interviewer
-The single long-lived `claude` session attached by `bin/launch.ts`. User-facing chat. Not a worker — does not claim tasks. Writes to the ledger via the bookie subagent the same way workers do. Owns the two user-facing UX flows: **Intake** (UX_1) and **HITL Prompt** (UX_2).
+An ephemeral `claude` session spawned by the factory's fast-pass pool to service one `chat_in` row (ADR 0003). Same spawn path as workers — there is no long-lived interviewer. The user posts via `bin/arc-chat.ts post`; the interviewer reads prior turns for the same `thread_id` from the ledger (via `render-prompt` thread replay), replies by creating a `chat_out` row, exits. Owns the two user-facing UX flows: **Intake** (UX_1) and **HITL Prompt** (UX_2). Writes to the ledger via the bookie subagent the same way workers do.
 
 ## Intake (UX_1)
 The interviewer's new-thread workflow. User posts a brief description or link — could be a new project, new feature, pivot on an existing feature, a bug, a one-off question, or an artifact-generation request. The interviewer's job:

@@ -36,7 +36,7 @@ bun link && bun link arc-agents      # registers ledger, arc-launch, wait-for-le
 **Ledger is the message bus.** SQLite at `~/vault/ledger.db` with two tables: `issues` and `issue_events` (append-only). Every state change is an atomic SQL transition. No daemons, no IPC, no queues — just rows.
 
 **Three runtime actors:**
-- **Interviewer** — one long-lived `claude` pane (`bin/launch.ts`, tmux session `arc`). User-facing chat. Writes via bookie.
+- **Interviewer** — ephemeral, same factory pool as workers (ADR 0003). User posts via `bin/arc-chat.ts post <msg>`; the factory's fast-pass slot claims the resulting `chat_in` row and the worker (frame=intake, skills=grill-with-docs+choose-wisely+ke-recall) emits a `chat_out` reply tagged with the same `thread_id`. `bin/arc-chat.ts tail --thread T` streams replies. `bin/launch.ts` is deprecated.
 - **Workers** — ephemeral tmux sessions (`arc-worker-<rand>`). Each = one task = one `claude` process. Booted by `bin/worker-shell.sh`, which performs the atomic claim in bash then `exec`s interactive `claude`. The claim is the *only* ledger write that bypasses the bookie.
 - **Factory** — supervisor daemon (`bin/factory.ts`). Reaps workers >4hr old, spawns fresh ones up to N=4 when ready tasks exist. Always-on.
 

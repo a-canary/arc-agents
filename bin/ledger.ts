@@ -89,19 +89,20 @@ switch (cmd) {
     const parent = input.parent ?? null;
     const blockedBy = input.blockedBy ?? null;
     const state = blockedBy ? "blocked" : "ready";
+    const thread = getFlag("thread") ?? null;
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
     db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy],
+      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread],
     );
     db.run(
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
       [id, getFlag("agent") ?? "cli", title],
     );
-    out({ id, state });
+    out({ id, state, thread_id: thread });
     break;
   }
 
@@ -337,10 +338,34 @@ switch (cmd) {
     const worker = getFlag("worker") ?? "unknown";
     const db = openWithMigrate(getFlag("db"));
     const row = db
-      .query<{ kind: string; type: string }, [string]>(`SELECT kind, type FROM issues WHERE id=?`)
+      .query<{ kind: string; type: string; thread_id: string | null }, [string]>(
+        `SELECT kind, type, thread_id FROM issues WHERE id=?`,
+      )
       .get(id);
     if (!row) die(`no issue ${id}`);
-    process.stdout.write(renderSystemPrompt({ kind: row.kind, type: row.type, worker, task: id }));
+    // Thread replay: for chat_in tasks, include prior chat turns so the cold
+    // interviewer has conversational continuity. Order = id (mintId is time-monotonic).
+    let thread_history: { id: string; kind: string; title: string; body: string }[] | undefined;
+    if (row.thread_id) {
+      thread_history = db
+        .query<{ id: string; kind: string; title: string; body: string }, [string, string]>(
+          `SELECT id, kind, title, COALESCE(body_md, '') AS body
+           FROM issues
+           WHERE thread_id=? AND id != ? AND kind IN ('chat_in','chat_out')
+           ORDER BY id`,
+        )
+        .all(row.thread_id, id);
+    }
+    process.stdout.write(
+      renderSystemPrompt({
+        kind: row.kind,
+        type: row.type,
+        worker,
+        task: id,
+        thread_id: row.thread_id ?? undefined,
+        thread_history,
+      }),
+    );
     break;
   }
 
