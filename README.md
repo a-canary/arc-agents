@@ -101,4 +101,4 @@ External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine),
 
 ## License
 
-TBD. Treat as source-available for reading; do not redistribute yet.
+MIT — see [`LICENSE`](./LICENSE).
