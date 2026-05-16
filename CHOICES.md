@@ -79,6 +79,9 @@ TS over Python where reasonable. Bun runtime.
 ### S-0002: Skills Location
 `~/repos/arc-agents/skills/`.
 
+### S-0003: Replay-Shadow as the Confidence Primitive
+Capture one real worker turn → replay against candidate config in an isolated sandbox → diff transcript + ledger writes + quality signals. Run on a corpus (~30) before promoting prompt/template/model/skill-set changes. Generic dev practice, not arc-specific; harness is per-system (`bin/arc-replay.ts` for arc-agents). Skill defines contract, system wires it. Not a substitute for live shadow on concurrency/UX/scale regressions. See `skills/replay-shadow/SKILL.md`.
+
 ---
 
 ## Data
