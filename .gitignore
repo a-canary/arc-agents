@@ -1,6 +1,30 @@
 .private/
+.local/
+.scratch/
 node_modules/
 *.log
 *.tsbuildinfo
 .DS_Store
 bun.lockb
+
+# Claude session/state — never commit
+.claude/worktrees/
+.claude/projects/
+.claude/todos/
+.claude/cache/
+.claude/file-history/
+.claude/shell-snapshots/
+.claude/sessions/
+.claude/backups/
+.claude/plans/
+.claude/history.jsonl
+.claude/settings.local.json
+
+# Local DBs / env
+*.db
+*.db-shm
+*.db-wal
+*.sqlite
+*.sqlite3
+.env
+.env.*

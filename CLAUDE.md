@@ -1,0 +1,86 @@
+# CLAUDE.md
+
+This file provides guidance to Claude Code (claude.ai/code) when working with code in this repository.
+
+## Canonical docs (read first)
+
+- `CONTEXT.md` — domain glossary (Ledger, Issue, Worker, Factory, Interviewer, Bookie, Claim, Decomposition, Worktree, Reap). Definitions only.
+- `CHOICES.md` — scoped decisions (M-* mission, A-* architecture, G-* design, S-* skills, D-* data, I-* implementation). Higher tier constrains lower.
+- `PRD-v1.md` — product spec. `PRD-arc-webui.md` + `SLICE-PLAN-arc-webui.md` — webui slice.
+- `docs/adr/` — architecture decision records (when present).
+
+Treat `CONTEXT.md` as a glossary, not a spec — do not put implementation details there. Use `CHOICES.md` for decisions, ADRs for hard-to-reverse trade-offs.
+
+## Commands
+
+Runtime is **Bun** (not Node). TypeScript throughout.
+
+```
+bun install                          # install deps
+bun test                             # run all tests (bun's test runner)
+bun test bin/ledger.test.ts          # single test file
+bun test -t "claims atomically"      # filter by test name
+bun run typecheck                    # tsc --noEmit
+bun bin/ledger.ts <verb>             # invoke CLI without install
+```
+
+CLI verbs (see `I-0001`): `init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum`.
+
+Install bins on PATH (only after merge to main, per `I-0005`):
+```
+bun link && bun link arc-agents      # registers ledger, arc-launch, wait-for-ledger
+```
+
+## Architecture (big picture)
+
+**Ledger is the message bus.** SQLite at `~/vault/ledger.db` with two tables: `issues` and `issue_events` (append-only). Every state change is an atomic SQL transition. No daemons, no IPC, no queues — just rows.
+
+**Three runtime actors:**
+- **Interviewer** — one long-lived `claude` pane (`bin/launch.ts`, tmux session `arc`). User-facing chat. Writes via bookie.
+- **Workers** — ephemeral tmux sessions (`arc-worker-<rand>`). Each = one task = one `claude` process. Booted by `bin/worker-shell.sh`, which performs the atomic claim in bash then `exec`s interactive `claude`. The claim is the *only* ledger write that bypasses the bookie.
+- **Factory** — supervisor daemon (`bin/factory.ts`). Reaps workers >4hr old, spawns fresh ones up to N=4 when ready tasks exist. Always-on.
+
+**Bookie subagent** (`.claude/agents/bookie.md`) is the sole authority for ledger *writes* inside an agent session. Workers and the interviewer delegate all writes via the Agent tool. Reads bypass the bookie.
+
+**Issue lifecycle:** `ready → claimed → wip → review → merged` (or `→ blocked / failed / cancelled`). `merged` and `cancelled` are terminal. Cascade-on-merge: a SQL trigger flips dependents `blocked → ready` when all blockers merge; `ledger tick` is the polling backstop.
+
+**Decomposition:** an AFK worker that hits a blocker only a human can resolve atomically inserts N HITL children + sets `parent.blocked_by=[childIds]` + flips parent to `blocked`. Fanout cap = 5, recursion allowed.
+
+## Layout
+
+```
+bin/        executables (ledger, launch, factory, worker-shell.sh, wait-for-ledger)
+src/        library code (ledger/, profiles/)
+profiles/   role JSON (developer, director, admin) — context, boot skills, model, budget, concurrency
+skills/     skill definitions (bookie, ke-recall, ke-learn, claude-afk, to-ledger, triage-failed)
+hooks/      claude hooks (session-start, stop, session-end, pre-tool-use)
+system/     system-level docs
+contexts/   per-bounded-context glossaries (CONTEXT.md each), when multi-context
+.private/   gitignored local state
+```
+
+External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine), `~/vault/agents/<role>/` (memory, inbox, journal, outbox), `~/worktrees/<repo>-<slug>/` (worker scratch).
+
+## Role selection by cwd (`A-0003`)
+
+1. `~/vault/agents/admin/` → Admin
+2. `~/vault/agents/director/` → Director
+3. `~/worktrees/<repo>-*/` → Developer
+4. `~/repos/<name>/` → Developer (read-mostly)
+5. fallback → Director
+
+## Hard constraints
+
+- **Interactive panes only** (`M-0002`). No `claude -p` headless subprocesses — billing-driven.
+- **Atomic claim** (`G-0002`). One SQL `UPDATE...RETURNING` decides the winner. Don't add locks or retry loops.
+- **All writes through bookie** except the bootstrap claim in `worker-shell.sh`.
+- **No symlinks during migrations** (`G-0007`). Move files; let subagents fix refs.
+- **Vault overrides repo** (`A-0004`) where both exist. Vault never pushed.
+- **TypeScript default** (`G-0008`), Bun runtime.
+- **Two-tier model policy** (`G-0006`): Opus 4.7 for synthesis (≤$10/day), minimax-m2.7 for implementation (direct API).
+- **Commit author** is `a-canary <noreply>` (`I-0006`).
+- **One slice per worktree per commit** (`G-0005`), 100k token smart-zone cap.
+
+## AFK shutdown (workers)
+
+Before exiting, drive the task to terminal: either `merged` (with evidence + PR) or `failed` (with evidence), or `decompose` into HITL children (state=blocked). The `hooks/stop.sh` Stop hook reminds — it does not enforce. Commit as `a-canary`, remove the worktree.
