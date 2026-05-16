@@ -1,20 +1,22 @@
 ---
 name: claude-afk
-description: "Headless-shaped invocation of `claude` that runs in an interactive tmux pane so it bills against the Max plan instead of API/extra-usage. Drop-in for `claude -p --output-format json` for callers who own a Max subscription with extra-usage disabled."
+description: "Headless-shaped invocation of `claude` that runs inside an interactive tmux pane you can attach to live. Gives you the shape of `claude -p --output-format json` with full transparency: every turn is observable in real time, attachable mid-flight, and inspectable after the fact via the session log."
 ---
 
-# claude-afk — Max-Billed Headless `claude`
+# claude-afk — Observable Headless `claude`
 
 ## When to use
 
-You want the shape of `claude -p --output-format json` (give prompt, block, get JSON, exit) but the billing of an interactive Claude Code session.
+You want the shape of `claude -p --output-format json` (give prompt, block, get JSON, exit), but you also want to *see what the agent is doing* while it runs — not just the final JSON.
 
 Applies when:
-- You have a Max plan.
-- Extra-usage is **off** (so `claude -p` would hit a wall, not transparently overflow to API).
-- You want one-shot agentic invocations from scripts, cron, or other agents.
+- You're orchestrating one-shot agentic invocations from scripts, cron, or other agents.
+- You want to be able to `tmux attach` mid-run to watch tool use, intervene, or debug.
+- You want the full session transcript available after exit, not just the summarized `result`.
 
-If any of those is false, just use `claude -p`. This recipe is overhead you don't need.
+Primary value is **transparency and observability**: a real Claude Code session under the hood means you get the same UI, the same tool-call rendering, the same scrollback, and the same hook surface as if you'd typed the prompt yourself.
+
+(Side benefit: because the work runs inside an interactive Claude Code session, it bills against the Max plan's Claude-Code bucket rather than the extra-usage/API bucket — useful if you're on Max with extra-usage off. Not the reason to reach for this skill, just a happy side effect.)
 
 ## Contract (what callers can rely on)
 
@@ -196,4 +198,4 @@ This skill *is* the product. The "binary" is 60 lines of bash that the user alre
 
 ## Relationship to arc-agents
 
-arc-agents uses the same mechanism (interactive `claude` in tmux, Stop hook for signaling) but does not need claude-afk because it dispatches via the ledger rather than blocking on JSON output. claude-afk is for *other* systems — cron jobs, scripts, agents — that already speak `claude -p` and want Max billing without re-architecting around a ledger.
+arc-agents uses the same mechanism (interactive `claude` in tmux, Stop hook for signaling) but does not need claude-afk because it dispatches via the ledger rather than blocking on JSON output. claude-afk is for *other* systems — cron jobs, scripts, agents — that already speak `claude -p` and want the observability of a live tmux pane (and, incidentally, Max-bucket billing) without re-architecting around a ledger.

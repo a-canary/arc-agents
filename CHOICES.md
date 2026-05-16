@@ -10,7 +10,7 @@ Project-scope decisions. System-level decisions live in `~/arc-agents/system/CHO
 SQLite ledger at `~/vault/ledger.db` is the message bus. No daemons, no IPC. State transitions are atomic SQL.
 
 ### M-0002: Interactive Panes Only
-Runtime is always-on `claude` panes. No headless `claude -p` subprocesses (billing constraint).
+Runtime is always-on `claude` panes. No headless `claude -p` subprocesses. Primary reason: transparency and observability — every worker is an attachable tmux pane with live tool-use rendering and full scrollback. Side benefit: interactive panes bill against the Max Claude-Code bucket rather than extra-usage.
 
 ### M-0003: Universal Across CLI Runtimes
 Primary: claude code. Adapters: pi, qwen, opencode. Agents defined once.

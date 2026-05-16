@@ -71,7 +71,7 @@ External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine), `
 
 ## Hard constraints
 
-- **Interactive panes only** (`M-0002`). No `claude -p` headless subprocesses — billing-driven.
+- **Interactive panes only** (`M-0002`). No `claude -p` headless subprocesses — transparency/observability driven (live attachable tmux panes, full scrollback); Max-bucket billing is a side benefit.
 - **Atomic claim** (`G-0002`). One SQL `UPDATE...RETURNING` decides the winner. Don't add locks or retry loops.
 - **All writes through bookie** except the bootstrap claim in `worker-shell.sh`.
 - **No symlinks during migrations** (`G-0007`). Move files; let subagents fix refs.

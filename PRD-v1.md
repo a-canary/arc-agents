@@ -10,7 +10,7 @@ Universal agent harness. Ledger-dispatched, interactive-pane runtime. Replaces `
 
 **M-2.** Dispatch is a **SQLite ledger** at `~/vault/ledger.db`. Every unit of work — task, chat, encounter, proposal — is a row. State transitions are atomic SQL. No daemons, no IPC sockets, no devd.
 
-**M-3.** Runtime is **always-on interactive claude panes**, not headless `claude -p` subprocesses. Reason: Anthropic Max sub splits Claude-Code from extra-usage billing; extra-usage is off; headless burns the wrong bucket. Interactive panes use the Claude-Code bucket.
+**M-3.** Runtime is **always-on interactive claude panes**, not headless `claude -p` subprocesses. Primary reason: transparency and observability — every worker is a live tmux pane you can attach to, watch tool use in real time, intervene mid-flight, and inspect after the fact via scrollback. Side benefit: interactive panes bill against the Max plan's Claude-Code bucket rather than the extra-usage/API bucket, which matters if Max with extra-usage off is the subscription shape in play.
 
 **M-4.** Every session does **ke-recall** on start and **ke-learn** on stop. Knowledge compounds in `~/vault/ke/` (FTS5 + Qdrant). Deprecated `~/kb/`.
 
