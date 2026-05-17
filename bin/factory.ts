@@ -77,6 +77,32 @@ export function reapStale(now: number = Math.floor(Date.now() / 1000)): string[]
   return reaped;
 }
 
+// Tier-1 reap: a worker whose claimed task has reached a terminal/blocked state
+// is done — claude often lingers at its interactive prompt after writing the
+// final turn (M-0002 mandates interactive panes, so we can't use --print). Kill
+// the session so the slot frees up without waiting for MAX_AGE (tier-2 failsafe).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function reapFinished(db: any): string[] {
+  const sessions = listWorkers();
+  if (sessions.length === 0) return [];
+  const names = sessions.map((s) => s.name);
+  const placeholders = names.map(() => "?").join(",");
+  const rows = db
+    .query(
+      `SELECT claimed_by, state FROM issues WHERE claimed_by IN (${placeholders}) AND state IN ('merged','failed','cancelled','blocked')`,
+    )
+    .all(...names) as { claimed_by: string; state: string }[];
+  const done = new Set(rows.map((r) => r.claimed_by));
+  const reaped: string[] = [];
+  for (const name of names) {
+    if (done.has(name)) {
+      tmux(["kill-session", "-t", name]);
+      reaped.push(name);
+    }
+  }
+  return reaped;
+}
+
 type ReadyRow = { id: string; kind: string; type: string; title: string };
 
 export function listReady(typeFilter?: string): ReadyRow[] {
@@ -124,10 +150,12 @@ export type TickResult = {
 };
 
 export function tick(): TickResult {
-  const reaped = reapStale();
+  const reapedAge = reapStale();
   const db = openWithMigrate(process.env.ARC_LEDGER_DB);
   const sweep = sweepStaleClaims(db);
+  const reapedDone = reapFinished(db);
   db.close();
+  const reaped = [...reapedAge, ...reapedDone];
 
   // tmux sessions don't carry pool identity — track via prefix suffix `-i-` / `-a-`.
   // Legacy sessions (no infix) count as "any".
