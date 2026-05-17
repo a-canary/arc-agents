@@ -398,7 +398,7 @@ switch (cmd) {
                                        flags: --project --body --acceptance --parent --blocked-by --agent
   claim <worker> [--type T]            atomic claim of highest-priority ready task
                                        (--type restricts to one priority class)
-  decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked (cap 5)
+  decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
   update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
   event <id> <kind> <payload>          append event row
   list [--state --kind --type --limit]

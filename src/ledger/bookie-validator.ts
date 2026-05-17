@@ -91,8 +91,6 @@ export type DecomposeInput = {
   children?: string[];
 };
 
-export const DECOMPOSE_FANOUT_CAP = 5;
-
 export function validateDecompose(input: DecomposeInput): ValidationError[] {
   const errs: ValidationError[] = [];
   if (!input.parent || input.parent.startsWith("--")) {
@@ -101,12 +99,6 @@ export function validateDecompose(input: DecomposeInput): ValidationError[] {
   const children = input.children ?? [];
   if (children.length === 0) {
     errs.push({ field: "--child", message: "at least one --child required" });
-  }
-  if (children.length > DECOMPOSE_FANOUT_CAP) {
-    errs.push({
-      field: "--child",
-      message: `fanout cap exceeded: got ${children.length}, max ${DECOMPOSE_FANOUT_CAP}. split into multiple decompose calls or reconsider task shape`,
-    });
   }
   for (const c of children) {
     if (!c || c.startsWith("--")) {

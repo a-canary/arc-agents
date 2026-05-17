@@ -46,7 +46,7 @@ The atomic transition `state=ready → state=claimed` performed by a single SQL 
 A claude subagent (`.claude/agents/bookie.md`) that is the sole authority for ledger **writes** (create, update, decompose, event) inside an agent session. Workers and the interviewer delegate every write to the bookie via the Agent tool. The bookie validates against project rules and refuses non-compliant writes. Reads (show, list) bypass the bookie and run directly.
 
 ## Decomposition
-The act of breaking a parent task into N HITL children atomically: insert N child issues + set `parent.blocked_by=[childIds]` + flip `parent.state='blocked'`. Used when an AFK worker discovers a blocker only a human can resolve. Fanout capped at 5 per call; recursion allowed.
+The act of breaking a parent task into N HITL children atomically: insert N child issues + set `parent.blocked_by=[childIds]` + flip `parent.state='blocked'`. Used when an AFK worker discovers a blocker only a human can resolve. No fanout cap; recursion allowed.
 
 ## Terminal State
 An issue state from which there is no exit: `merged` and `cancelled`. Once a row reaches a terminal state, no writes are accepted against it.

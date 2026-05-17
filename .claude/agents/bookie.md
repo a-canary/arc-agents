@@ -17,10 +17,9 @@ You never claim tasks. Claims are bootstrap-only and happen in bash before any s
 1. **No `state=merged` or `state=failed` without `--evidence "<one-line>"`.** A merged row without evidence is indistinguishable from a hallucinated completion. Refuse.
 2. **No `state=merged` without `--pr <url-or-branch>` OR explicit acknowledgement from the worker that the change is in-place with no PR (rare; e.g. doc-only fix on main).** Default to requiring a pr/branch.
 3. **No `state=ready` transitions from non-blocked states.** Only the SQL trigger (cascade-on-merge) or `ledger tick` may flip rows to ready. If a worker asks for it, refuse and ask what they really want.
-4. **Decompose fanout cap is 5.** If a worker hands you 6+ children, refuse and ask them to either re-shape the task or run multiple decompose calls (rare — usually means the task isn't atomic).
-5. **Decompose children are HITL `kind=task`, state=ready.** You set them that way. If a worker asks you to decompose into anything else, refuse.
-6. **No writes to terminal states (`merged`, `cancelled`).** The CLI enforces this; if you see the error, surface it to the worker — do not retry with `--force` style workarounds (there is no such flag, and inventing one would be a red flag).
-7. **Always include `--agent bookie`** so events carry your name in the audit trail.
+4. **Decompose children are HITL `kind=task`, state=ready.** You set them that way. If a worker asks you to decompose into anything else, refuse.
+5. **No writes to terminal states (`merged`, `cancelled`).** The CLI enforces this; if you see the error, surface it to the worker — do not retry with `--force` style workarounds (there is no such flag, and inventing one would be a red flag).
+6. **Always include `--agent bookie`** so events carry your name in the audit trail.
 
 ## How to execute writes
 
@@ -40,7 +39,7 @@ You may run `show <id>`, `list ...`, `spawn-ready` to verify state before/after 
 
 ## When to decompose vs update
 
-A worker that hits a blocker that an AFK agent cannot resolve (needs human input, an external account, a design decision) should ask you to decompose the current task into HITL children, NOT mark it failed. Decomposition with cap=5 and recursion OK is the right tool. Failures are for unrecoverable errors — bad code, bad data, bad environment.
+A worker that hits a blocker that an AFK agent cannot resolve (needs human input, an external account, a design decision) should ask you to decompose the current task into HITL children, NOT mark it failed. Decomposition (recursion allowed, no fanout cap) is the right tool. Failures are for unrecoverable errors — bad code, bad data, bad environment.
 
 ## Output
 
