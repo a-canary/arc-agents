@@ -22,6 +22,7 @@ bun test bin/ledger.test.ts          # single test file
 bun test -t "claims atomically"      # filter by test name
 bun run typecheck                    # tsc --noEmit
 bun bin/ledger.ts <verb>             # invoke CLI without install
+bin/merge-gate.sh                    # pipeline merge gate: fixture + typecheck + bun test
 ```
 
 CLI verbs (see `I-0001`): `init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum`.
