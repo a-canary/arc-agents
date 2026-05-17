@@ -64,3 +64,18 @@ test("zero ready tasks shows 0, not '?'", () => {
   expect(r.status).toBe(0);
   expect(r.stdout).toMatch(/ready tasks.*: 0/);
 });
+
+test("prints profile context_files + boot_skills when role profile exists", () => {
+  const r = runHook({ ARC_ROLE: "developer" });
+  expect(r.status).toBe(0);
+  expect(r.stdout).toMatch(/profile:.*developer\.json/);
+  expect(r.stdout).toMatch(/context_files/);
+  expect(r.stdout).toMatch(/roles\/AGENTS\.md/);
+  expect(r.stdout).toMatch(/boot_skills.*\/ke-recall/);
+});
+
+test("unknown role skips profile block", () => {
+  const r = runHook({ ARC_ROLE: "unknown" });
+  expect(r.status).toBe(0);
+  expect(r.stdout).not.toMatch(/profile:/);
+});

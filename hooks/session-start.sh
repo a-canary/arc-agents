@@ -13,4 +13,25 @@ if [ -f "$LEDGER" ] && command -v bun >/dev/null 2>&1; then
   echo "[arc-agents] ready tasks for $ROLE: $ready"
 fi
 
+PROFILE="$REPO/profiles/$ROLE.json"
+if [ "$ROLE" != "unknown" ] && [ -f "$PROFILE" ] && command -v python3 >/dev/null 2>&1; then
+  echo "[arc-agents] profile: $PROFILE"
+  python3 - "$PROFILE" "$REPO" <<'PY'
+import json, os, sys
+profile_path, repo = sys.argv[1], sys.argv[2]
+with open(profile_path) as f:
+    p = json.load(f)
+ctx = p.get("context_files", []) or []
+boot = p.get("boot_skills", []) or []
+if ctx:
+    print(f"[arc-agents] context_files ({len(ctx)}):")
+    for rel in ctx:
+        full = os.path.join(repo, rel)
+        marker = "" if os.path.exists(full) else " (MISSING)"
+        print(f"  - {rel}{marker}")
+if boot:
+    print(f"[arc-agents] boot_skills (invoke via /<name>): {', '.join('/' + s for s in boot)}")
+PY
+fi
+
 exit 0
