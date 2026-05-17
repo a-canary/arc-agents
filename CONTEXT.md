@@ -80,3 +80,12 @@ The act of undoing a prompt's render in one medium because the user already answ
 
 ## Anchor
 The `(repo, branch, HEAD sha)` captured at insert time on a `class=taste` prompt. Marks the divergence point: any commit on `anchor_branch` from `anchor_commit..HEAD` descends from the speculative answer. Used to drive `forward_fix` or `replay` reconciliation when the user picks a non-recommended option. Relies on `G-0005` (one slice per worktree per commit).
+
+## Evidence-First
+The epistemological stance that every input — from the user, from research, from another agent, from a prior ledger event — is a *thesis* until verified by observation. Workers and the interviewer never encode an unverified claim into a row body, CHOICES entry, or PR description without naming it as a hypothesis. The doctrine is documented in [roles/AGENTS.md](./roles/AGENTS.md).
+
+## Concern
+A worker's escalation of a decision outside its scope, a risky action, or a blocker. In arc-agents the concern *mechanism* is HITL [Decomposition](#decomposition): the worker writes N HITL children + flips parent to `blocked`, rather than a separate `outbox/concern-*.md` file (as in the predecessor `~/agents/` system). The term is preserved for vocabulary continuity.
+
+## Pattern
+A symptom observed across multiple rows, workers, or cycles. Distinguished from a one-off observation: a single `state=failed` row is an observation; the same failure shape across N rows is a pattern. Patterns escalate to director-level review via [triage-failed](skills/triage-failed/SKILL.md), not per-row patching. Root-cause fixes only — patching symptoms while the root cause persists wastes every future cycle.
