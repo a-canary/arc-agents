@@ -111,6 +111,26 @@ test("factory --reap kills sessions older than MAX_AGE", () => {
   expect(listWorkers()).not.toContain(sessName);
 });
 
+test("factory --once reaps sessions whose child process exited (pane_dead)", async () => {
+  // Create a session that runs `true` — exits ~immediately, leaving a dead pane
+  // if remain-on-exit is on. Force remain-on-exit to keep the session alive
+  // after the child exits, simulating the lingering-session bug.
+  const sessName = `${prefix}-dead1`;
+  // Start with a long-lived child so the session exists, set remain-on-exit,
+  // then respawn the pane with a command that exits immediately — leaves the
+  // pane in dead state instead of destroying the session.
+  tmux(["new-session", "-d", "-s", sessName, "sleep", "300"]);
+  tmux(["set-option", "-t", sessName, "remain-on-exit", "on"]);
+  tmux(["respawn-pane", "-t", sessName, "-k", "true"]);
+  await new Promise((r) => setTimeout(r, 300));
+
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4", ARC_WORKER_MAX_AGE: "3600" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+  expect(result.reaped).toContain(sessName);
+  expect(listWorkers()).not.toContain(sessName);
+});
+
 test("factory does not reap sessions younger than MAX_AGE", () => {
   const sessName = `${prefix}-fresh1`;
   tmux(["new-session", "-d", "-s", sessName, "sleep", "300"]);

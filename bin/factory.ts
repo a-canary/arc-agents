@@ -77,6 +77,29 @@ export function reapStale(now: number = Math.floor(Date.now() / 1000)): string[]
   return reaped;
 }
 
+// Tier-0 reap: kill worker sessions whose child process exited (pane_dead=1).
+// Normally tmux auto-destroys a session when its last pane dies, but with
+// remain-on-exit on, or with multi-pane sessions, a dead pane can linger and
+// keep the slot occupied for the full MAX_AGE window. Reap immediately.
+export function reapExited(): string[] {
+  const r = tmux(["list-panes", "-a", "-F", "#{session_name} #{pane_dead}"]);
+  if (!r.ok) return [];
+  const anyLive = new Map<string, boolean>();
+  for (const l of r.out.trim().split("\n").filter(Boolean)) {
+    const [name, dead] = l.split(" ");
+    if (!name || !name.startsWith(`${PREFIX}-`)) continue;
+    anyLive.set(name, (anyLive.get(name) ?? false) || dead !== "1");
+  }
+  const reaped: string[] = [];
+  for (const [name, live] of anyLive) {
+    if (!live) {
+      tmux(["kill-session", "-t", name]);
+      reaped.push(name);
+    }
+  }
+  return reaped;
+}
+
 // Tier-1 reap: a worker whose claimed task has reached a terminal/blocked state
 // is done — claude often lingers at its interactive prompt after writing the
 // final turn (M-0002 mandates interactive panes, so we can't use --print). Kill
@@ -150,12 +173,13 @@ export type TickResult = {
 };
 
 export function tick(): TickResult {
+  const reapedExited = reapExited();
   const reapedAge = reapStale();
   const db = openWithMigrate(process.env.ARC_LEDGER_DB);
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
   db.close();
-  const reaped = [...reapedAge, ...reapedDone];
+  const reaped = [...reapedExited, ...reapedAge, ...reapedDone];
 
   // tmux sessions don't carry pool identity — track via prefix suffix `-i-` / `-a-`.
   // Legacy sessions (no infix) count as "any".
@@ -215,9 +239,17 @@ async function sleep(s: number): Promise<void> {
 async function loop(): Promise<void> {
   // eslint-disable-next-line no-constant-condition
   while (true) {
-    const r = tick();
-    if (r.reaped.length || r.spawned.length || r.swept.length) {
-      console.log(JSON.stringify({ ts: new Date().toISOString(), ...r }));
+    try {
+      const r = tick();
+      if (r.reaped.length || r.spawned.length || r.swept.length) {
+        console.log(JSON.stringify({ ts: new Date().toISOString(), ...r }));
+      }
+    } catch (err) {
+      // Don't let a single bad tick (silent tmux/ledger error) kill the daemon
+      // and freeze the queue. Log + continue. See bug: factory went silent on
+      // 2026-05-15T23:23 with no log line despite Ssl process state.
+      const msg = err instanceof Error ? err.stack ?? err.message : String(err);
+      console.error(JSON.stringify({ ts: new Date().toISOString(), tick_error: msg }));
     }
     await sleep(INTERVAL);
   }
