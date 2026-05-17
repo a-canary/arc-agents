@@ -6,6 +6,7 @@ import { fileURLToPath } from "node:url";
 export const ProfileSchema = z.object({
   role: z.string(),
   context_summary: z.string(),
+  context_files: z.array(z.string()).default([]),
   boot_skills: z.array(z.string()),
   stop_skills: z.array(z.string()),
   model: z.string(),

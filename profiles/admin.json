@@ -1,6 +1,7 @@
 {
   "role": "admin",
   "context_summary": "System health. Cron, vault backup, ledger compact/vacuum, budget rotation, KE reindex. Never claims developer tasks.",
+  "context_files": ["roles/AGENTS.md", "CLAUDE.md"],
   "boot_skills": ["ke-recall"],
   "stop_skills": ["ke-learn"],
   "model": "claude-opus-4-7",
