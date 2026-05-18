@@ -8,6 +8,8 @@ import { validateCreate, validateDecompose, validateStateTransition, type Create
 import { TYPE_PRIORITY_SQL } from "../src/ledger/type-priority-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
+import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
+import type { HitlKind } from "../src/ledger/hitl-schemas";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -304,6 +306,98 @@ switch (cmd) {
     break;
   }
 
+  case "hitl": {
+    // hitl emit --class taste|impact --kind ask_choice|ask_text|ask_confirm|notify|show_artifact
+    //          --prompt "<q>" [--option X --option Y ...] [--recommended <idx-or-string>]
+    //          [--timeout-sec N] [--divergence forward_fix|replay]
+    //          [--anchor-repo R --anchor-branch B --anchor-commit C]
+    //          [--emitted-by <id>] [--agent bookie]
+    // Inserts hitl_prompts row + fans out hitl_deliveries to alive modules
+    // implementing this kind. Returns { id, deliveries }. MVP for taste-class
+    // optimistic execution: worker emits, surfaces to user, proceeds with
+    // recommended; reconciliation handled separately.
+    const sub = args[1];
+    if (sub !== "emit") die("usage: hitl emit ...");
+    const cls = getFlag("class") ?? die("--class taste|impact required");
+    if (cls !== "taste" && cls !== "impact") die("--class must be taste|impact");
+    const kind = getFlag("kind") ?? die("--kind required");
+    const promptText = getFlag("prompt") ?? die("--prompt required");
+    const recommended = getFlag("recommended");
+    const timeoutSec = getFlag("timeout-sec");
+    const divergence = getFlag("divergence");
+    const anchorRepo = getFlag("anchor-repo");
+    const anchorBranch = getFlag("anchor-branch");
+    const anchorCommit = getFlag("anchor-commit");
+    const emittedBy = getFlag("emitted-by") ?? getFlag("agent") ?? "bookie";
+
+    if (cls === "taste" && recommended === undefined)
+      die("--recommended required for class=taste");
+    if (cls === "impact" && timeoutSec !== undefined)
+      die("--timeout-sec forbidden for class=impact");
+    if (divergence && divergence !== "forward_fix" && divergence !== "replay")
+      die("--divergence must be forward_fix|replay");
+
+    // Repeatable --option flag → options[] for ask_choice.
+    const options: string[] = [];
+    for (let i = 0; i < args.length; i++) {
+      if (args[i] === "--option") {
+        const v = args[i + 1];
+        if (v !== undefined) options.push(v);
+      } else if (args[i]?.startsWith("--option=")) {
+        options.push(args[i]!.slice("--option=".length));
+      }
+    }
+
+    let payload: Record<string, unknown>;
+    if (kind === "ask_choice") {
+      if (options.length < 2) die("ask_choice requires at least 2 --option flags");
+      payload = { prompt: promptText, options, artifacts: [] };
+    } else if (kind === "ask_text" || kind === "ask_confirm") {
+      payload = { prompt: promptText, artifacts: [] };
+    } else if (kind === "notify") {
+      payload = { message: promptText, level: "info" };
+    } else {
+      die(`--kind '${kind}' not supported by this verb (use ask_choice|ask_text|ask_confirm|notify)`);
+    }
+
+    const db = openWithMigrate(getFlag("db"));
+    const cfg = loadConfig();
+    const modules = pickModulesForHitl(db, cfg, kind as HitlKind);
+    if (modules.length === 0)
+      die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
+
+    const id = `hitl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    db.run(
+      `INSERT INTO hitl_prompts
+         (id, kind, class, payload, recommended, divergence_strategy, timeout_sec,
+          anchor_repo, anchor_branch, anchor_commit, emitted_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [
+        id,
+        kind,
+        cls,
+        JSON.stringify(payload),
+        recommended ?? null,
+        divergence ?? null,
+        timeoutSec ? parseInt(timeoutSec, 10) : null,
+        anchorRepo ?? null,
+        anchorBranch ?? null,
+        anchorCommit ?? null,
+        emittedBy,
+      ],
+    );
+    const deliveries: string[] = [];
+    for (const m of modules) {
+      db.run(
+        `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, ?, 'pending')`,
+        [id, m.name],
+      );
+      deliveries.push(m.name);
+    }
+    out({ id, kind, class: cls, recommended: recommended ?? null, deliveries });
+    break;
+  }
+
   case "tick": {
     // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr).
     const db = openWithMigrate(getFlag("db"));
@@ -401,6 +495,9 @@ switch (cmd) {
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
   update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
   event <id> <kind> <payload>          append event row
+  hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
+            [--recommended X --timeout-sec N --divergence forward_fix|replay]
+                                       emit HITL prompt + fanout to alive UX modules
   list [--state --kind --type --limit]
   show <id>
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
