@@ -59,4 +59,11 @@ describe("renderSystemPrompt", () => {
     expect(p).toContain("/ke-recall");
     expect(p).toContain("/triage-failed");
   });
+
+  it("includes AGENTS.md doctrine (Evidence-First, Concern, Pattern)", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", type: "mvp" });
+    expect(p).toContain("Evidence-First");
+    expect(p).toContain("HITL Decomposition");
+    expect(p).toContain("Pattern Detection");
+  });
 });
