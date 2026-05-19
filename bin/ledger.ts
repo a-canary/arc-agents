@@ -77,6 +77,8 @@ switch (cmd) {
       parent: getFlag("parent"),
       blockedBy: getFlag("blocked-by"),
       project: getFlag("project"),
+      class: getFlag("class"),
+      urgency: getFlag("urgency"),
     };
     const errs = validateCreate(input, positionalAfterVerb());
     if (errs.length > 0) {
@@ -93,14 +95,39 @@ switch (cmd) {
     const state = blockedBy ? "blocked" : "ready";
     const thread = getFlag("thread") ?? null;
     const sourceModule = getFlag("source-module") ?? null;
+    // ADR 0005: pass through when supplied, fall back to schema defaults
+    // (class_unset / nominal) so unchanged callers stay compatible. The
+    // bookie subagent is expected to pass both explicitly going forward.
+    const cls = input.class ?? null;
+    const urgency = input.urgency ?? null;
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
-    db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
-    );
+    if (cls !== null && urgency !== null) {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class, urgency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls, urgency],
+      );
+    } else if (cls !== null) {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls],
+      );
+    } else if (urgency !== null) {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, urgency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, urgency],
+      );
+    } else {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
+      );
+    }
     db.run(
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
       [id, getFlag("agent") ?? "cli", title],
@@ -156,8 +183,8 @@ switch (cmd) {
     if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    const parentRow = db.query<{ id: string; project: string; state: string }, [string]>(
-      "SELECT id, project, state FROM issues WHERE id=?",
+    const parentRow = db.query<{ id: string; project: string; state: string; class: string; urgency: string }, [string]>(
+      "SELECT id, project, state, class, urgency FROM issues WHERE id=?",
     ).get(parent);
     if (!parentRow) die(`no such issue: ${parent}`);
     if (parentRow.state === "merged" || parentRow.state === "cancelled") {
@@ -169,10 +196,13 @@ switch (cmd) {
     try {
       for (const title of children) {
         const id = mintId(db, title);
+        // ADR 0005: children inherit parent's class+urgency so a BUG/interactive
+        // decomposition stays BUG/interactive instead of dumping the subtree
+        // into the class_unset triage backlog.
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by)
-           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL)`,
-          [id, parentRow.project, parent, title],
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, class, urgency)
+           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?)`,
+          [id, parentRow.project, parent, title, parentRow.class, parentRow.urgency],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
