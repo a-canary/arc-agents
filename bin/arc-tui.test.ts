@@ -262,6 +262,119 @@ test("list excludes notify and show_artifact (ack-only kinds)", async () => {
   expect(ids).toEqual(["pask"]);
 });
 
+test("ack transitions delivery state pending -> acked for notify kind", async () => {
+  // notify/show_artifact are ack-only per ADR 0002 — they have no answer-shaped
+  // payload and answer/list both refuse them. Without an ack path, every notify
+  // accumulates as state='open' with a pending delivery forever; nothing ever
+  // closes the loop. This test pins the contract that ack flips the addressed
+  // module's delivery to 'acked' without touching the prompt itself.
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('pn1', 'notify', 'impact', '{"message":"hi","level":"info"}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pn1', 'arc-tui', 'pending')`);
+  d.close();
+  const r = await runTui(["ack", "pn1"]);
+  expect(r.exitCode).toBe(0);
+  const d2 = db();
+  const got = d2.query<{ state: string }, []>(
+    "SELECT state FROM hitl_deliveries WHERE prompt_id='pn1' AND module_name='arc-tui'",
+  ).get();
+  const prompt = d2.query<{ state: string; answered_by: string | null }, []>(
+    "SELECT state, answered_by FROM hitl_prompts WHERE id='pn1'",
+  ).get();
+  d2.close();
+  expect(got!.state).toBe("acked");
+  // Prompt stays open — schema allows no 'acked' state on hitl_prompts, and
+  // flipping to 'answered' would fire the retract cascade against siblings.
+  expect(prompt!.state).toBe("open");
+  expect(prompt!.answered_by).toBeNull();
+});
+
+test("ack works for show_artifact kind", async () => {
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('psa1', 'show_artifact', 'impact', '{"artifacts":[{"type":"text/markdown","inline":"# hi"}]}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('psa1', 'arc-tui', 'pending')`);
+  d.close();
+  const r = await runTui(["ack", "psa1"]);
+  expect(r.exitCode).toBe(0);
+  const d2 = db();
+  const got = d2.query<{ state: string }, []>(
+    "SELECT state FROM hitl_deliveries WHERE prompt_id='psa1' AND module_name='arc-tui'",
+  ).get();
+  d2.close();
+  expect(got!.state).toBe("acked");
+});
+
+test("ack refuses answerable kinds (ask_text/ask_choice/ask_confirm), exit 3", async () => {
+  // Acking an answerable prompt would silently mark it complete without writing
+  // an answer — confusing for any module that's polling for the answer.
+  insertPrompt("paskab"); // ask_choice (taste)
+  const r = await runTui(["ack", "paskab"]);
+  expect(r.exitCode).toBe(3);
+  const d2 = db();
+  const got = d2.query<{ state: string }, []>(
+    "SELECT state FROM hitl_deliveries WHERE prompt_id='paskab' AND module_name='arc-tui'",
+  ).get();
+  d2.close();
+  expect(got!.state).toBe("pending");
+});
+
+test("ack refuses when no delivery to arc-tui exists, exit 3", async () => {
+  // notify addressed only to arc-webui — arc-tui must not be able to ack it.
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('pnother', 'notify', 'impact', '{"message":"x","level":"info"}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pnother', 'arc-webui', 'pending')`);
+  d.close();
+  const r = await runTui(["ack", "pnother"]);
+  expect(r.exitCode).toBe(3);
+});
+
+test("ack is idempotent — second ack on already-acked delivery exits 3", async () => {
+  // First ack should succeed; second should report "not in ackable state".
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('pn2', 'notify', 'impact', '{"message":"hi","level":"info"}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pn2', 'arc-tui', 'pending')`);
+  d.close();
+  const r1 = await runTui(["ack", "pn2"]);
+  expect(r1.exitCode).toBe(0);
+  const r2 = await runTui(["ack", "pn2"]);
+  expect(r2.exitCode).toBe(3);
+});
+
+test("ack does not fire retract cascade against sibling deliveries", async () => {
+  // A notify broadcast may have multiple deliveries — acking one must NOT retract
+  // the others. (Contrast with answer, which uses hitl_retract_losers trigger.)
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('pnbc', 'notify', 'impact', '{"message":"hi","level":"info"}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pnbc', 'arc-tui', 'pending')`);
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pnbc', 'arc-webui', 'pending')`);
+  d.close();
+  const r = await runTui(["ack", "pnbc"]);
+  expect(r.exitCode).toBe(0);
+  const d2 = db();
+  const got = d2.query<{ module_name: string; state: string }, []>(
+    "SELECT module_name, state FROM hitl_deliveries WHERE prompt_id='pnbc' ORDER BY module_name",
+  ).all();
+  d2.close();
+  const map = Object.fromEntries(got.map((r) => [r.module_name, r.state]));
+  expect(map["arc-tui"]).toBe("acked");
+  expect(map["arc-webui"]).toBe("pending"); // sibling untouched
+});
+
 test("list survives a malformed payload by surfacing _parse_error", async () => {
   insertPrompt("pgood");
   const d = db();

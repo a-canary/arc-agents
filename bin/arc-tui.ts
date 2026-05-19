@@ -5,8 +5,10 @@
 //   heartbeat                              upsert ux_heartbeats row, exit
 //   list                                   print open prompts for arc-tui as JSON lines
 //   answer <prompt-id> <answer>            atomic first-reply-wins UPDATE
+//   ack <prompt-id>                        mark delivery acked for ack-only kinds (notify/show_artifact)
 //
-// Exit codes: 0 ok, 2 usage, 3 lost the race (prompt no longer open or not addressed)
+// Exit codes: 0 ok, 2 usage, 3 lost the race (prompt no longer open, not addressed,
+//             or wrong kind for the verb)
 
 import { open } from "../src/ledger/db";
 
@@ -116,6 +118,33 @@ switch (cmd) {
     );
     break;
   }
+  case "ack": {
+    const id = args[1];
+    if (!id) die(2, "usage: ack <prompt-id>");
+    const db = open();
+    const now = Math.floor(Date.now() / 1000);
+    // Atomic ack scoped to (this module, ack-only kinds, currently pending/delivered).
+    // We deliberately do NOT touch hitl_prompts — its state CHECK has no 'acked'
+    // value, and transitioning to 'answered' would fire hitl_retract_losers and
+    // yank sibling deliveries on a broadcast notify. The prompt stays 'open'
+    // until cancel/timeout; closure is delivery-level for ack-only kinds.
+    const r = db.run(
+      `UPDATE hitl_deliveries
+       SET state='acked', delivered_at=COALESCE(delivered_at, ?)
+       WHERE prompt_id=? AND module_name=? AND state IN ('pending','delivered')
+         AND EXISTS (
+           SELECT 1 FROM hitl_prompts p
+           WHERE p.id = hitl_deliveries.prompt_id
+             AND p.kind IN ('notify','show_artifact')
+             AND p.state = 'open'
+         )`,
+      [now, id, MODULE_NAME],
+    );
+    if (r.changes === 0) {
+      die(3, `prompt ${id} not in ackable state for ${MODULE_NAME} (wrong kind, already acked/retracted, or not addressed)`);
+    }
+    break;
+  }
   default:
-    die(2, "usage: arc-tui <heartbeat|list|answer>");
+    die(2, "usage: arc-tui <heartbeat|list|answer|ack>");
 }
