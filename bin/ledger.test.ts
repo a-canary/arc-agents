@@ -71,6 +71,72 @@ test("update --state + show events", async () => {
   }
 });
 
+test("update --state failed --evidence captures the reason in the event payload", async () => {
+  // Triage regression: bookie was writing payload_md='→ failed' for every
+  // failure, throwing away the human-readable reason even when --evidence was
+  // supplied. Operators couldn't tell a flaky test apart from a worker timeout.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+      id: string;
+    };
+    await run(db, "update", c.id, "--state", "wip");
+    await run(
+      db,
+      "update",
+      c.id,
+      "--state",
+      "failed",
+      "--evidence",
+      "typecheck failed: src/foo.ts(42,10): TS2304",
+      "--agent",
+      "arc-worker-test",
+    );
+    const shown = (await run(db, "show", c.id)) as {
+      events: { kind: string; payload_md: string; agent: string }[];
+    };
+    const failedEvent = shown.events.find((e) => e.kind === "failed");
+    expect(failedEvent).toBeDefined();
+    expect(failedEvent!.payload_md).toContain("typecheck failed");
+    expect(failedEvent!.payload_md).toContain("TS2304");
+    expect(failedEvent!.agent).toBe("arc-worker-test");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged --evidence captures the evidence in the event payload", async () => {
+  // Symmetric to the failed case — merged events should also carry their
+  // evidence (PR link, smoke-test output) so the audit trail is complete.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+      id: string;
+    };
+    await run(db, "update", c.id, "--state", "wip");
+    await run(
+      db,
+      "update",
+      c.id,
+      "--state",
+      "merged",
+      "--evidence",
+      "PR #999 merged at abc1234; bun test 142/142",
+    );
+    const shown = (await run(db, "show", c.id)) as {
+      events: { kind: string; payload_md: string }[];
+    };
+    const merged = shown.events.find((e) => e.kind === "merged");
+    expect(merged).toBeDefined();
+    expect(merged!.payload_md).toContain("PR #999");
+    expect(merged!.payload_md).toContain("abc1234");
+  } finally {
+    cleanup();
+  }
+});
+
 test("blocked → cascade-on-merge unblocks dep", async () => {
   const { db, cleanup } = freshDb();
   try {
