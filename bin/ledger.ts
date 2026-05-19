@@ -467,6 +467,16 @@ switch (cmd) {
   case "compact": {
     const db = openWithMigrate(getFlag("db"));
     const cutoff = Math.floor(Date.now() / 1000) - 30 * 24 * 3600;
+    const dryRun = args.includes("--dry-run");
+    if (dryRun) {
+      const rows = db
+        .query<{ id: string; state: string; updated_at: number }, []>(
+          `SELECT id, state, updated_at FROM issues WHERE state IN ('merged','cancelled') AND updated_at < ${cutoff}`,
+        )
+        .all();
+      out({ dry_run: true, would_archive: rows.length, candidates: rows });
+      break;
+    }
     const r = db.run(
       `DELETE FROM issues WHERE state IN ('merged','cancelled') AND updated_at < ?`,
       [cutoff],
@@ -477,6 +487,22 @@ switch (cmd) {
 
   case "vacuum": {
     const db = openWithMigrate(getFlag("db"));
+    const cutoff = Math.floor(Date.now() / 1000) - 30 * 24 * 3600;
+    const dryRun = args.includes("--dry-run");
+    if (dryRun) {
+      const rows = db
+        .query<{ id: string; state: string; updated_at: number }, []>(
+          `SELECT id, state, updated_at FROM issues WHERE state IN ('merged','cancelled') AND updated_at < ${cutoff}`,
+        )
+        .all();
+      out({
+        dry_run: true,
+        would_hard_delete: rows.length,
+        candidates: rows,
+        artifacts_note: "artifact GC pending ADR 0006",
+      });
+      break;
+    }
     db.exec("VACUUM");
     out({ vacuumed: true });
     break;
@@ -504,8 +530,8 @@ switch (cmd) {
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue
-  compact                              archive merged/cancelled > 30d
-  vacuum
+  compact [--dry-run]                  archive merged/cancelled > 30d
+  vacuum [--dry-run]                   VACUUM; --dry-run lists hard-delete candidates
 
   global flags: --db <path>
 

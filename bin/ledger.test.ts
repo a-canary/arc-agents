@@ -301,3 +301,67 @@ test("claim + spawn-ready skip non-allowlisted kinds (prd, reply, prefetch)", as
     cleanup();
   }
 });
+
+test("vacuum dry-run lists candidates without deleting", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const old = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "old merged")) as { id: string };
+    const recent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "recent merged")) as { id: string };
+    const keep = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "ready keep")) as { id: string };
+
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(db);
+    const longAgo = Math.floor(Date.now() / 1000) - 40 * 24 * 3600;
+    raw.run(`UPDATE issues SET state='merged', updated_at=? WHERE id=?`, [longAgo, old.id]);
+    raw.run(`UPDATE issues SET state='merged' WHERE id=?`, [recent.id]);
+    raw.close();
+
+    const dry = (await run(db, "vacuum", "--dry-run")) as {
+      dry_run: boolean;
+      would_hard_delete: number;
+      candidates: { id: string }[];
+    };
+    expect(dry.dry_run).toBe(true);
+    expect(dry.would_hard_delete).toBe(1);
+    expect(dry.candidates.map((c) => c.id)).toEqual([old.id]);
+
+    // Verify nothing deleted.
+    const after = (await run(db, "show", old.id)) as { issue: { id: string } };
+    expect(after.issue.id).toBe(old.id);
+    const stillRecent = (await run(db, "show", recent.id)) as { issue: { id: string } };
+    expect(stillRecent.issue.id).toBe(recent.id);
+    const stillKeep = (await run(db, "show", keep.id)) as { issue: { id: string } };
+    expect(stillKeep.issue.id).toBe(keep.id);
+  } finally {
+    cleanup();
+  }
+});
+
+test("compact dry-run lists candidates without deleting", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const old = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "old cancelled")) as { id: string };
+
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(db);
+    const longAgo = Math.floor(Date.now() / 1000) - 40 * 24 * 3600;
+    raw.run(`UPDATE issues SET state='cancelled', updated_at=? WHERE id=?`, [longAgo, old.id]);
+    raw.close();
+
+    const dry = (await run(db, "compact", "--dry-run")) as {
+      dry_run: boolean;
+      would_archive: number;
+      candidates: { id: string }[];
+    };
+    expect(dry.dry_run).toBe(true);
+    expect(dry.would_archive).toBe(1);
+    expect(dry.candidates[0]!.id).toBe(old.id);
+
+    const after = (await run(db, "show", old.id)) as { issue: { id: string } };
+    expect(after.issue.id).toBe(old.id);
+  } finally {
+    cleanup();
+  }
+});
