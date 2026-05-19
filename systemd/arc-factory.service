@@ -1,0 +1,25 @@
+[Unit]
+Description=arc-agents worker factory (spawn-on-demand ephemeral workers)
+After=default.target
+
+[Service]
+Type=simple
+WorkingDirectory=/home/aaron/repos/arc-agents
+ExecStart=/home/aaron/.bun/bin/bun /home/aaron/repos/arc-agents/bin/factory.ts
+# Restart on ANY exit, not just on-failure. The factory has no legitimate
+# reason to exit while the user is logged in — a clean exit (code 0) silently
+# leaves the daemon dead, which stops the stale-claim sweeper and accumulates
+# zombie claims indefinitely. Observed 2026-05-17: unit went inactive after a
+# clean exit and stayed dead for 2 days, blocking all stuck workers from
+# being reclaimed.
+Restart=always
+RestartSec=5
+# Defaults (5 restarts/10s) would let a real crash-loop wedge the unit into
+# "start-limit-hit". For a supervisor whose whole job is to be up, prefer
+# infinite retries — observability lives in the log file, not in systemd state.
+StartLimitBurst=0
+StandardOutput=append:/home/aaron/.cache/arc-factory.log
+StandardError=append:/home/aaron/.cache/arc-factory.log
+
+[Install]
+WantedBy=default.target
