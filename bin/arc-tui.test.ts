@@ -123,7 +123,7 @@ test("answer fires retract cascade on losing deliveries", async () => {
 
 test("list prints open prompts addressed to arc-tui as JSON lines", async () => {
   insertPrompt("p4", "ask_choice", { prompt: "pick color", options: ["blue", "red"], artifacts: [] });
-  insertPrompt("p5", "ask_text", { prompt: "name?", artifacts: [] });
+  insertPrompt("p5", "ask_text", { prompt: "name?", options: [], artifacts: [] });
   // A prompt addressed to someone else — must not appear.
   const d = db();
   d.run(
