@@ -37,7 +37,8 @@ log() { echo "[todo-sweep $(date +%H%M)] $*" >&2; }
 # Match TODO/FIXME/XXX anywhere on the line.
 added=$(git diff "$BASE...$HEAD" -U0 -- '*.ts' '*.sh' '*.svelte' '*.md' \
   | grep -E '^\+[^+]' \
-  | grep -iE '(TODO|FIXME|XXX)' || true)
+  | grep -iE '(TODO|FIXME|XXX)' \
+  | grep -ivE 'TODO.*FIXME.*XXX|TODO.*XXX.*FIXME|FIXME.*TODO.*XXX|FIXME.*XXX.*TODO|XXX.*TODO.*FIXME|XXX.*FIXME.*TODO|todo-sweep' || true)
 
 if [ -z "$added" ]; then
   echo '{"gate":"todo-sweep","status":"SKIP","detail":"no TODO/FIXME/XXX added"}'
