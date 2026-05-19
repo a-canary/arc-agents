@@ -273,12 +273,15 @@ switch (cmd) {
     const state = getFlag("state");
     const kind = getFlag("kind");
     const type = getFlag("type");
+    const all = args.includes("--all");
     const limit = parseInt(getFlag("limit") ?? "100", 10);
     const where: string[] = [];
     const vals: (string | number)[] = [];
     if (state) {
       where.push("state=?");
       vals.push(state);
+    } else if (!all) {
+      where.push("state NOT IN ('merged','cancelled','failed')");
     }
     if (kind) {
       where.push("kind=?");
@@ -667,7 +670,9 @@ switch (cmd) {
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
                                        emit HITL prompt + fanout to alive UX modules
-  list [--state --kind --type --limit]
+  list [--state --kind --type --limit --all]
+                                       default excludes terminal (merged/
+                                       cancelled/failed); --all includes them
   show <id>
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
