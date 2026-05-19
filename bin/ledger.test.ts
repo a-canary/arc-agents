@@ -98,6 +98,46 @@ test("blocked → cascade-on-merge unblocks dep", async () => {
   }
 });
 
+test("list default excludes terminal rows; --all includes them", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    // Seed: 10 non-terminal + 200 merged via direct insert (fast path).
+    const raw = new Database(db);
+    const stmt = raw.prepare(
+      `INSERT INTO issues (id, project, kind, type, title, body_md, state) VALUES (?, 'p', 'task', 'mvp', ?, '', ?)`,
+    );
+    for (let i = 0; i < 10; i++) stmt.run(`live-${i}`, `live ${i}`, "ready");
+    for (let i = 0; i < 200; i++) stmt.run(`done-${i}`, `done ${i}`, "merged");
+    // Also seed a few cancelled + failed to confirm exclusion.
+    stmt.run("cx-1", "cx 1", "cancelled");
+    stmt.run("fx-1", "fx 1", "failed");
+    raw.close();
+
+    // Default: only non-terminal.
+    const defaulted = (await run(db, "list")) as { id: string; state: string }[];
+    expect(defaulted.length).toBe(10);
+    for (const r of defaulted) {
+      expect(["merged", "cancelled", "failed"]).not.toContain(r.state);
+    }
+
+    // --state merged still works explicitly (raise limit so all 200 surface).
+    const merged = (await run(db, "list", "--state", "merged", "--limit", "500")) as {
+      state: string;
+    }[];
+    expect(merged.length).toBe(200);
+    expect(merged.every((r) => r.state === "merged")).toBe(true);
+
+    // --all includes terminal up to limit.
+    const everything = (await run(db, "list", "--all", "--limit", "500")) as {
+      state: string;
+    }[];
+    expect(everything.length).toBe(212);
+  } finally {
+    cleanup();
+  }
+});
+
 test("positional create is rejected", async () => {
   const { db, cleanup } = freshDb();
   try {
