@@ -146,10 +146,15 @@ gate_merge_gate() {
     fail "merge-gate" "bin/merge-gate.sh not found"
     return
   fi
-  if "$BIN/merge-gate.sh" --project "$PROJECT" >/tmp/merge-gate-$$.log 2>&1; then
+  local log=/tmp/merge-gate-$$.log
+  if "$BIN/merge-gate.sh" --project "$PROJECT" >"$log" 2>&1; then
     pass "merge-gate" "fixture+typecheck+test passed"
   else
-    fail "merge-gate" "see /tmp/merge-gate-$$.log"
+    if grep -q "tsc: command not found\|tsc: not found" "$log"; then
+      fail "merge-gate" "see $log — try 'bun install' first?"
+    else
+      fail "merge-gate" "see $log"
+    fi
   fi
 }
 
