@@ -162,6 +162,62 @@ test("sseStream second tick with no changes emits heartbeat", async () => {
   }
 });
 
+test("server SSE delta smoke: insert after connect -> snapshot within 2s", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "webui-server-smoke-"));
+  const dbPath = join(dir, "t.db");
+  const db = openWithMigrate(dbPath);
+  // Seed an initial row so the first snapshot is non-empty (and distinct
+  // from the post-insert snapshot via digest).
+  insertIssue(db, { id: "seed", title: "seed", type: "HITL", state: "ready" });
+  const server = Bun.serve({
+    hostname: "127.0.0.1",
+    port: 0,
+    fetch: (req) => {
+      const url = new URL(req.url);
+      if (url.pathname === "/sse/hitl") {
+        return new Response(sseStream(db, "hitl", 100), {
+          headers: {
+            "Content-Type": "text/event-stream",
+            "Cache-Control": "no-cache, no-transform",
+            Connection: "keep-alive",
+          },
+        });
+      }
+      return new Response("not found", { status: 404 });
+    },
+  });
+  const ctrl = new AbortController();
+  try {
+    const res = await fetch(`http://${server.hostname}:${server.port}/sse/hitl`, {
+      signal: ctrl.signal,
+    });
+    expect(res.ok).toBe(true);
+    const reader = res.body!.getReader();
+    const decoder = new TextDecoder();
+    // Drain the initial snapshot.
+    const first = await reader.read();
+    expect(decoder.decode(first.value!)).toContain("snapshot");
+    // Insert via the same db handle; poll loop reads via shared bun:sqlite.
+    insertIssue(db, { id: "post-connect", title: "post", type: "HITL", state: "ready" });
+    const deadline = Date.now() + 2000;
+    let sawNewRow = false;
+    while (Date.now() < deadline && !sawNewRow) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      const chunk = decoder.decode(value!);
+      if (chunk.includes("snapshot") && chunk.includes("post-connect")) {
+        sawNewRow = true;
+      }
+    }
+    expect(sawNewRow).toBe(true);
+  } finally {
+    ctrl.abort();
+    server.stop(true);
+    db.close();
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("sseStream re-emits snapshot on row change", async () => {
   const { db, cleanup } = freshDb();
   try {
