@@ -23,8 +23,9 @@
 import { spawnSync } from "child_process";
 import { open } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
-import { parsePayload, type HitlKind } from "../src/ledger/hitl-schemas";
-import { loadConfig, pickModulesForHitl, validateHitlWrite } from "../src/ledger/ux-config";
+import { type HitlKind } from "../src/ledger/hitl-schemas";
+import { loadConfig } from "../src/ledger/ux-config";
+import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -55,16 +56,6 @@ function die(code: number, msg: string): never {
   process.exit(code);
 }
 
-function uuid(): string {
-  // 16 random bytes, formatted as 8-4-4-4-12 hex. Cheap and dependency-free.
-  const b = new Uint8Array(16);
-  crypto.getRandomValues(b);
-  b[6] = (b[6]! & 0x0f) | 0x40;
-  b[8] = (b[8]! & 0x3f) | 0x80;
-  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
-
 function gitAnchor(): { repo: string; branch: string; commit: string } | null {
   const repoR = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
   if (repoR.status !== 0) return null;
@@ -77,8 +68,6 @@ function gitAnchor(): { repo: string; branch: string; commit: string } | null {
     commit: commitR.stdout.trim(),
   };
 }
-
-type AliveModule = { name: string; implements: string[]; can_retract: boolean };
 
 function bootstrapTaskIfNeeded(reason: string): void {
   // Pre-check: if a non-terminal "Install a UX surface module" issue is already
@@ -117,27 +106,7 @@ function bootstrapTaskIfNeeded(reason: string): void {
   );
 }
 
-function pickModulesFor(kind: HitlKind, artifactTypes: string[] = []): AliveModule[] {
-  const db = open();
-  const cfg = loadConfig();
-  const errs = validateHitlWrite(db, cfg, {
-    kind,
-    artifacts: artifactTypes.map((t) => ({ type: t })),
-  });
-  if (errs.length > 0) {
-    // Surface the first error to stderr so the caller sees *why*.
-    process.stderr.write(`arc-ux: ${errs.map((e) => `${e.field}: ${e.message}`).join("; ")}\n`);
-    return [];
-  }
-  return pickModulesForHitl(db, cfg, kind).map((m) => ({
-    name: m.name,
-    implements: m.implements,
-    can_retract: m.can_retract,
-  }));
-}
-
-function insertPromptAndDeliveries(opts: {
-  id: string;
+function emitPrompt(opts: {
   kind: HitlKind;
   cls: "taste" | "impact";
   payload: unknown;
@@ -145,40 +114,32 @@ function insertPromptAndDeliveries(opts: {
   strategy: "forward_fix" | "replay" | null;
   timeoutSec: number | null;
   anchor: { repo: string; branch: string; commit: string } | null;
-  modules: AliveModule[];
-}): void {
+}): { id: string; deliveries: string[] } {
   const db = open();
   migrate(db);
-  const now = Math.floor(Date.now() / 1000);
-  const expiresAt = opts.timeoutSec ? now + opts.timeoutSec : null;
-  db.transaction(() => {
-    db.run(
-      `INSERT INTO hitl_prompts
-         (id, kind, class, payload, recommended, divergence_strategy, timeout_sec,
-          state, anchor_repo, anchor_branch, anchor_commit, expires_at, emitted_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
-      [
-        opts.id,
-        opts.kind,
-        opts.cls,
-        JSON.stringify(opts.payload),
-        opts.recommended,
-        opts.strategy,
-        opts.timeoutSec,
-        opts.anchor?.repo ?? null,
-        opts.anchor?.branch ?? null,
-        opts.anchor?.commit ?? null,
-        expiresAt,
-        process.env.ARC_ROLE ?? null,
-      ],
-    );
-    for (const m of opts.modules) {
-      db.run(
-        `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, ?, 'pending')`,
-        [opts.id, m.name],
-      );
+  const cfg = loadConfig();
+  try {
+    return insertHitlPrompt(db, {
+      kind: opts.kind,
+      cls: opts.cls,
+      payload: opts.payload,
+      recommended: opts.recommended,
+      strategy: opts.strategy,
+      timeoutSec: opts.timeoutSec,
+      anchor: opts.anchor,
+      emittedBy: process.env.ARC_ROLE ?? null,
+      cfg,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Distinguish "no alive module" (exit 3 + bootstrap task) from generic
+    // validation failures (exit 2 — bad payload/artifact).
+    if (msg.includes("no alive UX module") || msg.startsWith("kind:")) {
+      bootstrapTaskIfNeeded(`no alive module implements ${opts.kind}`);
+      die(3, `no alive UX module implements ${opts.kind}; bootstrap task spawned`);
     }
-  })();
+    die(2, msg);
+  }
 }
 
 function waitForAnswer(promptId: string, timeoutSec: number | null): { state: string; answer: string | null } {
@@ -236,28 +197,18 @@ function commonAsk(kind: HitlKind, payload: unknown): { ok: boolean; out?: { id:
 
   const timeoutSec = cls === "taste" ? Number(flag("timeout") ?? 60) : null;
 
-  // Validate payload shape.
-  parsePayload(kind, payload);
+  // Validate payload shape via the consolidated build path.
+  const validated = buildPayload(kind, payload as Parameters<typeof buildPayload>[1]);
 
-  const artifactTypes = ((payload as { artifacts?: { type: string }[] }).artifacts ?? []).map((a) => a.type);
-  const modules = pickModulesFor(kind, artifactTypes);
-  if (modules.length === 0) {
-    bootstrapTaskIfNeeded(`no alive module implements ${kind}`);
-    die(3, `no alive UX module implements ${kind}; bootstrap task spawned`);
-  }
-
-  const id = uuid();
   const anchor = cls === "taste" ? gitAnchor() : null;
-  insertPromptAndDeliveries({
-    id,
+  const { id } = emitPrompt({
     kind,
     cls,
-    payload,
+    payload: validated,
     recommended,
     strategy,
     timeoutSec,
     anchor,
-    modules,
   });
 
   if (cls === "taste") {
@@ -297,29 +248,20 @@ switch (cmd) {
   case "notify": {
     const message = flag("message") ?? die(2, "--message required");
     const level = (flag("level") ?? "info") as "info" | "warn" | "error";
-    const payload = { message, level };
-    parsePayload("notify", payload);
-    const modules = pickModulesFor("notify");
-    if (modules.length === 0) {
-      bootstrapTaskIfNeeded("no alive module implements notify");
-      die(3, "no alive UX module implements notify; bootstrap task spawned");
-    }
-    const id = uuid();
     // notify is broadcast, never claimed, never waited on. Same row machinery,
     // but state goes straight to 'answered' once any module acks — or we leave
     // it 'open' with a short expires_at and let the reconciler reap it.
-    insertPromptAndDeliveries({
-      id,
+    const validated = buildPayload("notify", { message, level });
+    const { id, deliveries } = emitPrompt({
       kind: "notify",
       cls: "taste",
-      payload,
+      payload: validated,
       recommended: "(notify)",
       strategy: null,
       timeoutSec: 3600,
       anchor: null,
-      modules,
     });
-    process.stdout.write(JSON.stringify({ id, broadcast: modules.map((m) => m.name) }) + "\n");
+    process.stdout.write(JSON.stringify({ id, broadcast: deliveries }) + "\n");
     break;
   }
   case "show-artifact": {

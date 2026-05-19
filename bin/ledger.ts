@@ -10,8 +10,9 @@ import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadThreadContext } from "../src/worker/thread-context";
-import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
-import type { HitlKind } from "../src/ledger/hitl-schemas";
+import { loadConfig } from "../src/ledger/ux-config";
+import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
+import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -366,7 +367,15 @@ switch (cmd) {
     if (sub !== "emit") die("usage: hitl emit ...");
     const cls = getFlag("class") ?? die("--class taste|impact required");
     if (cls !== "taste" && cls !== "impact") die("--class must be taste|impact");
-    const kind = getFlag("kind") ?? die("--kind required");
+    const kindRaw = getFlag("kind") ?? die("--kind required");
+    // Validate enum membership early — keeps the per-verb error consistent
+    // with the prior CLI behavior rather than letting buildPayload's exhaustive
+    // switch throw a less-helpful generic error.
+    const kindParsed = hitlKind.safeParse(kindRaw);
+    if (!kindParsed.success) {
+      die(`--kind '${kindRaw}' not supported by this verb (use ${hitlKind.options.join("|")})`);
+    }
+    const kind: HitlKind = kindParsed.data;
     const promptText = getFlag("prompt") ?? die("--prompt required");
     const recommended = getFlag("recommended");
     const timeoutSec = getFlag("timeout-sec");
@@ -394,57 +403,55 @@ switch (cmd) {
       }
     }
 
-    let payload: Record<string, unknown>;
-    if (kind === "ask_choice") {
-      if (options.length < 2) die("ask_choice requires at least 2 --option flags");
-      payload = { prompt: promptText, options, artifacts: [] };
-    } else if (kind === "ask_text" || kind === "ask_confirm") {
-      payload = { prompt: promptText, artifacts: [] };
-    } else if (kind === "notify") {
-      payload = { message: promptText, level: "info" };
-    } else {
-      die(`--kind '${kind}' not supported by this verb (use ask_choice|ask_text|ask_confirm|notify)`);
+    // Build + validate the payload via the consolidated module so the Zod
+    // checks (e.g. ask_choice requires options.min(2)) actually run. Pre-
+    // refactor this code path inserted directly without validation.
+    let validatedPayload: unknown;
+    try {
+      validatedPayload = buildPayload(kind, {
+        prompt: promptText,
+        options,
+        message: promptText,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      die(`payload validation failed for kind=${kind}: ${msg}`);
     }
 
     const db = openWithMigrate(getFlag("db"));
     const cfg = loadConfig();
-    const modules = pickModulesForHitl(db, cfg, kind as HitlKind);
-    if (modules.length === 0)
-      die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
-
-    const id = `hitl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     const timeoutSecInt = timeoutSec ? parseInt(timeoutSec, 10) : null;
-    const nowSec = Math.floor(Date.now() / 1000);
-    const expiresAt = timeoutSecInt ? nowSec + timeoutSecInt : null;
-    db.run(
-      `INSERT INTO hitl_prompts
-         (id, kind, class, payload, recommended, divergence_strategy, timeout_sec,
-          expires_at, anchor_repo, anchor_branch, anchor_commit, emitted_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
+
+    let result: { id: string; deliveries: string[] };
+    try {
+      result = insertHitlPrompt(db, {
         kind,
         cls,
-        JSON.stringify(payload),
-        recommended ?? null,
-        divergence ?? null,
-        timeoutSecInt,
-        expiresAt,
-        anchorRepo ?? null,
-        anchorBranch ?? null,
-        anchorCommit ?? null,
+        payload: validatedPayload,
+        recommended: recommended ?? null,
+        strategy: (divergence as "forward_fix" | "replay" | undefined) ?? null,
+        timeoutSec: timeoutSecInt,
+        anchor:
+          anchorRepo || anchorBranch || anchorCommit
+            ? { repo: anchorRepo ?? null, branch: anchorBranch ?? null, commit: anchorCommit ?? null }
+            : null,
         emittedBy,
-      ],
-    );
-    const deliveries: string[] = [];
-    for (const m of modules) {
-      db.run(
-        `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, ?, 'pending')`,
-        [id, m.name],
-      );
-      deliveries.push(m.name);
+        cfg,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("no alive UX module")) {
+        die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
+      }
+      die(msg);
     }
-    out({ id, kind, class: cls, recommended: recommended ?? null, deliveries });
+    out({
+      id: result.id,
+      kind,
+      class: cls,
+      recommended: recommended ?? null,
+      deliveries: result.deliveries,
+    });
     break;
   }
 

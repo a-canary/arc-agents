@@ -782,3 +782,42 @@ test("tick flips expired open hitl_prompts to timeout_locked", async () => {
     cleanup();
   }
 });
+
+// Regression for the validation-bypass fix: `hitl emit` used to construct
+// the payload as a plain object literal and INSERT directly, skipping the
+// Zod schema in src/ledger/hitl-schemas.ts entirely. ask_text with an empty
+// --prompt was silently persisted because the prior code had no Zod gate.
+// Now both paths route through hitl-prompt.ts which calls parsePayload, so
+// the command exits non-zero and no row is inserted.
+test("hitl emit ask_text with empty --prompt fails Zod (was silently accepted)", async () => {
+  const { db, cleanup } = freshDb();
+  const cfgDir = mkdtempSync(join(tmpdir(), "ledger-cli-cfg-"));
+  const cfgPath = join(cfgDir, "config.yaml");
+  writeFileSync(
+    cfgPath,
+    `modules:\n  arc-tui:\n    cli: "arc-tui"\n    implements: [ask_text, ask_choice, ask_confirm, notify, show_artifact]\n    renders:\n      text/markdown: native\n    can_retract: true\n`,
+  );
+  try {
+    await run(db, "init");
+    const d = new Database(db);
+    d.run(
+      `INSERT INTO ux_heartbeats (module_name, last_beat) VALUES ('arc-tui', strftime('%s','now'))`,
+    );
+    d.close();
+
+    const r = await $`bun ${cli} hitl emit --class taste --kind ask_text --prompt ${""} --recommended ok --db ${db}`
+      .env({ ...process.env, ARC_CONFIG: cfgPath })
+      .quiet()
+      .nothrow();
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString().toLowerCase()).toMatch(/prompt|validation|payload/);
+
+    const d2 = new Database(db);
+    const n = d2.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_prompts").get();
+    d2.close();
+    expect(n!.c).toBe(0);
+  } finally {
+    cleanup();
+    rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
