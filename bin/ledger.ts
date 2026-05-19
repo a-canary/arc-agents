@@ -6,6 +6,7 @@ import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
 import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
+import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadThreadContext } from "../src/worker/thread-context";
@@ -141,17 +142,13 @@ switch (cmd) {
     // ledger claim <worker> [--type X]
     // --type restricts the claim to a single priority class (used by fast-pass
     // interactive pool so a reserved slot doesn't burn on backlog work).
+    // SQL lives in src/ledger/claim.ts so the bash bootstrap in
+    // worker-shell.sh and this CLI share one canonical UPDATE...RETURNING.
     const worker = args[1] ?? die("worker required");
     if (worker.startsWith("--")) die("worker required (positional)");
     const typeFilter = getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const typeClause = typeFilter ? "AND type=?2" : "";
-    const sql = `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${SORT_KEY_SQL} LIMIT 1)
-         RETURNING id`;
-    const row = typeFilter
-      ? db.query<{ id: string }, [string, string]>(sql).get(worker, typeFilter)
-      : db.query<{ id: string }, [string]>(sql).get(worker);
+    const row = claimOnce(db, worker, typeFilter);
     if (!row) {
       out({ claimed: null });
       break;
@@ -162,6 +159,20 @@ switch (cmd) {
       `claimed by ${worker}`,
     ]);
     out({ claimed: row.id });
+    break;
+  }
+
+  case "print-claim-sql": {
+    // Emit the canonical claim SQL to stdout. Sole consumer is
+    // bin/worker-shell.sh, the bash bootstrap (ADR 0001): bash has no
+    // agent process yet at claim time, so it can't import claimOnce
+    // directly — it pipes this text into sqlite3 instead. Keeping the
+    // SQL in one place preserves G-0002's single-statement guarantee.
+    //
+    // `--type-filter` emits the variant with `AND type=?2` baked in, so
+    // bash callers don't have to rewrite the SQL post-hoc.
+    const withTypeFilter = args.includes("--type-filter");
+    process.stdout.write(withTypeFilter ? buildClaimSQL(true) : CLAIM_SQL);
     break;
   }
 
@@ -715,6 +726,9 @@ switch (cmd) {
                                        flags: --project --body --acceptance --parent --blocked-by --agent
   claim <worker> [--type T]            atomic claim of highest-priority ready task
                                        (--type restricts to one priority class)
+  print-claim-sql [--type-filter]      emit canonical claim SQL (src/ledger/claim.ts)
+                                       to stdout for ops/debug; --type-filter
+                                       includes the AND type=?2 variant
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
   update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
   event <id> <kind> <payload>          append event row
