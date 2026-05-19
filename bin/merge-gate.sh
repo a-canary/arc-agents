@@ -2,6 +2,7 @@
 # merge-gate.sh — pipeline merge gate validation for arc-agents (Bun/TS).
 #
 # Gates (in order, all run; non-zero exit if any FAIL):
+#   0. install   — `bun install --frozen-lockfile` if node_modules missing (idempotent)
 #   1. fixture   — at least one *.test.ts colocated test exists
 #   2. typecheck — `bun run typecheck` passes (tsc --noEmit)
 #   3. test      — `bun test` passes (full suite, bun's runner)
@@ -43,6 +44,26 @@ run_cmd() {
   local cmd="$1"
   local timeout_s="${2:-60}"
   timeout "$timeout_s" bash -c "$cmd" >/dev/null 2>&1
+}
+
+# ── Gate 0: Install — ensure node_modules present (idempotent) ──────────────
+
+gate_install() {
+  log "Gate 0: Install"
+  if ! [ -f "$PROJECT/package.json" ]; then
+    skip "install" "no package.json"
+    return 0
+  fi
+  if [ -x "$PROJECT/node_modules/.bin/tsc" ]; then
+    skip "install" "node_modules present"
+    return 0
+  fi
+  if run_cmd "cd '$PROJECT' && bun install --frozen-lockfile" 180; then
+    pass "install" "bun install --frozen-lockfile"
+  else
+    fail "install" "bun install failed"
+    return 1
+  fi
 }
 
 # ── Gate 1: Fixture — *.test.ts files exist ─────────────────────────────────
@@ -117,6 +138,7 @@ gate_test() {
 main() {
   log "Starting merge gate project=$PROJECT branch=$BRANCH HEAD=$HEAD_HASH"
 
+  gate_install        || true
   gate_fixture        || true
   gate_typecheck      || true
   gate_migration_lint || true
