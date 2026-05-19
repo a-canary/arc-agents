@@ -38,24 +38,25 @@ describe("arc-chat post", () => {
     expect(JSON.parse(r.out.trim()).thread_id).toBe(t);
   });
 
-  it("creates a chat_in/interactive ready row", () => {
+  it("creates an event/interactive ready row tagged source_module=arc-chat", () => {
     run(CHAT, ["post", "ping", "--thread", "t-x"]);
-    const lst = run(LEDGER, ["list", "--kind", "chat_in"]);
+    const lst = run(LEDGER, ["list", "--kind", "event"]);
     expect(lst.out).toContain("interactive");
     expect(lst.out).toContain("ready");
   });
 });
 
 describe("arc-chat tail --once", () => {
-  it("returns empty when no chat_out exists", () => {
+  it("returns empty when no reply exists", () => {
     const r = run(CHAT, ["tail", "--thread", "t-empty", "--once"]);
     expect(r.code).toBe(0);
     expect(r.out.trim()).toBe("");
   });
 
-  it("emits chat_out rows for the thread", () => {
+  it("emits reply rows for the thread", () => {
     run(LEDGER, [
-      "create", "--kind", "chat_out", "--type", "interactive",
+      "create", "--kind", "reply", "--type", "interactive",
+      "--source-module", "arc-chat",
       "--title", "reply text", "--body", "reply text full", "--thread", "t-y",
     ]);
     const r = run(CHAT, ["tail", "--thread", "t-y", "--once"]);
@@ -82,7 +83,8 @@ describe("render-prompt thread replay", () => {
   it("includes prior chat turns in the rendered prompt", () => {
     run(CHAT, ["post", "first user msg", "--thread", "t-r"]);
     run(LEDGER, [
-      "create", "--kind", "chat_out", "--type", "interactive",
+      "create", "--kind", "reply", "--type", "interactive",
+      "--source-module", "arc-chat",
       "--title", "prior reply", "--body", "prior reply body", "--thread", "t-r",
     ]);
     const r2 = run(CHAT, ["post", "second user msg", "--thread", "t-r"]);

@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
-import { migrate } from "./migrate";
+import { migrate, migrateUpTo } from "./migrate";
 
 function fresh(): Database {
   const db = new Database(":memory:");
@@ -134,6 +134,85 @@ test("009 hitl tables exist with check constraints", () => {
   );
   const row = db.query<{ state: string }, []>("SELECT state FROM hitl_prompts WHERE id='p3'").get();
   expect(row?.state).toBe("open");
+});
+
+test("011 backfills (class, urgency) for all legacy type values", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "010_expand_kind_type_for_path_b");
+
+  const cases: { type: string; class: string; urgency: string }[] = [
+    { type: "interactive", class: "class_unset", urgency: "interactive" },
+    { type: "HITL",        class: "class_unset", urgency: "nominal" },
+    { type: "mvp",         class: "MVP",         urgency: "nominal" },
+    { type: "security",    class: "trust",       urgency: "nominal" },
+    { type: "quality",     class: "quality",     urgency: "nominal" },
+    { type: "scale",       class: "scale",       urgency: "nominal" },
+    { type: "efficiency",  class: "efficiency",  urgency: "nominal" },
+    { type: "deferred",    class: "class_unset", urgency: "deferred" },
+    { type: "cron",        class: "ops",         urgency: "nominal" },
+  ];
+
+  for (const c of cases) {
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+       VALUES (?, 'p', 't', 'b', ?, 'ready', 'task')`,
+      [`row-${c.type}`, c.type],
+    );
+  }
+  // kind rename rows
+  for (const k of ["chat_in", "chat_out", "encounter_reply"]) {
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+       VALUES (?, 'p', 't', 'b', 'mvp', 'ready', ?)`,
+      [`kind-${k}`, k],
+    );
+  }
+
+  migrate(db);
+
+  for (const c of cases) {
+    const row = db
+      .query<{ class: string; urgency: string; kind: string; source_module: string | null }, []>(
+        `SELECT class, urgency, kind, source_module FROM issues WHERE id='row-${c.type}'`,
+      )
+      .get();
+    expect(row?.class).toBe(c.class);
+    expect(row?.urgency).toBe(c.urgency);
+    expect(row?.kind).toBe("task");
+    expect(row?.source_module).toBeNull();
+  }
+
+  const renames: Record<string, string> = {
+    chat_in: "event",
+    encounter_reply: "event",
+    chat_out: "reply",
+  };
+  for (const [old, neu] of Object.entries(renames)) {
+    const row = db
+      .query<{ kind: string; source_module: string | null }, []>(
+        `SELECT kind, source_module FROM issues WHERE id='kind-${old}'`,
+      )
+      .get();
+    expect(row?.kind).toBe(neu);
+    expect(row?.source_module).toBe("arc-chat");
+  }
+});
+
+test("011 CHECK enforces source_module when kind ∈ {event, reply}", () => {
+  const db = new Database(":memory:");
+  migrate(db);
+  expect(() =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+       VALUES ('x','p','t','b','mvp','ready','event')`,
+    ),
+  ).toThrow();
+  expect(() =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind, source_module)
+       VALUES ('y','p','t','b','mvp','ready','reply','arc-chat')`,
+    ),
+  ).not.toThrow();
 });
 
 test("009 retract cascade flips loser deliveries on answer", () => {

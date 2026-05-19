@@ -39,7 +39,7 @@ db.exec("PRAGMA journal_mode=WAL;");
 
 const query = interviewer
   ? db.query<{ n: number }, []>(
-      "SELECT COUNT(*) AS n FROM issues WHERE kind IN ('chat_in','encounter_reply') AND state='ready' AND claimed_by IS NULL",
+      "SELECT COUNT(*) AS n FROM issues WHERE kind='event' AND source_module IN ('arc-chat','arc-encounter') AND state='ready' AND claimed_by IS NULL",
     )
   : db.query<{ n: number }, [string]>(
       "SELECT COUNT(*) AS n FROM issues WHERE kind=? AND state='ready' AND claimed_by IS NULL",
@@ -65,7 +65,9 @@ function emit(n: number, reason: "edge" | "heartbeat") {
 function tick() {
   let n: number;
   try {
-    const row = interviewer ? query.get() : query.get(kind!);
+    const row = interviewer
+      ? (query as ReturnType<typeof db.query<{ n: number }, []>>).get()
+      : (query as ReturnType<typeof db.query<{ n: number }, [string]>>).get(kind!);
     n = row?.n ?? 0;
   } catch (e) {
     process.stderr.write(`poll error: ${(e as Error).message}\n`);

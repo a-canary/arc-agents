@@ -371,7 +371,176 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "011_class_urgency_schema",
+    // ADR 0005 — split single `type` into orthogonal (class, urgency).
+    // Add source_module. Rename kind values:
+    //   chat_in, encounter_reply -> event
+    //   chat_out                 -> reply
+    // `type` column retained for now; drop deferred to a later release per ADR
+    // implementation note 9 ("after backfill verified"). Backfill is table-driven.
+    up: (db) => {
+      db.exec("DROP TRIGGER IF EXISTS unblock_dependents");
+      db.exec("DROP INDEX IF EXISTS idx_issues_ready");
+      db.exec("DROP INDEX IF EXISTS idx_issues_thread");
+      db.exec("DROP INDEX IF EXISTS idx_issues_parent");
+      db.exec("DROP INDEX IF EXISTS idx_issues_claimed_at");
+
+      // Normalize legacy `type` values in case any pre-008 row slipped through.
+      db.exec(`
+        UPDATE issues SET type = 'mvp'
+        WHERE type NOT IN ('interactive','HITL','cron','mvp','security','quality','scale','efficiency','deferred');
+      `);
+
+      // Rebuild table: add class, urgency, source_module; expand kind enum to include
+      // event/reply (old chat_in/chat_out/encounter_reply temporarily co-allowed in the
+      // CHECK during rebuild only because the INSERT...SELECT below relies on the rewrite
+      // CASE to map them — but we want post-rename validation strict, so the new CHECK
+      // lists only the post-ADR-0005 kind set).
+      db.exec(`
+        CREATE TABLE issues_new (
+          id            TEXT PRIMARY KEY,
+          project       TEXT NOT NULL,
+          parent_id     TEXT REFERENCES issues_new(id),
+          title         TEXT NOT NULL,
+          body_md       TEXT NOT NULL,
+          acceptance_md TEXT NOT NULL DEFAULT '',
+          type          TEXT NOT NULL
+                        CHECK (type IN ('interactive','HITL','cron','mvp','security','quality','scale','efficiency','deferred')),
+          state         TEXT NOT NULL DEFAULT 'ready'
+                        CHECK (state IN ('ready','claimed','wip','blocked','review','merged','cancelled','failed')),
+          hitl          INTEGER NOT NULL DEFAULT 0 CHECK (hitl IN (0,1)),
+          kind          TEXT NOT NULL DEFAULT 'task'
+                        CHECK (kind IN ('task','event','reply','prd','prefetch')),
+          class         TEXT NOT NULL DEFAULT 'class_unset'
+                        CHECK (class IN ('BUG','MVP','ops','hygiene','quality','trust','scale','efficiency','class_unset')),
+          urgency       TEXT NOT NULL DEFAULT 'nominal'
+                        CHECK (urgency IN ('interactive','nominal','deferred')),
+          source_module TEXT,
+          blocked_by    TEXT CHECK (blocked_by IS NULL OR blocked_by LIKE '[%]'),
+          worktree_path TEXT,
+          branch        TEXT,
+          pr_url        TEXT,
+          evidence_md   TEXT,
+          thread_id     TEXT,
+          encounter_mode TEXT,
+          encounter_timeout_at INTEGER,
+          encounter_default_resolution TEXT,
+          created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          claimed_at    INTEGER,
+          claimed_by    TEXT,
+          CHECK (kind NOT IN ('event','reply') OR source_module IS NOT NULL)
+        );
+      `);
+
+      // Backfill mapping per ADR 0005 §"Implementation notes" step 2.
+      // Kind rename: chat_in/encounter_reply -> event; chat_out -> reply.
+      // (class, urgency) derived from existing `type`:
+      //   interactive -> (class_unset, interactive)
+      //   HITL        -> (class_unset, nominal)
+      //   mvp         -> (MVP,         nominal)
+      //   security    -> (trust,       nominal)
+      //   quality     -> (quality,     nominal)
+      //   scale       -> (scale,       nominal)
+      //   efficiency  -> (efficiency,  nominal)
+      //   deferred    -> (class_unset, deferred)
+      //   cron        -> (ops,         nominal)
+      // source_module: arc-chat for renamed chat_in/chat_out; NULL otherwise (event/reply
+      // rows synthesized by other paths get backfilled by their producers later).
+      db.exec(`
+        INSERT INTO issues_new (
+          id, project, parent_id, title, body_md, acceptance_md, type, state, hitl,
+          kind, class, urgency, source_module,
+          blocked_by, worktree_path, branch, pr_url, evidence_md,
+          thread_id, encounter_mode, encounter_timeout_at, encounter_default_resolution,
+          created_at, updated_at, claimed_at, claimed_by
+        )
+        SELECT
+          id, project, parent_id, title, body_md, acceptance_md, type, state, hitl,
+          CASE kind
+            WHEN 'chat_in'         THEN 'event'
+            WHEN 'encounter_reply' THEN 'event'
+            WHEN 'chat_out'        THEN 'reply'
+            ELSE kind
+          END AS kind,
+          CASE type
+            WHEN 'mvp'        THEN 'MVP'
+            WHEN 'security'   THEN 'trust'
+            WHEN 'quality'    THEN 'quality'
+            WHEN 'scale'      THEN 'scale'
+            WHEN 'efficiency' THEN 'efficiency'
+            WHEN 'cron'       THEN 'ops'
+            ELSE 'class_unset'
+          END AS class,
+          CASE type
+            WHEN 'interactive' THEN 'interactive'
+            WHEN 'deferred'    THEN 'deferred'
+            ELSE 'nominal'
+          END AS urgency,
+          CASE
+            WHEN kind IN ('chat_in','chat_out','encounter_reply') THEN 'arc-chat'
+            ELSE NULL
+          END AS source_module,
+          blocked_by, worktree_path, branch, pr_url, evidence_md,
+          thread_id, encounter_mode, encounter_timeout_at, encounter_default_resolution,
+          created_at, updated_at, claimed_at, claimed_by
+        FROM issues;
+      `);
+
+      db.exec("DROP TABLE issues");
+      db.exec("ALTER TABLE issues_new RENAME TO issues");
+
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_ready ON issues(state, kind, urgency, class) WHERE state='ready'");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_thread ON issues(thread_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_parent ON issues(parent_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_claimed_at ON issues(claimed_at) WHERE state='claimed'");
+
+      db.exec(`
+        CREATE TRIGGER unblock_dependents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state = 'merged' AND OLD.state != 'merged'
+        BEGIN
+          UPDATE issues
+          SET state = 'ready', updated_at = strftime('%s','now')
+          WHERE state = 'blocked'
+            AND blocked_by IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state != 'merged'
+            );
+        END;
+      `);
+    },
+  },
 ];
+
+export function migrateUpTo(db: Database, stopAfterId: string): string[] {
+  db.exec("PRAGMA journal_mode=WAL;");
+  db.exec(`CREATE TABLE IF NOT EXISTS schema_migrations (
+    id TEXT PRIMARY KEY,
+    applied_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+  );`);
+  const applied = new Set(
+    db.query<{ id: string }, []>("SELECT id FROM schema_migrations").all().map((r) => r.id),
+  );
+  const ran: string[] = [];
+  for (const m of migrations) {
+    if (applied.has(m.id)) {
+      if (m.id === stopAfterId) return ran;
+      continue;
+    }
+    db.transaction(() => {
+      m.up(db);
+      db.run("INSERT OR IGNORE INTO schema_migrations (id) VALUES (?)", [m.id]);
+    })();
+    ran.push(m.id);
+    if (m.id === stopAfterId) return ran;
+  }
+  return ran;
+}
 
 export function migrate(db: Database): string[] {
   db.exec("PRAGMA journal_mode=WAL;");

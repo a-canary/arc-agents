@@ -39,10 +39,9 @@ const TABLE: Partial<Record<`${Kind}/${Type}`, Template>> = {
   "task/efficiency":    { frame: "afk",         overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: ["ke-recall", "to-ledger"] },
   "task/deferred":      { frame: "afk",         overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: ["ke-recall"] },
 
-  "chat_in/interactive":         { frame: "intake",      overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: ["ke-recall", "grill-with-docs", "choose-wisely"] },
-  "chat_out/interactive":        { frame: "interactive", overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: [] },
+  "event/interactive":           { frame: "intake",      overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: ["ke-recall", "grill-with-docs", "choose-wisely"] },
+  "reply/interactive":           { frame: "interactive", overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: [] },
   "prefetch/interactive":        { frame: "interactive", overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: ["to-ledger"] },
-  "encounter_reply/interactive": { frame: "interactive", overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: ["grill-with-docs"] },
 
   "prd/mvp": { frame: "intake", overlays: DEFAULT_OVERLAYS, doctrine: DEFAULT_DOCTRINE, opening_skills: ["grill-with-docs", "choose-wisely"] },
 };
@@ -97,7 +96,7 @@ export function renderSystemPrompt(input: RenderInput): string {
 function renderThreadReplay(turns: ThreadTurn[] | undefined): string {
   if (!turns || turns.length === 0) return "";
   const lines = turns.map((t) => {
-    const speaker = t.kind === "chat_in" ? "user" : "you";
+    const speaker = t.kind === "event" ? "user" : "you";
     const body = t.body.trim() || t.title;
     return `[${speaker}] ${body}`;
   });
