@@ -31,6 +31,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openWithMigrate } from "../src/ledger/db";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
+import { maySpawn } from "../src/factory/max-concurrency";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SHELL = join(REPO, "bin", "worker-shell.sh");
@@ -44,6 +45,17 @@ const MAX_AGE = parseInt(process.env.ARC_WORKER_MAX_AGE ?? "14400", 10);
 const INTERVAL = parseInt(process.env.ARC_FACTORY_INTERVAL ?? "5", 10);
 const PREFIX = process.env.ARC_WORKER_PREFIX ?? "arc-worker";
 const DB_FLAG = process.env.ARC_LEDGER_DB ? ["--db", process.env.ARC_LEDGER_DB] : [];
+// Opt-in: enforce profiles/<role>.json max_concurrency cap on top of pool slots.
+// Off by default — profile caps (cap=1 today) are tighter than pool slots, so
+// flipping this on without a per-role accounting refactor would starve the queue.
+const ENFORCE_PROFILE_CAP = process.env.ARC_ENFORCE_PROFILE_CAP === "1";
+
+// Pool → default role mapping. The factory does not yet track per-row role, so
+// "any" pool maps to developer and "interactive" pool to director.
+const POOL_ROLE: Record<"any" | "interactive", string> = {
+  any: "developer",
+  interactive: "director",
+};
 
 type Session = { name: string; created: number };
 
@@ -197,9 +209,14 @@ export function tick(): TickResult {
   let curInteractive = liveInteractive;
   let curAny = liveAny;
 
+  const canSpawn = (pool: "any" | "interactive", live: number): boolean => {
+    if (!ENFORCE_PROFILE_CAP) return true;
+    return maySpawn(POOL_ROLE[pool], live);
+  };
+
   // Phase 1: fill fast-pass slots with interactive work.
   let iIdx = 0;
-  while (curInteractive < SLOTS_INTERACTIVE && iIdx < interactiveReady.length) {
+  while (curInteractive < SLOTS_INTERACTIVE && iIdx < interactiveReady.length && canSpawn("interactive", curInteractive)) {
     spawned.push(spawnWorker("interactive"));
     curInteractive++;
     iIdx++;
@@ -207,13 +224,13 @@ export function tick(): TickResult {
 
   // Phase 2: fill general slots — interactive overflow first (still highest priority),
   // then non-interactive in priority order.
-  while (curAny < SLOTS_ANY && iIdx < interactiveReady.length) {
+  while (curAny < SLOTS_ANY && iIdx < interactiveReady.length && canSpawn("any", curAny)) {
     spawned.push(spawnWorker("any"));
     curAny++;
     iIdx++;
   }
   let nIdx = 0;
-  while (curAny < SLOTS_ANY && nIdx < nonInteractiveReady.length) {
+  while (curAny < SLOTS_ANY && nIdx < nonInteractiveReady.length && canSpawn("any", curAny)) {
     spawned.push(spawnWorker("any"));
     curAny++;
     nIdx++;
