@@ -515,6 +515,53 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "012_webui_columns",
+    // SLICE-PLAN-arc-webui.md S1. Add columns the webui needs:
+    //   priority      INT  — numeric priority. Lower = sooner. Backfilled
+    //                        from TYPE_PRIORITY (interactive=0…deferred=8)*10
+    //                        so /triage-failed and /defer can mutate without
+    //                        colliding with neighbors. Defer subtracts 100.
+    //   paused        BOOL — webui pause toggle. Waiter/factory skip when true.
+    //   deferred_at   TS   — set when the row was last deferred (rejoin queue).
+    //   artifact_dir  TEXT — path under ~/vault/agents/<role>/artifacts/<row>/
+    //                        for any drafts/sketches a worker produced.
+    //   draft_md      TEXT — cached HITL panel draft body (S5/S8 pre-drafter).
+    // parent_id already exists from 001/008/010/011 — no-op here.
+    up: (db) => {
+      const cols = db
+        .query<{ name: string }, []>("PRAGMA table_info(issues)")
+        .all()
+        .map((r) => r.name);
+      if (!cols.includes("priority")) db.exec("ALTER TABLE issues ADD COLUMN priority INTEGER");
+      if (!cols.includes("paused"))
+        db.exec("ALTER TABLE issues ADD COLUMN paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0,1))");
+      if (!cols.includes("deferred_at")) db.exec("ALTER TABLE issues ADD COLUMN deferred_at INTEGER");
+      if (!cols.includes("artifact_dir")) db.exec("ALTER TABLE issues ADD COLUMN artifact_dir TEXT");
+      if (!cols.includes("draft_md")) db.exec("ALTER TABLE issues ADD COLUMN draft_md TEXT");
+
+      // Backfill priority from TYPE_PRIORITY * 10 so defer (-100) and manual
+      // bumps have headroom without colliding with the type bucket.
+      db.exec(`
+        UPDATE issues SET priority = CASE type
+          WHEN 'interactive' THEN 0
+          WHEN 'HITL'        THEN 10
+          WHEN 'cron'        THEN 20
+          WHEN 'mvp'         THEN 30
+          WHEN 'security'    THEN 40
+          WHEN 'quality'     THEN 50
+          WHEN 'scale'       THEN 60
+          WHEN 'efficiency'  THEN 70
+          WHEN 'deferred'    THEN 80
+          ELSE 999
+        END
+        WHERE priority IS NULL;
+      `);
+
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority) WHERE state='ready'");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_paused ON issues(paused) WHERE paused=1");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
