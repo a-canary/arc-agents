@@ -5,7 +5,7 @@
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
-import { TYPE_PRIORITY_SQL } from "../src/ledger/type-priority-sort";
+import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
@@ -119,7 +119,7 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const typeClause = typeFilter ? "AND type=?2" : "";
     const sql = `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${SORT_KEY_SQL} LIMIT 1)
          RETURNING id`;
     const row = typeFilter
       ? db.query<{ id: string }, [string, string]>(sql).get(worker, typeFilter)
@@ -290,7 +290,7 @@ switch (cmd) {
     }
     const sql = `SELECT id, state, kind, type, title FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
-    } ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT ?`;
+    } ORDER BY ${SORT_KEY_SQL} LIMIT ?`;
     vals.push(limit);
     const db = openWithMigrate(getFlag("db"));
     out(db.query(sql).all(...vals));
@@ -421,7 +421,7 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
       type ? "AND type=?" : ""
-    } ORDER BY ${TYPE_PRIORITY_SQL}, id`;
+    } ORDER BY ${SORT_KEY_SQL}`;
     out(type ? db.query(sql).all(type) : db.query(sql).all());
     break;
   }
@@ -482,6 +482,64 @@ switch (cmd) {
     break;
   }
 
+  case "scratch-gc": {
+    // List ~/vault/scratch/<slug>/ dirs with no mtime activity in >14d.
+    // --root <path>     override scratch root (default ~/vault/scratch)
+    // --days <N>        staleness threshold (default 14)
+    // --apply           delete stale dirs (default: dry-run)
+    const { readdirSync, statSync, rmSync } = require("node:fs") as typeof import("node:fs");
+    const { join: pjoin } = require("node:path") as typeof import("node:path");
+    const root = getFlag("root") ?? `${process.env.HOME}/vault/scratch`;
+    const days = parseInt(getFlag("days") ?? "14", 10);
+    const apply = args.includes("--apply");
+    const cutoff = Date.now() - days * 86400 * 1000;
+
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(root);
+    } catch {
+      out({ root, stale: [], deleted: [], note: "root not found" });
+      break;
+    }
+
+    // Recursive mtime check: max mtime over dir tree.
+    function maxMtime(p: string): number {
+      let m = statSync(p).mtimeMs;
+      try {
+        for (const e of readdirSync(p)) {
+          const sub = pjoin(p, e);
+          let s;
+          try { s = statSync(sub); } catch { continue; }
+          if (s.isDirectory()) {
+            const mm = maxMtime(sub);
+            if (mm > m) m = mm;
+          } else if (s.mtimeMs > m) m = s.mtimeMs;
+        }
+      } catch { /* unreadable */ }
+      return m;
+    }
+
+    const stale: { path: string; last_activity: string }[] = [];
+    for (const name of entries) {
+      const p = pjoin(root, name);
+      let s;
+      try { s = statSync(p); } catch { continue; }
+      if (!s.isDirectory()) continue;
+      const mt = maxMtime(p);
+      if (mt < cutoff) stale.push({ path: p, last_activity: new Date(mt).toISOString() });
+    }
+
+    const deleted: string[] = [];
+    if (apply) {
+      for (const s of stale) {
+        rmSync(s.path, { recursive: true, force: true });
+        deleted.push(s.path);
+      }
+    }
+    out({ root, days, apply, stale, deleted });
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -506,6 +564,8 @@ switch (cmd) {
   render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
   vacuum
+  scratch-gc [--root P --days N --apply]
+                                       list/delete stale ~/vault/scratch/<slug>/ dirs
 
   global flags: --db <path>
 

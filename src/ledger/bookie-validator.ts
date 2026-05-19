@@ -24,6 +24,23 @@ export const TYPE_VALUES = [
 ] as const;
 export type Type = (typeof TYPE_VALUES)[number];
 
+// ADR 0005: orthogonal class + urgency replace single `type`.
+export const CLASS_VALUES = [
+  "BUG",
+  "MVP",
+  "ops",
+  "hygiene",
+  "quality",
+  "trust",
+  "scale",
+  "efficiency",
+  "class_unset",
+] as const;
+export type Class = (typeof CLASS_VALUES)[number];
+
+export const URGENCY_VALUES = ["interactive", "nominal", "deferred"] as const;
+export type Urgency = (typeof URGENCY_VALUES)[number];
+
 export const STATE_VALUES = [
   "ready",
   "claimed",
@@ -104,6 +121,71 @@ export function validateDecompose(input: DecomposeInput): ValidationError[] {
       errs.push({ field: "--child", message: `bad child title: '${c}'` });
     }
   }
+  return errs;
+}
+
+// ADR 0005 bookie write validator. Pure function over (row, registry).
+// Enforced on every bookie create/decompose write. Module-registry lookup +
+// class-rationale requirement keep the bookie as sole authority with schema.
+export type BookieWriteInput = {
+  kind?: string;
+  class?: string;
+  urgency?: string;
+  source_module?: string | null;
+  class_rationale?: string | null;
+  triage_pending?: boolean;
+};
+
+export type ModuleRegistry = ReadonlySet<string>;
+
+export function validateBookieWrite(
+  row: BookieWriteInput,
+  registry: ModuleRegistry,
+): ValidationError[] {
+  const errs: ValidationError[] = [];
+
+  if (!row.kind || !KIND_VALUES.includes(row.kind as Kind)) {
+    errs.push({ field: "kind", message: `must be one of: ${KIND_VALUES.join(", ")}` });
+  }
+
+  if (!row.class || !CLASS_VALUES.includes(row.class as Class)) {
+    errs.push({ field: "class", message: `must be one of: ${CLASS_VALUES.join(", ")}` });
+  } else if (row.class === "class_unset" && !row.triage_pending) {
+    errs.push({
+      field: "class",
+      message: "class='class_unset' only allowed with --triage-pending (ADR 0005)",
+    });
+  }
+
+  if (!row.urgency || !URGENCY_VALUES.includes(row.urgency as Urgency)) {
+    errs.push({ field: "urgency", message: `must be one of: ${URGENCY_VALUES.join(", ")}` });
+  }
+
+  // source_module: required for event/reply (matches SQL CHECK). Whenever
+  // provided, must resolve in the registry.
+  const needsModule = row.kind === "event" || row.kind === "reply";
+  if (needsModule && !row.source_module) {
+    errs.push({
+      field: "source_module",
+      message: `source_module required for kind='${row.kind}'`,
+    });
+  }
+  if (row.source_module && !registry.has(row.source_module)) {
+    errs.push({
+      field: "source_module",
+      message: `unknown source_module '${row.source_module}' — not in UX module registry (ADR 0002)`,
+    });
+  }
+
+  // class_rationale: required on create/decompose unless class_unset+triage_pending.
+  const rationaleExempt = row.class === "class_unset" && !!row.triage_pending;
+  if (!rationaleExempt && !row.class_rationale) {
+    errs.push({
+      field: "class_rationale",
+      message: "class_rationale required (cite CHOICES.md/CONTEXT.md per ADR 0005)",
+    });
+  }
+
   return errs;
 }
 
