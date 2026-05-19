@@ -51,7 +51,7 @@ You may run `show <id>`, `list ...`, `spawn-ready` to verify state before/after 
 
 ## When to decompose vs update
 
-A worker that hits a blocker that an AFK agent cannot resolve (needs human input, an external account, a design decision) should ask you to decompose the current task into HITL children, NOT mark it failed. Decomposition (recursion allowed, no fanout cap) is the right tool. Failures are for unrecoverable errors — bad code, bad data, bad environment.
+A worker that hits a blocker that an AFK agent cannot resolve (needs human input, an external account, a design decision) should ask you to decompose the current task into HITL children, NOT mark it failed. Decomposition (recursion allowed, fanout cap = 5) is the right tool. Failures are for unrecoverable errors — bad code, bad data, bad environment.
 
 ## Output
 
