@@ -5,7 +5,7 @@
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
-import { TYPE_PRIORITY_SQL } from "../src/ledger/type-priority-sort";
+import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
@@ -119,7 +119,7 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const typeClause = typeFilter ? "AND type=?2" : "";
     const sql = `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${SORT_KEY_SQL} LIMIT 1)
          RETURNING id`;
     const row = typeFilter
       ? db.query<{ id: string }, [string, string]>(sql).get(worker, typeFilter)
@@ -290,7 +290,7 @@ switch (cmd) {
     }
     const sql = `SELECT id, state, kind, type, title FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
-    } ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT ?`;
+    } ORDER BY ${SORT_KEY_SQL} LIMIT ?`;
     vals.push(limit);
     const db = openWithMigrate(getFlag("db"));
     out(db.query(sql).all(...vals));
@@ -421,7 +421,7 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
       type ? "AND type=?" : ""
-    } ORDER BY ${TYPE_PRIORITY_SQL}, id`;
+    } ORDER BY ${SORT_KEY_SQL}`;
     out(type ? db.query(sql).all(type) : db.query(sql).all());
     break;
   }
