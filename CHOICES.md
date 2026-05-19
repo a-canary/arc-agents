@@ -82,6 +82,9 @@ TS over Python where reasonable. Bun runtime.
 ### S-0003: Replay-Shadow as the Confidence Primitive
 Capture one real worker turn → replay against candidate config in an isolated sandbox → diff transcript + ledger writes + quality signals. Run on a corpus (~30) before promoting prompt/template/model/skill-set changes. Generic dev practice, not arc-specific; harness is per-system (`bin/arc-replay.ts` for arc-agents). Skill defines contract, system wires it. Not a substitute for live shadow on concurrency/UX/scale regressions. See `skills/replay-shadow/SKILL.md`.
 
+### S-0003.c: Canonical Transcript Source for Worker Turns
+Replay-shadow fixtures use the claude session JSONL at `~/.claude/projects/<proj>/<session>.jsonl` as the canonical transcript for a worker turn. Rationale: it is the only artifact that contains the full ordered sequence of model I/O, tool calls, and tool results in a single file written by the runtime itself — no reconstruction needed. Ledger `issue_events` rows are the canonical *output-diff* (a separate fixture part), not the transcript; they record decisions but not deliberation. Tmux scrollback is lossy (truncation, ANSI noise) and not a stable format. The session JSONL is keyed by session id; the binding from worker → session is recoverable from the worker tmux name + `~/.claude/projects/<proj>/` directory mtime (capture procedure stores the resolved path in `fixture.json`).
+
 ---
 
 ## Data
