@@ -85,6 +85,12 @@ Capture one real worker turn → replay against candidate config in an isolated 
 ### S-0003.c: Canonical Transcript Source for Worker Turns
 Replay-shadow fixtures use the claude session JSONL at `~/.claude/projects/<proj>/<session>.jsonl` as the canonical transcript for a worker turn. Rationale: it is the only artifact that contains the full ordered sequence of model I/O, tool calls, and tool results in a single file written by the runtime itself — no reconstruction needed. Ledger `issue_events` rows are the canonical *output-diff* (a separate fixture part), not the transcript; they record decisions but not deliberation. Tmux scrollback is lossy (truncation, ANSI noise) and not a stable format. The session JSONL is keyed by session id; the binding from worker → session is recoverable from the worker tmux name + `~/.claude/projects/<proj>/` directory mtime (capture procedure stores the resolved path in `fixture.json`).
 
+### S-0004: Intake Skill — grill-with-docs
+Path: `~/projects/mattpocock-skills/skills/engineering/grill-with-docs/SKILL.md`. Purpose: stress-test a plan against `CONTEXT.md` + `docs/adr/` anchor docs, sharpen terminology, update docs inline as decisions crystallise. Who may invoke: **interviewer always** (step 1 of Intake/UX_1 per U-0007). **Workers**: invoke only when a task body explicitly requests it (e.g., scope-alignment tasks). Default for routine impl/quality tasks is to skip — workers act on already-decomposed rows.
+
+### S-0005: Intake Skill — choose-wisely
+Path: `~/agents/skills/governance/choose-wisely/SKILL.md`. Purpose: iterate `CHOICES.md` to surface and resolve up/downstream design choices, cascade impact across M/A/G/S/D/I tiers, plan implementation phases. Who may invoke: **interviewer always** (step 2 of Intake/UX_1 per U-0007). **Workers**: invoke when a task introduces or revises a CHOICES entry; otherwise skip. Cascades will reference S-0004/S-0005 once these pointers exist.
+
 ---
 
 ## Data
