@@ -301,3 +301,76 @@ test("claim + spawn-ready skip non-allowlisted kinds (prd, reply, prefetch)", as
     cleanup();
   }
 });
+
+test("hitl emit: refuses + atomically spawns install task when no alive module (U-0001)", async () => {
+  const { db, cleanup } = freshDb();
+  const cfgDir = mkdtempSync(join(tmpdir(), "ux-cfg-"));
+  const cfgPath = join(cfgDir, "config.yaml");
+  // Config declares a module that implements ask_choice — but no heartbeat will
+  // be recorded, so the module is not alive.
+  await Bun.write(
+    cfgPath,
+    "modules:\n  arc-tui:\n    cli: t\n    implements: [ask_choice]\n    renders: {}\n    can_retract: true\n",
+  );
+  try {
+    await run(db, "init");
+    const r = await $`bun ${cli} hitl emit --class taste --kind ask_choice --prompt "pick one" --option a --option b --recommended a --db ${db}`
+      .env({ ...process.env, ARC_CONFIG: cfgPath })
+      .quiet()
+      .nothrow();
+    expect(r.exitCode).toBe(2);
+    const body = JSON.parse(r.stdout.toString()) as {
+      refused: boolean;
+      install_task: string;
+    };
+    expect(body.refused).toBe(true);
+    expect(body.install_task).toContain("bootstrap-install-ux-module");
+    // hitl_prompts row was NOT created; install task WAS created.
+    const ready = (await run(db, "list", "--state", "ready")) as { id: string; title: string }[];
+    expect(ready.length).toBe(1);
+    expect(ready[0]!.id).toBe(body.install_task);
+    expect(ready[0]!.title).toContain("ask_choice");
+  } finally {
+    cleanup();
+    rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+test("hitl emit: proceeds when alive module implements kind (U-0001 happy path)", async () => {
+  const { db, cleanup } = freshDb();
+  const cfgDir = mkdtempSync(join(tmpdir(), "ux-cfg-"));
+  const cfgPath = join(cfgDir, "config.yaml");
+  await Bun.write(
+    cfgPath,
+    "modules:\n  arc-tui:\n    cli: t\n    implements: [ask_choice]\n    renders: {}\n    can_retract: true\n",
+  );
+  try {
+    await run(db, "init");
+    // Record a fresh heartbeat for arc-tui so it counts as alive.
+    await $`bun ${cli} --db ${db}`.quiet().nothrow(); // no-op (ensure migrate ran via init)
+    const { Database } = await import("bun:sqlite");
+    const handle = new Database(db);
+    handle.run(
+      "INSERT INTO ux_heartbeats (module_name, last_beat) VALUES ('arc-tui', strftime('%s','now'))",
+    );
+    handle.close();
+
+    const r = await $`bun ${cli} hitl emit --class taste --kind ask_choice --prompt "pick" --option a --option b --recommended a --db ${db}`
+      .env({ ...process.env, ARC_CONFIG: cfgPath })
+      .quiet()
+      .nothrow();
+    expect(r.exitCode).toBe(0);
+    const body = JSON.parse(r.stdout.toString()) as {
+      id: string;
+      deliveries: string[];
+    };
+    expect(body.id).toStartWith("hitl-");
+    expect(body.deliveries).toEqual(["arc-tui"]);
+    // No install task spawned.
+    const ready = (await run(db, "list", "--state", "ready")) as { id: string }[];
+    expect(ready.length).toBe(0);
+  } finally {
+    cleanup();
+    rmSync(cfgDir, { recursive: true, force: true });
+  }
+});

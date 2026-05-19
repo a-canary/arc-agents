@@ -364,8 +364,36 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const cfg = loadConfig();
     const modules = pickModulesForHitl(db, cfg, kind as HitlKind);
-    if (modules.length === 0)
-      die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
+    if (modules.length === 0) {
+      // U-0001 self-heal: atomically refuse the HITL write AND spawn a bootstrap
+      // install task so the system surfaces the gap instead of silently dropping.
+      const installTitle = `bootstrap: install ux module to handle ${kind} prompts`;
+      const installBody =
+        `HITL emit for kind '${kind}' (class=${cls}) was refused — no alive UX module implements it.\n\n` +
+        `Original prompt: ${promptText}\n` +
+        `Emitter: ${emittedBy}\n\n` +
+        `Resolution: install or revive a UX module whose config \`implements:\` array contains '${kind}', ` +
+        `then ensure it heartbeats into \`ux_heartbeats\`. See ADR 0002 + CHOICES U-0001/U-0005.`;
+      const installId = mintId(db, installTitle);
+      const tx = db.transaction(() => {
+        db.run(
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind)
+           VALUES (?, 'arc-agents', NULL, ?, ?, ?, 'mvp', 'ready', 'task')`,
+          [installId, installTitle, installBody, `Alive UX module exists for kind '${kind}'.`],
+        );
+        db.run(
+          `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', 'bookie', ?)`,
+          [installId, `auto-spawned by hitl emit refusal (kind=${kind})`],
+        );
+      });
+      tx();
+      out({
+        refused: true,
+        reason: `no alive UX module implements '${kind}'`,
+        install_task: installId,
+      });
+      process.exit(2);
+    }
 
     const id = `hitl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
     db.run(
