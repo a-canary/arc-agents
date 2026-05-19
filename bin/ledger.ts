@@ -119,7 +119,7 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const typeClause = typeFilter ? "AND type=?2" : "";
     const sql = `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind='task' ${typeClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
          RETURNING id`;
     const row = typeFilter
       ? db.query<{ id: string }, [string, string]>(sql).get(worker, typeFilter)
@@ -419,7 +419,7 @@ switch (cmd) {
   case "spawn-ready": {
     const type = getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind='task' ${
+    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
       type ? "AND type=?" : ""
     } ORDER BY ${TYPE_PRIORITY_SQL}, id`;
     out(type ? db.query(sql).all(type) : db.query(sql).all());

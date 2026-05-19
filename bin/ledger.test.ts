@@ -263,3 +263,41 @@ test("decompose: rejects from terminal state", async () => {
     cleanup();
   }
 });
+
+test("claim + spawn-ready surface event-kind rows (ADR 0005 allowlist)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const ev = (await run(
+      db,
+      "create",
+      "--kind", "event",
+      "--type", "interactive",
+      "--title", "chat in",
+      "--source-module", "arc-chat",
+    )) as { id: string };
+    const ready = (await run(db, "spawn-ready")) as { id: string; kind: string }[];
+    expect(ready.find((r) => r.id === ev.id)?.kind).toBe("event");
+    const claimed = (await run(db, "claim", "w-evt")) as { claimed: string | null };
+    expect(claimed.claimed).toBe(ev.id);
+  } finally {
+    cleanup();
+  }
+});
+
+test("claim + spawn-ready skip non-allowlisted kinds (prd, reply, prefetch)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    for (const k of ["prd", "reply", "prefetch"] as const) {
+      const extra = k === "reply" ? ["--source-module", "arc-chat"] : [];
+      await run(db, "create", "--kind", k, "--type", "mvp", "--title", `${k} row`, ...extra);
+    }
+    const ready = (await run(db, "spawn-ready")) as unknown[];
+    expect(ready.length).toBe(0);
+    const claimed = (await run(db, "claim", "w-none")) as { claimed: string | null };
+    expect(claimed.claimed).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
