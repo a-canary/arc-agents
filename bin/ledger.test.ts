@@ -301,3 +301,57 @@ test("claim + spawn-ready skip non-allowlisted kinds (prd, reply, prefetch)", as
     cleanup();
   }
 });
+
+test("scratch-gc lists stale dirs (dry-run) and --apply deletes", async () => {
+  const { db, cleanup } = freshDb();
+  const { mkdirSync, writeFileSync, utimesSync, existsSync } = await import("node:fs");
+  const root = mkdtempSync(join(tmpdir(), "scratch-root-"));
+  try {
+    const fresh = join(root, "fresh-proto");
+    const stale = join(root, "stale-proto");
+    mkdirSync(fresh);
+    mkdirSync(stale);
+    writeFileSync(join(fresh, "a.txt"), "x");
+    writeFileSync(join(stale, "b.txt"), "y");
+    // Backdate stale dir + file to 30d ago.
+    const old = (Date.now() - 30 * 86400 * 1000) / 1000;
+    utimesSync(join(stale, "b.txt"), old, old);
+    utimesSync(stale, old, old);
+
+    // (a) lists stale dirs (dry-run default)
+    const dry = (await run(db, "scratch-gc", "--root", root, "--days", "14")) as {
+      stale: { path: string }[];
+      deleted: string[];
+      apply: boolean;
+    };
+    expect(dry.apply).toBe(false);
+    expect(dry.stale.map((s) => s.path)).toEqual([stale]);
+    expect(dry.deleted).toEqual([]);
+    expect(existsSync(stale)).toBe(true);
+
+    // (b) --apply deletes
+    const applied = (await run(db, "scratch-gc", "--root", root, "--days", "14", "--apply")) as {
+      deleted: string[];
+    };
+    expect(applied.deleted).toEqual([stale]);
+    expect(existsSync(stale)).toBe(false);
+    expect(existsSync(fresh)).toBe(true);
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+    cleanup();
+  }
+});
+
+test("scratch-gc handles missing root gracefully", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const r = (await run(db, "scratch-gc", "--root", "/nonexistent/path/xyz")) as {
+      stale: unknown[];
+      note?: string;
+    };
+    expect(r.stale).toEqual([]);
+    expect(r.note).toBe("root not found");
+  } finally {
+    cleanup();
+  }
+});

@@ -6,7 +6,7 @@ AFK = artifact-keyed DAG of ledger state with tech-tree navigation.
 
 ## Locked decisions
 
-- **Stack:** TBD in S1 (Astro+Solid vs SvelteKit vs Next — pick during decomposition interview)
+- **Stack:** SvelteKit (Bun adapter) + d3-dag for Sugiyama layout. Picked over Astro+Solid (islands split mental model for SSE-heavy app) and Next (React weight + RSC churn unjustified for solo mobile-first surface). SvelteKit gives first-class SSE, single isomorphic codebase, smallest hot-reload cost, and graph libs are framework-agnostic. **HITL taste prompt emitted; recommendation = SvelteKit, optimistic forward.**
 - **Sync:** SSE; server binds tailscale0
 - **Auth:** tailscale-only, hard-fail if interface missing
 - **Drafts:** pre-draft top-3 chat_in; cache on row; regenerate on rank change
@@ -81,5 +81,41 @@ Verify tailscale ACL, attempt connection from non-tailnet IP (expect refused). D
 
 ## Critical path to MVP
 
-S0 → S1 → S2 → S4 → S5 + S6 → S7 → S8 → ship.
-S3 parallels S1/S2. S9/S10 post-ship.
+**MVP cut line: S1 → S2 → S5 + S6.** Ship when HITL panel renders top-3 drafts and AFK DAG renders in-flight/blocked/pending with click-to-thread. S4 folded into S5/S6 as a single inline tokens pass (no separate sketch gate — paper-sketch + claude-design happens in-line per panel). S3 (reference dossier) parallels S1/S2 and informs S4-inline; user narrows targets via HITL taste prompt.
+
+Post-MVP (in-order, soak between): S7 (pause/defer) → S8 (pre-drafter) → 7-day soak → S9 (trash old surfaces). S10 (auth verification) runs immediately after S2 merges; non-blocking for MVP ship but blocks public-network exposure.
+
+## Exact slice count: 11 (S0–S10)
+
+S0 = this row (decomposition interview, doc deliverable).
+S1–S10 = developer/interviewer/admin tickets to be created as ledger rows by the next worker claiming the parent (arc-webui-2-panel-rewrite-hitl-afk).
+
+## Dep order (topological)
+
+```
+S0 ──► S1 ──► S2 ──► S5 ──► (MVP)
+   │     │     │      │
+   │     │     │      ▼
+   │     │     └────► S6 ──► S7
+   │     │                    │
+   │     └──► S8 ◄─────────── S5
+   │                           │
+   └──► S3 ──► (S4 inlined into S5/S6)
+                                │
+              S2 ──► S10        ▼
+                          S5+S6+S7+S8 + 7d soak ──► S9
+```
+
+## Sizing (rough PR scope)
+
+- **S1 schema deltas:** ~200 LOC migration + tests. 1 PR.
+- **S2 SSE server:** ~300 LOC server + 100 LOC SSE client lib. 1 PR.
+- **S3 reference dossier:** asset commit + 1-paragraph review doc. 1 PR.
+- **S5 HITL panel:** ~800 LOC (mobile-first carousel + draft renderer + submit). 1 PR.
+- **S6 AFK DAG panel:** ~1000 LOC (d3-dag layout + zoom/pan + thread overlay + artifact gallery). 1 PR.
+- **S7 pause/defer:** ~150 LOC button wiring + waiter changes. 1 PR.
+- **S8 pre-drafter loop:** ~250 LOC interviewer frame + cache invalidation. 1 PR.
+- **S9 trash old surfaces:** mechanical to-trash + link-grep verification. 1 PR.
+- **S10 auth verification:** doc + smoke test. 1 PR.
+
+Total MVP code surface: ~2400 LOC across 4 PRs (S1, S2, S5, S6). Achievable in 4 single-worker sessions.

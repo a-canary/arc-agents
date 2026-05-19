@@ -482,6 +482,64 @@ switch (cmd) {
     break;
   }
 
+  case "scratch-gc": {
+    // List ~/vault/scratch/<slug>/ dirs with no mtime activity in >14d.
+    // --root <path>     override scratch root (default ~/vault/scratch)
+    // --days <N>        staleness threshold (default 14)
+    // --apply           delete stale dirs (default: dry-run)
+    const { readdirSync, statSync, rmSync } = require("node:fs") as typeof import("node:fs");
+    const { join: pjoin } = require("node:path") as typeof import("node:path");
+    const root = getFlag("root") ?? `${process.env.HOME}/vault/scratch`;
+    const days = parseInt(getFlag("days") ?? "14", 10);
+    const apply = args.includes("--apply");
+    const cutoff = Date.now() - days * 86400 * 1000;
+
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(root);
+    } catch {
+      out({ root, stale: [], deleted: [], note: "root not found" });
+      break;
+    }
+
+    // Recursive mtime check: max mtime over dir tree.
+    function maxMtime(p: string): number {
+      let m = statSync(p).mtimeMs;
+      try {
+        for (const e of readdirSync(p)) {
+          const sub = pjoin(p, e);
+          let s;
+          try { s = statSync(sub); } catch { continue; }
+          if (s.isDirectory()) {
+            const mm = maxMtime(sub);
+            if (mm > m) m = mm;
+          } else if (s.mtimeMs > m) m = s.mtimeMs;
+        }
+      } catch { /* unreadable */ }
+      return m;
+    }
+
+    const stale: { path: string; last_activity: string }[] = [];
+    for (const name of entries) {
+      const p = pjoin(root, name);
+      let s;
+      try { s = statSync(p); } catch { continue; }
+      if (!s.isDirectory()) continue;
+      const mt = maxMtime(p);
+      if (mt < cutoff) stale.push({ path: p, last_activity: new Date(mt).toISOString() });
+    }
+
+    const deleted: string[] = [];
+    if (apply) {
+      for (const s of stale) {
+        rmSync(s.path, { recursive: true, force: true });
+        deleted.push(s.path);
+      }
+    }
+    out({ root, days, apply, stale, deleted });
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -506,6 +564,8 @@ switch (cmd) {
   render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
   vacuum
+  scratch-gc [--root P --days N --apply]
+                                       list/delete stale ~/vault/scratch/<slug>/ dirs
 
   global flags: --db <path>
 
