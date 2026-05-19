@@ -3,6 +3,11 @@
 
 import { z } from "zod";
 
+// Artifact ref. Three shapes:
+//   inline: small payloads embedded directly (<=4KB by convention)
+//   {sha256, ext}: content-addressable blob at ~/vault/artifacts/<sha256>.<ext>
+//     (ADR 0006 §2; see src/ledger/artifact-store.ts)
+//   path: legacy/explicit absolute path (back-compat)
 export const artifactRef = z.object({
   type: z.enum([
     "text/markdown",
@@ -11,13 +16,17 @@ export const artifactRef = z.object({
     "diagram/mermaid",
     "image/png",
     "table/rows",
-  ]),
-  // Inline (small) or path under ~/vault/artifacts/<uuid>.* (large).
+  ]).optional(),
   inline: z.string().optional(),
+  sha256: z.string().regex(/^[a-f0-9]{64}$/).optional(),
+  ext: z.string().regex(/^[a-z0-9]+$/).optional(),
   path: z.string().optional(),
 }).refine(
-  (a) => Boolean(a.inline) !== Boolean(a.path),
-  "artifact must have exactly one of inline or path",
+  (a) => Boolean(a.inline) || Boolean(a.sha256) || Boolean(a.path),
+  "artifact must have inline, sha256, or path",
+).refine(
+  (a) => !a.sha256 || Boolean(a.ext),
+  "artifact with sha256 must also include ext",
 );
 export type ArtifactRef = z.infer<typeof artifactRef>;
 

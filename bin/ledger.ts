@@ -10,6 +10,9 @@ import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import type { HitlKind } from "../src/ledger/hitl-schemas";
+import { storeArtifact } from "../src/ledger/artifact-store";
+import { readFileSync } from "node:fs";
+import { extname, basename } from "node:path";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -340,25 +343,44 @@ switch (cmd) {
 
     // Repeatable --option flag → options[] for ask_choice.
     const options: string[] = [];
+    const artifactPaths: string[] = [];
     for (let i = 0; i < args.length; i++) {
       if (args[i] === "--option") {
         const v = args[i + 1];
         if (v !== undefined) options.push(v);
       } else if (args[i]?.startsWith("--option=")) {
         options.push(args[i]!.slice("--option=".length));
+      } else if (args[i] === "--artifact") {
+        const v = args[i + 1];
+        if (v !== undefined) artifactPaths.push(v);
+      } else if (args[i]?.startsWith("--artifact=")) {
+        artifactPaths.push(args[i]!.slice("--artifact=".length));
       }
+    }
+
+    // Ingest each --artifact <local-path> through the content-addressable store
+    // (ADR 0006 §2). Embed {sha256, ext} refs in payload.artifacts[].
+    const artifactRefs: { sha256: string; ext: string; path: string }[] = [];
+    for (const p of artifactPaths) {
+      const bytes = readFileSync(p);
+      const ext = extname(p).slice(1) || "bin";
+      artifactRefs.push(storeArtifact(bytes, ext));
     }
 
     let payload: Record<string, unknown>;
     if (kind === "ask_choice") {
       if (options.length < 2) die("ask_choice requires at least 2 --option flags");
-      payload = { prompt: promptText, options, artifacts: [] };
+      payload = { prompt: promptText, options, artifacts: artifactRefs };
     } else if (kind === "ask_text" || kind === "ask_confirm") {
-      payload = { prompt: promptText, artifacts: [] };
+      payload = { prompt: promptText, artifacts: artifactRefs };
+    } else if (kind === "show_artifact") {
+      if (artifactRefs.length === 0) die("show_artifact requires at least one --artifact <path>");
+      payload = { caption: promptText, artifacts: artifactRefs };
     } else if (kind === "notify") {
+      if (artifactRefs.length > 0) die("--artifact not supported for notify");
       payload = { message: promptText, level: "info" };
     } else {
-      die(`--kind '${kind}' not supported by this verb (use ask_choice|ask_text|ask_confirm|notify)`);
+      die(`--kind '${kind}' not supported by this verb (use ask_choice|ask_text|ask_confirm|notify|show_artifact)`);
     }
 
     const db = openWithMigrate(getFlag("db"));
