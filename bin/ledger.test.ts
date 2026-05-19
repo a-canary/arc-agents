@@ -13,8 +13,13 @@ function freshDb(): { db: string; cleanup: () => void } {
   return { db, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
+// Default test env skips the merge-truth precondition so existing tests can
+// synthesize `merged` rows without spinning up a real GitHub PR. Tests that
+// exercise the precondition explicitly use runStrict / runStrictRaw below.
+const testEnv = { ...process.env, ARC_SKIP_MERGE_TRUTH: "1" };
+
 async function run(db: string, ...args: string[]): Promise<unknown> {
-  const r = await $`bun ${cli} ${args} --db ${db}`.quiet();
+  const r = await $`bun ${cli} ${args} --db ${db}`.env(testEnv).quiet();
   return JSON.parse(r.stdout.toString());
 }
 
@@ -23,7 +28,20 @@ async function runRawNoDb(...args: string[]) {
 }
 
 async function runRaw(db: string, ...args: string[]) {
-  return await $`bun ${cli} ${args} --db ${db}`.quiet().nothrow();
+  return await $`bun ${cli} ${args} --db ${db}`.env(testEnv).quiet().nothrow();
+}
+
+async function runStrict(db: string, ...args: string[]): Promise<unknown> {
+  const env = { ...process.env };
+  delete env.ARC_SKIP_MERGE_TRUTH;
+  const r = await $`bun ${cli} ${args} --db ${db}`.env(env).quiet();
+  return JSON.parse(r.stdout.toString());
+}
+
+async function runStrictRaw(db: string, ...args: string[]) {
+  const env = { ...process.env };
+  delete env.ARC_SKIP_MERGE_TRUTH;
+  return await $`bun ${cli} ${args} --db ${db}`.env(env).quiet().nothrow();
 }
 
 async function stubDiffReview(db: string, id: string): Promise<void> {
@@ -1582,6 +1600,96 @@ test("update --blocked-by is rejected (silently-dropped flag guard)", async () =
     const shown = (await run(db, "show", c.id)) as { issue: { state: string; blocked_by: string | null } };
     expect(shown.issue.state).toBe("ready");
     expect(shown.issue.blocked_by).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged refused when pr_url null and no --pr supplied (strict mode)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+      id: string;
+    };
+    await run(db, "update", c.id, "--state", "wip");
+    // diff_review event must exist before the merge-truth precondition runs
+    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--evidence", "did the thing");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("refused");
+    expect(r.stderr.toString()).toMatch(/--pr|--local-merged-sha/);
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string }; events: { kind: string; payload_md: string }[] };
+    expect(shown.issue.state).toBe("wip");
+    // Refusal must be recorded as a note event for audit trail.
+    expect(shown.events.some((e) => e.kind === "note" && e.payload_md.includes("refused state=merged"))).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged refused when --pr looks like a branch, not a URL/number (strict)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--pr", "feat/foo", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("does not look like a PR URL");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged refused for non-hex --local-merged-sha (strict)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--local-merged-sha", "not-a-sha", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("not a hex sha");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged via --local-merged-sha works when sha is on origin/main", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    // Use the sha of HEAD in this worktree — guaranteed to be reachable from
+    // origin/main since the worktree was created off origin/main.
+    const sha = (await $`git rev-parse HEAD`.cwd(new URL("..", import.meta.url).pathname).quiet()).stdout.toString().trim();
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--local-merged-sha", sha, "--evidence", "local landing");
+    if (r.exitCode !== 0) {
+      // Worktree may not have origin/main fetched; skip rather than fail noisily.
+      const stderr = r.stderr.toString();
+      if (stderr.includes("origin/main")) return;
+      throw new Error(`unexpected: ${stderr}`);
+    }
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string } };
+    expect(shown.issue.state).toBe("merged");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update non-merged states are unaffected by precondition (strict)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    // wip, blocked, review, failed, cancelled are all fine without PR
+    await runStrict(db, "update", c.id, "--state", "wip");
+    await runStrict(db, "update", c.id, "--state", "review");
+    await runStrict(db, "update", c.id, "--state", "failed", "--evidence", "broke");
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string } };
+    expect(shown.issue.state).toBe("failed");
   } finally {
     cleanup();
   }

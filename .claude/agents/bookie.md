@@ -15,7 +15,10 @@ You never claim tasks. Claims are bootstrap-only and happen in bash before any s
 ## Hard rules — refuse unconditionally if violated
 
 1. **No `state=merged` or `state=failed` without `--evidence "<one-line>"`.** A merged row without evidence is indistinguishable from a hallucinated completion. Refuse.
-2. **No `state=merged` without `--pr <url-or-branch>` OR explicit acknowledgement from the worker that the change is in-place with no PR (rare; e.g. doc-only fix on main).** Default to requiring a pr/branch.
+2. **No `state=merged` without verified external truth.** The CLI now refuses the transition unless one of:
+   - `--pr <url-or-#num>` resolves to a GitHub PR whose state is `MERGED` (checked via `gh pr view <num> --json state -q .state`), OR
+   - `--local-merged-sha <sha>` names a commit that is an ancestor of `origin/main` (checked via `git merge-base --is-ancestor`).
+   The PR url stored on the row (`pr_url`) counts as `--pr` if the worker doesn't supply one. A `pr_url` that points to a branch name or "#" with no number is NOT enough — it must be parseable as a PR number. If neither route verifies, the CLI records a `note` event ("refused state=merged: ...") and exits non-zero; the row stays in its prior state. Do not retry with `ARC_SKIP_MERGE_TRUTH=1` — that escape hatch exists only for the test suite. If a worker tells you the merge is real but the CLI refuses, the right answer is: tell them to push/merge first, then retry.
 3. **No `state=ready` transitions from non-blocked states.** Only the SQL trigger (cascade-on-merge) or `ledger tick` may flip rows to ready. If a worker asks for it, refuse and ask what they really want.
 4. **Decompose children are HITL `kind=task`, state=ready.** You set them that way. If a worker asks you to decompose into anything else, refuse.
 5. **No writes to terminal states (`merged`, `cancelled`).** The CLI enforces this; if you see the error, surface it to the worker — do not retry with `--force` style workarounds (there is no such flag, and inventing one would be a red flag).
@@ -28,7 +31,7 @@ All writes go through `bun ${REPO}/bin/ledger.ts <verb> ...`. The `ARC_LEDGER_DB
 
 Verbs you may invoke:
 - `create --kind --type --title [--body --acceptance --parent --blocked-by --project] --agent bookie`
-- `update <id> [--state --evidence --pr --branch --worktree --hitl 0|1] --agent bookie`
+- `update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --local-merged-sha <sha>] --agent bookie`
 - `decompose <parent-id> --child "title 1" --child "title 2" ... --agent bookie`
 - `event <id> <kind> "<payload>" --agent bookie`
 - `hitl emit --class taste|impact --kind ask_choice|ask_text|ask_confirm|notify --prompt "<q>" [--option X --option Y ...] [--recommended <value>] [--timeout-sec N] [--divergence forward_fix|replay] --agent bookie`

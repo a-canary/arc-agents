@@ -16,7 +16,10 @@ let workDir: string;
 let dbPath: string;
 
 function ledger(args: string[]): { stdout: string; status: number } {
-  const r = spawnSync("bun", [LEDGER, ...args, "--db", dbPath], { encoding: "utf8" });
+  const r = spawnSync("bun", [LEDGER, ...args, "--db", dbPath], {
+    encoding: "utf8",
+    env: { ...process.env, ARC_SKIP_MERGE_TRUTH: "1" },
+  });
   return { stdout: r.stdout, status: r.status ?? 1 };
 }
 

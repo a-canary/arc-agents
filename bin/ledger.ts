@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
+import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
@@ -311,6 +312,7 @@ switch (cmd) {
     const state = getFlag("state");
     const evidence = getFlag("evidence");
     const pr = getFlag("pr");
+    const localSha = getFlag("local-merged-sha");
     const branch = getFlag("branch");
     const worktree = getFlag("worktree");
     const hitl = getFlag("hitl");
@@ -324,7 +326,9 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
 
     if (state) {
-      const cur = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(id);
+      const cur = db.query<{ state: string; pr_url: string | null }, [string]>(
+        "SELECT state, pr_url FROM issues WHERE id=?",
+      ).get(id);
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
@@ -338,6 +342,17 @@ switch (cmd) {
           die(
             `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging.`,
           );
+        }
+      }
+      if (state === "merged" && process.env.ARC_SKIP_MERGE_TRUTH !== "1") {
+        const effectivePr = pr ?? cur.pr_url ?? null;
+        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, run: defaultRunner });
+        if (!verdict.ok) {
+          db.run(
+            `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
+            [id, "note", getFlag("agent") ?? "cli", `refused state=merged: ${verdict.reason}`],
+          );
+          die(`refused: ${verdict.reason}`);
         }
       }
     }
@@ -1299,7 +1314,11 @@ switch (cmd) {
                                        to stdout for ops/debug; --type-filter
                                        includes the AND type=?2 variant
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
-  update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
+  update <id> [--state --evidence --pr --local-merged-sha --branch --worktree --hitl 0|1 --agent]
+                                       state=merged requires --pr <url-or-#num>
+                                       (gh pr view must say MERGED) or
+                                       --local-merged-sha <sha> on origin/main.
+                                       Override with ARC_SKIP_MERGE_TRUTH=1.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
