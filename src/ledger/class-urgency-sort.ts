@@ -3,21 +3,11 @@
 // within-urgency priority; `created_at` is FIFO tiebreak; `id` is final
 // stable tiebreak.
 
-export const URGENCY_VALUES = ["interactive", "nominal", "deferred"] as const;
-export type Urgency = (typeof URGENCY_VALUES)[number];
-
-export const CLASS_VALUES = [
-  "BUG",
-  "MVP",
-  "ops",
-  "hygiene",
-  "quality",
-  "trust",
-  "scale",
-  "efficiency",
-  "class_unset",
-] as const;
-export type Class = (typeof CLASS_VALUES)[number];
+// ADR 0005 enum is owned by `schema-enums.ts`. Re-exported here so existing
+// callers of `class-urgency-sort` keep working without a churn-y rename.
+export { CLASS_VALUES, URGENCY_VALUES } from "./schema-enums";
+export type { Class, Urgency } from "./schema-enums";
+import type { Class, Urgency } from "./schema-enums";
 
 export const URGENCY_RANK: Record<Urgency, number> = {
   interactive: 0,
