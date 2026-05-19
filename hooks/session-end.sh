@@ -8,8 +8,10 @@ LEDGER="$HOME/vault/ledger.db"
 
 echo "[arc-agents] session-end role=$ROLE worktree=$(pwd)"
 
-if [ -f "$LEDGER" ] && command -v bun >/dev/null 2>&1 && [ -n "${ARC_ISSUE_ID:-}" ]; then
-  bun "$REPO/bin/ledger.ts" event "$ARC_ISSUE_ID" session-end "{\"role\":\"$ROLE\"}" >/dev/null 2>&1 || true
+if [ -f "$LEDGER" ] && command -v bun >/dev/null 2>&1 && [ -n "${ARC_TASK_ID:-}" ]; then
+  # event kind 'note' is the catch-all per the issue_events CHECK constraint;
+  # marker in payload lets readers filter session-end notes.
+  bun "$REPO/bin/ledger.ts" event "$ARC_TASK_ID" note "session-end role=$ROLE task=$ARC_TASK_ID" >/dev/null 2>&1 || true
 fi
 
 exit 0
