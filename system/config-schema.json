@@ -60,11 +60,13 @@
         },
         "heartbeat": {
           "type": "object",
+          "description": "Heartbeat cadence + staleness window. Defaults pinned by CHOICES U-0009.",
           "additionalProperties": false,
           "required": ["interval_sec", "stale_after_sec"],
+          "default": { "interval_sec": 60, "stale_after_sec": 300 },
           "properties": {
-            "interval_sec":     { "type": "integer", "minimum": 1 },
-            "stale_after_sec":  { "type": "integer", "minimum": 1 }
+            "interval_sec":     { "type": "integer", "minimum": 1, "default": 60 },
+            "stale_after_sec":  { "type": "integer", "minimum": 1, "default": 300 }
           }
         }
       }
