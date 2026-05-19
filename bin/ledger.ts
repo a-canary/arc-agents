@@ -8,6 +8,7 @@ import { validateCreate, validateDecompose, validateStateTransition, type Create
 import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
+import { loadThreadContext } from "../src/worker/thread-context";
 import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import type { HitlKind } from "../src/ledger/hitl-schemas";
 
@@ -500,19 +501,10 @@ switch (cmd) {
       )
       .get(id);
     if (!row) die(`no issue ${id}`);
-    // Thread replay: for chat_in tasks, include prior chat turns so the cold
-    // interviewer has conversational continuity. Order = id (mintId is time-monotonic).
-    let thread_history: { id: string; kind: string; title: string; body: string }[] | undefined;
-    if (row.thread_id) {
-      thread_history = db
-        .query<{ id: string; kind: string; title: string; body: string }, [string, string]>(
-          `SELECT id, kind, title, COALESCE(body_md, '') AS body
-           FROM issues
-           WHERE thread_id=? AND id != ? AND kind IN ('event','reply') AND source_module='arc-chat'
-           ORDER BY id`,
-        )
-        .all(row.thread_id, id);
-    }
+    // Thread replay: for chat threads, include prior turns so the cold
+    // interviewer has conversational continuity. SQL filter + speaker mapping
+    // live together in src/worker/thread-context.ts.
+    const thread_replay = row.thread_id ? loadThreadContext(db, row.thread_id, id) : "";
     process.stdout.write(
       renderSystemPrompt({
         kind: row.kind,
@@ -520,7 +512,7 @@ switch (cmd) {
         worker,
         task: id,
         thread_id: row.thread_id ?? undefined,
-        thread_history,
+        thread_replay,
       }),
     );
     break;
