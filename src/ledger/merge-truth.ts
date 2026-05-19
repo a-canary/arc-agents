@@ -1,0 +1,84 @@
+// Verifies that a `state=merged` write reflects external truth.
+//
+// Two routes:
+//   1. PR route — pr_url resolves to a GitHub PR whose state is MERGED.
+//   2. Local-merged route — caller asserts a sha that exists on origin/main.
+//
+// The merge handler in bin/ledger.ts refuses to flip state=merged unless one of
+// these returns ok. Pure-ish: side effects routed through injected runners so
+// tests can stub.
+
+export type MergeTruthOk = { ok: true; route: "pr" | "local"; detail: string };
+export type MergeTruthFail = { ok: false; reason: string };
+export type MergeTruthResult = MergeTruthOk | MergeTruthFail;
+
+export type Runner = (cmd: string, args: string[]) => Promise<{ stdout: string; exitCode: number }>;
+
+const PR_NUMBER_RE = /(?:\/pull\/|^#?)(\d+)$/;
+
+export function extractPrNumber(prUrlOrNum: string | null | undefined): number | null {
+  if (!prUrlOrNum) return null;
+  const s = prUrlOrNum.trim();
+  if (!s) return null;
+  const m = s.match(PR_NUMBER_RE);
+  if (!m) return null;
+  const n = Number(m[1]);
+  return Number.isFinite(n) && n > 0 ? n : null;
+}
+
+export async function verifyPrMerged(
+  prUrlOrNum: string | null | undefined,
+  run: Runner,
+): Promise<MergeTruthResult> {
+  const num = extractPrNumber(prUrlOrNum);
+  if (num === null) {
+    return {
+      ok: false,
+      reason: `pr_url '${prUrlOrNum ?? ""}' does not look like a PR URL or #number. Set --pr to a GitHub PR URL (https://github.com/owner/repo/pull/N) before marking merged.`,
+    };
+  }
+  const r = await run("gh", ["pr", "view", String(num), "--json", "state", "-q", ".state"]);
+  if (r.exitCode !== 0) {
+    return { ok: false, reason: `gh pr view ${num} exited ${r.exitCode}: ${r.stdout.trim()}` };
+  }
+  const state = r.stdout.trim();
+  if (state !== "MERGED") {
+    return { ok: false, reason: `PR #${num} state is '${state}', expected 'MERGED'. Wait for the PR to actually land on main before closing the row.` };
+  }
+  return { ok: true, route: "pr", detail: `PR #${num} MERGED` };
+}
+
+const SHA_RE = /^[0-9a-f]{7,40}$/i;
+
+export async function verifyLocalMerged(sha: string, run: Runner): Promise<MergeTruthResult> {
+  if (!SHA_RE.test(sha)) {
+    return { ok: false, reason: `--local-merged-sha '${sha}' is not a hex sha (7-40 chars).` };
+  }
+  const r = await run("git", ["merge-base", "--is-ancestor", sha, "origin/main"]);
+  if (r.exitCode === 0) return { ok: true, route: "local", detail: `sha ${sha} is on origin/main` };
+  if (r.exitCode === 1) {
+    return { ok: false, reason: `sha ${sha} is not an ancestor of origin/main. Push the commit (or merge it) before marking merged.` };
+  }
+  return { ok: false, reason: `git merge-base exited ${r.exitCode}: ${r.stdout.trim()}` };
+}
+
+export async function verifyMergeTruth(args: {
+  prUrl: string | null | undefined;
+  localSha: string | null | undefined;
+  run: Runner;
+}): Promise<MergeTruthResult> {
+  if (args.localSha) return verifyLocalMerged(args.localSha, args.run);
+  if (args.prUrl) return verifyPrMerged(args.prUrl, args.run);
+  return {
+    ok: false,
+    reason: "marking state=merged requires either --pr <url-or-#num> (PR must be MERGED on GitHub) or --local-merged-sha <sha> (sha must be on origin/main).",
+  };
+}
+
+// Default runner used by the CLI. Tests inject a fake runner instead.
+export const defaultRunner: Runner = async (cmd, args) => {
+  const proc = Bun.spawn([cmd, ...args], { stdout: "pipe", stderr: "pipe" });
+  const stdout = await new Response(proc.stdout).text();
+  const exitCode = await proc.exited;
+  return { stdout, exitCode };
+};

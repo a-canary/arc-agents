@@ -5,6 +5,7 @@
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
+import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
@@ -203,16 +204,31 @@ switch (cmd) {
     const state = getFlag("state");
     const evidence = getFlag("evidence");
     const pr = getFlag("pr");
+    const localSha = getFlag("local-merged-sha");
     const branch = getFlag("branch");
     const worktree = getFlag("worktree");
     const hitl = getFlag("hitl");
     const db = openWithMigrate(getFlag("db"));
 
     if (state) {
-      const cur = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(id);
+      const cur = db.query<{ state: string; pr_url: string | null }, [string]>(
+        "SELECT state, pr_url FROM issues WHERE id=?",
+      ).get(id);
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+
+      if (state === "merged" && process.env.ARC_SKIP_MERGE_TRUTH !== "1") {
+        const effectivePr = pr ?? cur.pr_url ?? null;
+        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, run: defaultRunner });
+        if (!verdict.ok) {
+          db.run(
+            `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
+            [id, "note", getFlag("agent") ?? "cli", `refused state=merged: ${verdict.reason}`],
+          );
+          die(`refused: ${verdict.reason}`);
+        }
+      }
     }
 
     const sets: string[] = ["updated_at=strftime('%s','now')"];
@@ -572,7 +588,11 @@ switch (cmd) {
   claim <worker> [--type T]            atomic claim of highest-priority ready task
                                        (--type restricts to one priority class)
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
-  update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
+  update <id> [--state --evidence --pr --local-merged-sha --branch --worktree --hitl 0|1 --agent]
+                                       state=merged requires --pr <url-or-#num>
+                                       (gh pr view must say MERGED) or
+                                       --local-merged-sha <sha> on origin/main.
+                                       Override with ARC_SKIP_MERGE_TRUTH=1.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]

@@ -16,15 +16,20 @@ let workDir: string;
 let dbPath: string;
 
 function ledger(args: string[]): { stdout: string; status: number } {
-  const r = spawnSync("bun", [LEDGER, ...args, "--db", dbPath], { encoding: "utf8" });
+  const r = spawnSync("bun", [LEDGER, ...args, "--db", dbPath], {
+    encoding: "utf8",
+    env: { ...process.env, ARC_SKIP_MERGE_TRUTH: "1" },
+  });
   return { stdout: r.stdout, status: r.status ?? 1 };
 }
 
 function runHook(env: Record<string, string>, stdin = "{}"): { stdout: string; status: number } {
+  const base = { ...process.env };
+  delete base.ARC_TASK_ID;
   const r = spawnSync("bash", [HOOK], {
     encoding: "utf8",
     input: stdin,
-    env: { ...process.env, ARC_LEDGER_DB: dbPath, ...env },
+    env: { ...base, ARC_LEDGER_DB: dbPath, ...env },
   });
   return { stdout: r.stdout, status: r.status ?? 1 };
 }
