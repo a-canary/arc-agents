@@ -4,6 +4,9 @@
 // deltas on /sse/hitl and /sse/afk. See SLICE-PLAN-arc-webui.md.
 
 import { networkInterfaces } from "node:os";
+import type { Dirent } from "node:fs";
+import { readdirSync, statSync } from "node:fs";
+import { join, relative, resolve, sep } from "node:path";
 import { open } from "../src/ledger/db";
 import type { Database } from "bun:sqlite";
 
@@ -145,6 +148,74 @@ export function sseStream(db: Database, panel: Panel, pollMs = POLL_MS): Readabl
   });
 }
 
+const ARTIFACT_LIST_CAP = 500;
+const ARTIFACT_FILE_BYTE_CAP = 2 * 1024 * 1024;
+
+export type ArtifactEntry = { path: string; size: number; mtime: number };
+
+// Returns "missing" if row doesn't exist; "unset" if artifact_dir is null;
+// otherwise the dir string. Callers distinguish to return 404 with a useful reason.
+export type ArtifactDirLookup =
+  | { kind: "missing" }
+  | { kind: "unset" }
+  | { kind: "ok"; dir: string };
+
+export function getArtifactDir(db: Database, rowId: string): ArtifactDirLookup {
+  const r = db
+    .query<{ artifact_dir: string | null }, [string]>(
+      `SELECT artifact_dir FROM issues WHERE id = ?`,
+    )
+    .get(rowId);
+  if (!r) return { kind: "missing" };
+  if (!r.artifact_dir) return { kind: "unset" };
+  return { kind: "ok", dir: r.artifact_dir };
+}
+
+export function listArtifactFiles(dir: string, cap = ARTIFACT_LIST_CAP): ArtifactEntry[] {
+  const root = resolve(dir);
+  const out: ArtifactEntry[] = [];
+  const stack: string[] = [root];
+  while (stack.length && out.length < cap) {
+    const cur = stack.pop()!;
+    let entries: Dirent[];
+    try {
+      entries = readdirSync(cur, { withFileTypes: true }) as Dirent[];
+    } catch {
+      continue;
+    }
+    for (const e of entries) {
+      const abs = join(cur, String(e.name));
+      if (e.isDirectory()) {
+        stack.push(abs);
+      } else if (e.isFile()) {
+        let st;
+        try {
+          st = statSync(abs);
+        } catch {
+          continue;
+        }
+        out.push({
+          path: relative(root, abs).split(sep).join("/"),
+          size: st.size,
+          mtime: Math.floor(st.mtimeMs / 1000),
+        });
+        if (out.length >= cap) break;
+      }
+    }
+  }
+  out.sort((a, b) => a.path.localeCompare(b.path));
+  return out;
+}
+
+export function resolveArtifactFile(dir: string, relPath: string): string | null {
+  // Reject traversal: resolved path must remain inside dir.
+  if (!relPath || relPath.startsWith("/")) return null;
+  const root = resolve(dir);
+  const abs = resolve(root, relPath);
+  if (abs !== root && !abs.startsWith(root + sep)) return null;
+  return abs;
+}
+
 export function buildHandler(db: Database) {
   return (req: Request): Response => {
     const url = new URL(req.url);
@@ -158,6 +229,64 @@ export function buildHandler(db: Database) {
     }
     if (url.pathname === "/sse/afk") {
       return new Response(sseStream(db, "afk"), { headers: sseHeaders() });
+    }
+    // GET /artifacts/:row_id            -> file listing JSON
+    // GET /artifacts/:row_id/file?path= -> single file contents
+    const artMatch = url.pathname.match(/^\/artifacts\/([^/]+)(\/file)?$/);
+    if (artMatch) {
+      const rowId = decodeURIComponent(artMatch[1]!);
+      const isFile = artMatch[2] === "/file";
+      const look = getArtifactDir(db, rowId);
+      if (look.kind === "missing") {
+        return new Response(JSON.stringify({ error: "row not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (look.kind === "unset") {
+        return new Response(JSON.stringify({ error: "no artifact_dir" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      const dir = look.dir;
+      if (!isFile) {
+        const files = listArtifactFiles(dir);
+        return new Response(
+          JSON.stringify({ row_id: rowId, artifact_dir: dir, files, truncated: files.length >= ARTIFACT_LIST_CAP }),
+          { headers: { "Content-Type": "application/json" } },
+        );
+      }
+      const relPath = url.searchParams.get("path") ?? "";
+      const abs = resolveArtifactFile(dir, relPath);
+      if (!abs) {
+        return new Response(JSON.stringify({ error: "invalid path" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      let st;
+      try {
+        st = statSync(abs);
+      } catch {
+        return new Response(JSON.stringify({ error: "file not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (!st.isFile()) {
+        return new Response(JSON.stringify({ error: "not a file" }), {
+          status: 400,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      if (st.size > ARTIFACT_FILE_BYTE_CAP) {
+        return new Response(JSON.stringify({ error: "file too large", size: st.size, cap: ARTIFACT_FILE_BYTE_CAP }), {
+          status: 413,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(Bun.file(abs));
     }
     return new Response("not found", { status: 404 });
   };
