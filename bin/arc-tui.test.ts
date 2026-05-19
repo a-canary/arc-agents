@@ -149,3 +149,56 @@ test("list ignores retracted and acked deliveries", async () => {
   expect(r.exitCode).toBe(0);
   expect(r.stdout.toString().trim()).toBe("");
 });
+
+test("refuses to answer when prompt is not addressed to arc-tui", async () => {
+  // Open prompt delivered only to arc-webui — arc-tui must not be able to claim it.
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state, timeout_sec)
+     VALUES ('pother', 'ask_choice', 'taste', '{"prompt":"x","options":["a","b"],"artifacts":[]}', 'a', 'open', 60)`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pother', 'arc-webui', 'pending')`);
+  d.close();
+  const r = await runTui(["answer", "pother", "sneaky"]);
+  expect(r.exitCode).toBe(3);
+  const d2 = db();
+  const got = d2.query<{ state: string; answer: string | null; answered_by: string | null }, []>(
+    "SELECT state, answer, answered_by FROM hitl_prompts WHERE id='pother'",
+  ).get();
+  d2.close();
+  expect(got!.state).toBe("open");
+  expect(got!.answer).toBeNull();
+  expect(got!.answered_by).toBeNull();
+});
+
+test("refuses to answer when delivery to arc-tui was already retracted", async () => {
+  insertPrompt("pretr");
+  const d = db();
+  d.run(`UPDATE hitl_deliveries SET state='retracted' WHERE prompt_id='pretr' AND module_name='arc-tui'`);
+  d.close();
+  const r = await runTui(["answer", "pretr", "ignored"]);
+  expect(r.exitCode).toBe(3);
+});
+
+test("list survives a malformed payload by surfacing _parse_error", async () => {
+  insertPrompt("pgood");
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state, timeout_sec)
+     VALUES ('pbad', 'ask_text', 'taste', 'not-valid-json{{{', 'a', 'open', 60)`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pbad', 'arc-tui', 'pending')`);
+  d.close();
+  const r = await runTui(["list"]);
+  expect(r.exitCode).toBe(0);
+  const lines = r.stdout.toString().trim().split("\n").filter(Boolean);
+  const byId: Record<string, { id: string; payload: { _parse_error?: string; _raw?: string } | unknown }> = {};
+  for (const l of lines) {
+    const obj = JSON.parse(l);
+    byId[obj.id] = obj;
+  }
+  expect(Object.keys(byId).sort()).toEqual(["pbad", "pgood"]);
+  const badPayload = byId.pbad!.payload as { _parse_error: string; _raw: string };
+  expect(badPayload._parse_error).toBeDefined();
+  expect(badPayload._raw).toBe("not-valid-json{{{");
+});
