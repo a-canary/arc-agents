@@ -8,7 +8,7 @@ Glossary of domain terms. Definitions only — no implementation details, no spe
 The SQLite database at `~/vault/ledger.db` that is the system of record for all work. Two tables: `issues` (rows of work) and `issue_events` (append-only audit log). Every meaningful state change goes through it.
 
 ## Issue
-A row in the ledger representing a unit of work. Has a `kind` (task, chat_in, chat_out, encounter_reply, prd, prefetch), a `type` (priority class — interactive, HITL, mvp, security, …, deferred), and a `state` (ready → claimed → wip → review → merged, or → blocked / failed / cancelled).
+A row in the ledger representing a unit of work. Has a `kind` (task, event, reply, prd, prefetch), a `source_module` (the module that produced an `event` or `reply` row — required for those kinds, e.g. `arc-chat`; see [ADR 0005](docs/adr/0005-ledger-schema-prd-v1.md)), a `type` (priority class — interactive, HITL, mvp, security, …, deferred), and a `state` (ready → claimed → wip → review → merged, or → blocked / failed / cancelled).
 
 ## Interactive (type)
 A `type` reserved for work the user is *actively waiting on*: next interviewer reply (`chat_out`), prefetch/precache for a pending taste/impact decision, UX request. Ranks above HITL in priority. Served by the fast-pass slot pool in the factory (see CHOICES `I-0007`).
