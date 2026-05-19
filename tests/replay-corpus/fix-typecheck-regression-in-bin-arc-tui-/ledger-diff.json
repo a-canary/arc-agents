@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 851,
+      "ts": 1779172987,
+      "agent": "arc-worker-a-en68pt",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-en68pt",
+      "issue_id": "fix-typecheck-regression-in-bin-arc-tui-"
+    }
+  ]
+}

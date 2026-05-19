@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 856,
+      "ts": 1779172997,
+      "agent": "arc-worker-a-6htgu6",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-6htgu6",
+      "issue_id": "reconcile-fanout-cap-drift-claude-md-vs-"
+    }
+  ]
+}

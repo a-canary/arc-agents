@@ -1,0 +1,232 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "adr-0005-markdown-doc-ledger-schema-prd-",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "adr-0005-markdown-doc-ledger-schema-prd-",
+    "task_kind": "task",
+    "task_type": "quality",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-9klys4",
+    "claimed_at": 1779173240,
+    "terminated_at": 1779173240,
+    "terminal_state": "merged",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": "worker/adr-0005-schema-doc"
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 29,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "21a3eca1dfc3e33a51fd292449efe5488a1dd137d0271d62ec8a848f6f10e4e3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "74790a92ae129db387dbdf8e94996db3f87993b25afa2253e54a1c0982b48158",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "ed2ac7a6fcccc49b9576f50db5ad2d7aef5337eea57fc5a25ed17d07c8fa8e2a",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "0702e6564adba9dce037674da1ccb97b4ea2ef500edff7ec286e1356405ccf54",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "584edf2f87837111f22828ac366b086266986b96c9458d4284ce5fde6c0d781f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Read",
+        "input_sha256": "fbb6a1425878c5d50fc05f910043fd4556e67b1943ca3df1bdde1a67f3f86483",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Read",
+        "input_sha256": "2f1e0f605a7f52c4a1a7fb84a3cf2a0fa2aab62c0cd6f47e62c60663b4a498a7",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Read",
+        "input_sha256": "80f4392a5f6d395e5584968e4fb2c17a820b303656e50139c8bb3dbb254b6eb4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Read",
+        "input_sha256": "287f3713cc3f1f95b302b55141d007841808acd4564dcf1a1613ba49cfcbbbaf",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Bash",
+        "input_sha256": "aa28aca8a20aa5df961ccdff8da1dcd167bf1b0e77ee38dac23795ce9de67764",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Bash",
+        "input_sha256": "8be969b0e62b05ee76df8438e296e7a3984db9974676fbc398a7eb9d8e700855",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Read",
+        "input_sha256": "f809776e78cd220606322ef0a4158a8196145c0ee49bd3fb7b1621e422ffde8d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Write",
+        "input_sha256": "0da49ffe610574a25404f4cbddcfe2a37daee9222c4dceeea70438bb47814c48",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Bash",
+        "input_sha256": "133b14a483a3de22f10b8f36769185bacd887ac354302636ed6360710fa756db",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Bash",
+        "input_sha256": "c9325bbb683e2ec1f8cde20a70580a5b45f1790398f3634dc4f28af647a3b19c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "06a6b4c2d9205164ce9d99de2372d7d5e09d1274294ed668ec2621593eac5163",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Bash",
+        "input_sha256": "d377a5c9375b1de0ae2ca0b41e0d97080efea74b79b92861a316b2a7163e67ce",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "d26ee23a156deebad91c75a154d474fb6d0383e5d8555401f834519fb3af2936",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Bash",
+        "input_sha256": "6aae2d6dd3ccb52c5a4c938d29581e2841fb26a86ff9a603ad7d8fab3654564e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Agent",
+        "input_sha256": "94ab1ba2f6f1d0bbd1cc038505ccf5864193fba00dc3cab4d2be2a3ade120cc4",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 19,
+        "subagent_type": "bookie",
+        "purpose": "Mark ADR 0005 task merged"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "adr-0005-markdown-doc-ledger-schema-prd-",
+        "event_kind": "claimed",
+        "payload_md_sha256": "bb317a7fe1018f59492492e86e8815c5bce16c10b6e5df59a4cd809d90c1a49a",
+        "payload_md_preview": "claimed by arc-worker-a-9klys4"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "adr-0005-markdown-doc-ledger-schema-prd-",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/30"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 170,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 41bba256-46cd-4d39-bea3-5255a783b092.jsonl. evidence: ADR docs/adr/0005-ledger-schema-prd-v1.md added (commit e0472de) capturing kind/class/urgency split + polymorphic deliveries decision per U-0008; PR #30 open."
+  }
+}

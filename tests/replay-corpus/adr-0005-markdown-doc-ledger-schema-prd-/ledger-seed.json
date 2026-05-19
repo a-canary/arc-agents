@@ -1,0 +1,30 @@
+[
+  {
+    "id": "adr-0005-markdown-doc-ledger-schema-prd-",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "ADR 0005 markdown doc: ledger schema PRD-v1",
+    "body_md": "CHOICES (G-0001) and many ledger rows reference 'ADR 0005' (schema split: kind/class/urgency, polymorphic deliveries) but docs/adr/ only contains 0001-0004. File the long-form ADR doc capturing context/alternatives/consequences for the schema migration already merged. Single commit adding docs/adr/0005-ledger-schema-prd-v1.md. Anchor reading per U-0008.",
+    "acceptance_md": "",
+    "type": "quality",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": "/home/aaron/worktrees/arc-agents-adr-0005",
+    "branch": "worker/adr-0005-schema-doc",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/30",
+    "evidence_md": "ADR docs/adr/0005-ledger-schema-prd-v1.md added (commit e0472de) capturing kind/class/urgency split + polymorphic deliveries decision per U-0008; PR #30 open.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779173236,
+    "updated_at": 1779173410,
+    "claimed_at": 1779173240,
+    "claimed_by": "arc-worker-a-9klys4"
+  }
+]

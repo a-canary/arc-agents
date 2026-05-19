@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 841,
+      "ts": 1779172173,
+      "agent": "arc-worker-a-voxtcb",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-voxtcb",
+      "issue_id": "i-0005-register-arc-chat-arc-ux-arc-tui-"
+    }
+  ]
+}

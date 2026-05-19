@@ -1,0 +1,141 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "review-merge-pr-35-adr-0006-deliveries-m",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "review-merge-pr-35-adr-0006-deliveries-m",
+    "task_kind": "task",
+    "task_type": "HITL",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-8ppsym",
+    "claimed_at": 1779174305,
+    "terminated_at": 1779174305,
+    "terminal_state": "merged",
+    "parent_id": "adr-0006-markdown-doc-deliveries-module-",
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 11,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "c730cd77078543a8c8f2a22e58f4ca978b24b4325c98bc2046db45575cc596ea",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "f02f764511fc37e22cd5b48a759114b676c472a958376bca106e680b259f3bef",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "1e642c8a56a8cffad0ce7a3c2a0296769e4fa8a82025ad6300a827032bf912b7",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "f28012730c4798e5904f02368bc1d3918ba73df67dbfae6876c916c6486651ab",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "b2938e18ba76ed3ef869c1bf9d6faf2ced2a00df6cbedacd38f796226cfa9aa0",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "5a4c27c43b729b0ad6cd5d7173480bf56bc8f916a013b7f239c6df3c6f6aff3e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Agent",
+        "input_sha256": "f3ce2f7a44f780586d8ea3b534305d8b81bdc75ef6891e2ba5234fcaae1cd213",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 6,
+        "subagent_type": "bookie",
+        "purpose": "Mark task merged"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "review-merge-pr-35-adr-0006-deliveries-m",
+        "event_kind": "claimed",
+        "payload_md_sha256": "e6d5877d9288bf0400f5a6b6b078f47959e8899f655da8e1527893d831b01aae",
+        "payload_md_preview": "claimed by arc-worker-a-8ppsym"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "review-merge-pr-35-adr-0006-deliveries-m",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/35"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 62,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 31241016-f9e0-4acb-b171-8ab5cae34493.jsonl. evidence: PR #35 squash-merged at 8188b1f (2026-05-19T07:05:41Z); docs-only ADR 0006 adds docs/adr/0006-deliveries-module.md (86 lines) capturing polymorphic deliveries, content-addressable artifacts at ~/vault/artifacts/<sha256>.<ext>, async pusher contract, and ledger vacuum GC; consistent with ADR 0002 + U-0001..U-0008; mergeStateStatus=CLEAN; branch worker/adr-0006-doc deleted."
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 910,
+      "ts": 1779174005,
+      "agent": "arc-worker-a-et56vc",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-et56vc",
+      "issue_id": "merge-pr-31-deprecate-bin-arc-tui-loop-s"
+    }
+  ]
+}

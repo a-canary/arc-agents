@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 863,
+      "ts": 1779173240,
+      "agent": "arc-worker-a-9klys4",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-9klys4",
+      "issue_id": "adr-0005-markdown-doc-ledger-schema-prd-"
+    }
+  ]
+}

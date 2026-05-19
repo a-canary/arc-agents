@@ -1,0 +1,30 @@
+[
+  {
+    "id": "t1",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "t1",
+    "body_md": "",
+    "acceptance_md": "",
+    "type": "mvp",
+    "state": "failed",
+    "hitl": 0,
+    "kind": "task",
+    "class": "MVP",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": null,
+    "branch": null,
+    "pr_url": null,
+    "evidence_md": "Empty placeholder issue — no title, body, or acceptance criteria. Claimed twice (arctest-9w2rw9-p24bnh, arc-worker-a-etlwcm), stale-swept both times. No actionable work definable. Failing per AFK terminal-state policy. If this represents real work, recreate with body/acceptance.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1778866329,
+    "updated_at": 1779056844,
+    "claimed_at": 1779056825,
+    "claimed_by": "arc-worker-a-etlwcm"
+  }
+]

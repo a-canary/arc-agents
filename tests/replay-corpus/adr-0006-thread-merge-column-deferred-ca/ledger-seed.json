@@ -1,0 +1,30 @@
+[
+  {
+    "id": "adr-0006-thread-merge-column-deferred-ca",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "ADR 0006 thread merge column (deferred capability scaffold)",
+    "body_md": "ADR 0006 'Out of scope' lists cross-thread merge: 'Add a merged_into column to thread_subscriptions if a real use case appears.' Scaffold the column as nullable + a `ux thread-merge <src> <dest>` verb that writes the column. Pure migration + CLI — no UI fanout yet.",
+    "acceptance_md": "bun test bin/arc-ux.test.ts -t 'thread-merge'; merged_into column present + indexed; verb writes correctly.",
+    "type": "deferred",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": "/home/aaron/worktrees/arc-agents-adr-0006-thread-merge",
+    "branch": "worker/adr-0006-thread-merge",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/26",
+    "evidence_md": "ADR 0006 deferred scaffold: migration 012 thread_subscriptions + arc-ux thread-merge verb + tests (13/13 pass); commit 0dfcb46; PR #26",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779171125,
+    "updated_at": 1779172192,
+    "claimed_at": 1779171941,
+    "claimed_by": "arc-worker-a-9x28tq"
+  }
+]

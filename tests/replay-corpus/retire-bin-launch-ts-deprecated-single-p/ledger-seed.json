@@ -1,0 +1,30 @@
+[
+  {
+    "id": "retire-bin-launch-ts-deprecated-single-p",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "retire bin/launch.ts deprecated single-pane interviewer",
+    "body_md": "I-0002 explicitly says: 'bin/launch.ts — deprecated single-pane interviewer; retire after one release.' Factory (M-0004 / ADR 0003) is live and proven. Delete bin/launch.ts and any remaining references. Single commit. Mirror of retire-bin-arc-tui-loop-sh-shim pattern.",
+    "acceptance_md": "",
+    "type": "quality",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": "[\"rebase-merge-pr-16-retire-bin-launch-ts\"]",
+    "worktree_path": "/home/aaron/worktrees/arc-agents-retire-launch",
+    "branch": "retire-launch-ts",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/16",
+    "evidence_md": "PR #16 merged to main as 89f040f via HITL child rebase-merge-pr-16-retire-bin-launch-ts. bin/launch.ts removed; arc-launch dropped from package.json bins; refs scrubbed from README/CLAUDE/CHOICES/PRD-arc-webui. ADR historical mentions retained. I-0002 deprecation complete.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779173252,
+    "updated_at": 1779174682,
+    "claimed_at": 1779174641,
+    "claimed_by": "arc-worker-a-886d3c"
+  }
+]

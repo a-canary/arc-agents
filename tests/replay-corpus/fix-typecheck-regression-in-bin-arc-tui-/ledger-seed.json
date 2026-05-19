@@ -1,0 +1,30 @@
+[
+  {
+    "id": "fix-typecheck-regression-in-bin-arc-tui-",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "fix typecheck regression in bin/arc-tui.test.ts",
+    "body_md": "Master `bun run typecheck` fails: bin/arc-tui.test.ts:126:34 — '{ prompt; artifacts }' missing required 'options' field. Fix the test fixture to include options (likely []). This blocks the merge-gate.",
+    "acceptance_md": "bun run typecheck exits 0; bun test bin/arc-tui.test.ts green.",
+    "type": "mvp",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": "/home/aaron/worktrees/arc-agents-fix-arc-tui-typecheck",
+    "branch": "worker/fix-arc-tui-typecheck",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/27",
+    "evidence_md": "PR #27 (commit 8dfec84): added options:[] to ask_text payload in bin/arc-tui.test.ts:126; bun run typecheck exits 0; bun test bin/arc-tui.test.ts 7/7 pass",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779172982,
+    "updated_at": 1779173159,
+    "claimed_at": 1779172987,
+    "claimed_by": "arc-worker-a-en68pt"
+  }
+]

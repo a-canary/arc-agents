@@ -1,0 +1,30 @@
+[
+  {
+    "id": "i-0005-register-arc-chat-arc-ux-arc-tui-",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "I-0005 register arc-chat/arc-ux/arc-tui/factory bins",
+    "body_md": "package.json bin only registers ledger, arc-launch, wait-for-ledger. After bun link, users can't invoke arc-chat / arc-ux / arc-tui / factory globally. Add them to the bin map (arc-launch points to the soon-retired launch.ts; either drop or repoint after launch.ts retirement).",
+    "acceptance_md": "After `bun link && bun link arc-agents`, `which arc-chat arc-ux arc-tui factory` all resolve; bun test green; bun run typecheck green.",
+    "type": "quality",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": "[\"review-merge-pr-25-register-arc-chat-arc\"]",
+    "worktree_path": "/home/aaron/worktrees/arc-agents-register-bins",
+    "branch": "worker/i-0005-register-bins",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/25",
+    "evidence_md": "PR #25 merged 0e19fed; bin map on main includes arc-chat/arc-ux/arc-tui/factory; acceptance verified post-merge by worker arc-worker-a-voxtcb.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779171114,
+    "updated_at": 1779172205,
+    "claimed_at": 1779172173,
+    "claimed_by": "arc-worker-a-voxtcb"
+  }
+]

@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 877,
+      "ts": 1779173369,
+      "agent": "arc-worker-a-w071yi",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-w071yi",
+      "issue_id": "retire-bin-arc-tui-loop-sh-shim"
+    }
+  ]
+}

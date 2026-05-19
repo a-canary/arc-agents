@@ -1,0 +1,30 @@
+[
+  {
+    "id": "bookie-hitl-no-alive-module-fallback-u-0",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "bookie HITL no-alive-module fallback (U-0001)",
+    "body_md": "U-0001: 'Bookie refuses HITL writes when no alive module implements the verb, atomically spawning a bootstrap install task instead.' Add this fallback to src/ledger/bookie-validator.ts: when validating a hitl_prompt write, check thread_subscriptions for at least one active subscription whose module implements the requested hitl verb (from ux-config). If none, reject the write AND insert an install-bootstrap task in the same transaction.",
+    "acceptance_md": "bun test src/ledger/bookie-validator.test.ts; new test asserts (a) hitl write rejected when no alive module, (b) bootstrap install task inserted, (c) write accepted when an alive module exists.",
+    "type": "mvp",
+    "state": "failed",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": "[\"adr-0006-arc-ux-threads-module\"]",
+    "worktree_path": null,
+    "branch": null,
+    "pr_url": null,
+    "evidence_md": "Cannot implement: prerequisites absent from main. (1) thread_subscriptions table not in src/ledger/migrate.ts on main (only hitl_deliveries, ux_heartbeats); ADR 0006 tables in worktree arc-agents-adr-0006-tables commit a545cc0 unmerged to origin/main (latest ce1d73a). (2) src/arc-ux/threads.ts does not exist on main; worktree arc-agents-adr-0006-threads removed. Blocker row adr-0006-arc-ux-threads-module marked merged w/ PR#11 but PR#11 not in origin/main — claim unverified. (3) validateHitlWrite in src/ledger/ux-config.ts already rejects via ux_heartbeats; reframing to thread_subscriptions needs that table. (4) Acceptance \"bootstrap install task inserted\" requires validator to mutate db in txn, contradicting bookie-validator.ts contract (no db access, total over inputs) — real design question. Pattern: adr-0006-arc-ux-threads-module marked merged without upstream merge; recommend triage-failed pass. Recommend HITL decomp: (a) verify/re-land adr-0006 tables+threads on main, (b) decide if validator does db writes or install-task spawn lives in bookie write path. No worktree created.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779167525,
+    "updated_at": 1779168073,
+    "claimed_at": 1779167976,
+    "claimed_by": "arc-worker-a-z0zii2"
+  }
+]

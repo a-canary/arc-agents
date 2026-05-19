@@ -1,0 +1,30 @@
+[
+  {
+    "id": "t3",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "t3",
+    "body_md": "",
+    "acceptance_md": "",
+    "type": "mvp",
+    "state": "failed",
+    "hitl": 0,
+    "kind": "task",
+    "class": "MVP",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": null,
+    "branch": null,
+    "pr_url": null,
+    "evidence_md": "Unactionable: empty title/body/acceptance. Claimed 3x (arctest-f49jfk-s9eo67, arctest-fg8ubs-a-lzjdjt, arc-worker-a-xi1b3a), stale-swept twice. No spec to implement. Recommend deletion or backfill with real requirements before reopening.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1778866329,
+    "updated_at": 1779056857,
+    "claimed_at": 1779056836,
+    "claimed_by": "arc-worker-a-xi1b3a"
+  }
+]

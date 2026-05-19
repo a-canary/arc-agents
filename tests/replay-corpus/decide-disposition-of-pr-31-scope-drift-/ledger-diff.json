@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 935,
+      "ts": 1779174315,
+      "agent": "arc-worker-a-qi6mga",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-qi6mga",
+      "issue_id": "decide-disposition-of-pr-31-scope-drift-"
+    }
+  ]
+}

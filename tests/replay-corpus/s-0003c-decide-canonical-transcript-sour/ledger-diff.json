@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 946,
+      "ts": 1779174470,
+      "agent": "arc-worker-a-21sxhf",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-21sxhf",
+      "issue_id": "s-0003c-decide-canonical-transcript-sour"
+    }
+  ]
+}
