@@ -39,9 +39,9 @@ switch (cmd) {
       >(
         `SELECT p.id, p.kind, p.class, p.payload, p.recommended
          FROM hitl_prompts p
-         JOIN hitl_deliveries d ON d.prompt_id = p.id
+         JOIN deliveries d ON d.target_kind = 'hitl_prompt' AND d.target_id = p.id
          WHERE p.state = 'open'
-           AND d.module_name = ?
+           AND d.module = ?
            AND d.state IN ('pending','delivered')
          ORDER BY p.id`,
       )
@@ -72,10 +72,10 @@ switch (cmd) {
     );
     if (r.changes === 0) die(3, `prompt ${id} no longer open`);
     // Bump own delivery from pending → delivered so the retract trigger leaves it alone
-    // (trigger only retracts deliveries whose module_name != answered_by).
+    // (trigger only retracts deliveries whose module != answered_by).
     db.run(
-      `UPDATE hitl_deliveries SET state='delivered', delivered_at=?
-       WHERE prompt_id=? AND module_name=? AND state='pending'`,
+      `UPDATE deliveries SET state='delivered', delivered_at=?
+       WHERE target_kind='hitl_prompt' AND target_id=? AND module=? AND state='pending'`,
       [now, id, MODULE_NAME],
     );
     break;

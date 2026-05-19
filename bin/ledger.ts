@@ -390,7 +390,7 @@ switch (cmd) {
     const deliveries: string[] = [];
     for (const m of modules) {
       db.run(
-        `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, ?, 'pending')`,
+        `INSERT INTO deliveries (target_kind, target_id, module, state) VALUES ('hitl_prompt', ?, ?, 'pending')`,
         [id, m.name],
       );
       deliveries.push(m.name);

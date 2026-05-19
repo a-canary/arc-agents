@@ -160,7 +160,7 @@ function insertPromptAndDeliveries(opts: {
     );
     for (const m of opts.modules) {
       db.run(
-        `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, ?, 'pending')`,
+        `INSERT INTO deliveries (target_kind, target_id, module, state) VALUES ('hitl_prompt', ?, ?, 'pending')`,
         [opts.id, m.name],
       );
     }

@@ -106,10 +106,10 @@ test("ask-choice taste returns recommendation immediately and inserts row + deli
   expect(prompts[0]!.state).toBe("open");
   expect(prompts[0]!.recommended).toBe("blue");
 
-  const dels = rows<{ module_name: string; state: string }>(
-    "SELECT module_name, state FROM hitl_deliveries ORDER BY module_name",
+  const dels = rows<{ module: string; state: string }>(
+    "SELECT module, state FROM deliveries WHERE target_kind='hitl_prompt' ORDER BY module",
   );
-  expect(dels.map((d) => d.module_name)).toEqual(["arc-tui", "arc-webui"]);
+  expect(dels.map((d) => d.module)).toEqual(["arc-tui", "arc-webui"]);
   expect(dels.every((d) => d.state === "pending")).toBe(true);
 });
 
@@ -180,7 +180,7 @@ test("notify broadcasts to all alive modules, exits 0 without waiting", async ()
   expect(r.exitCode).toBe(0);
   const out = JSON.parse(r.stdout.toString());
   expect(new Set(out.broadcast)).toEqual(new Set(["arc-tui", "arc-webui"]));
-  const dels = rows<{ module_name: string }>("SELECT module_name FROM hitl_deliveries");
+  const dels = rows<{ module: string }>("SELECT module FROM deliveries WHERE target_kind='hitl_prompt'");
   expect(dels.length).toBe(2);
 });
 

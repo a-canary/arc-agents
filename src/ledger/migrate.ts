@@ -590,6 +590,85 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
     },
   },
+  {
+    id: "014_arc_ux_tables",
+    // ADR 0006 — arc-ux persistent abstraction.
+    // 1) Create artifacts + thread_subscriptions.
+    // 2) Rename hitl_deliveries -> deliveries with polymorphic (target_kind, target_id).
+    //    Backfill target_kind='hitl_prompt'. Preserve retract/ack states (used by
+    //    hitl_retract_losers trigger) alongside ADR-specified pending/delivered/failed/skipped.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS artifacts (
+          uuid                 TEXT PRIMARY KEY,
+          kind                 TEXT NOT NULL,
+          ref_path             TEXT,
+          inline_body          TEXT,
+          bytes                INTEGER NOT NULL,
+          created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          originating_row_id   TEXT NOT NULL REFERENCES issues(id),
+          CHECK ((ref_path IS NULL) != (inline_body IS NULL))
+        );
+      `);
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS thread_subscriptions (
+          thread_id            TEXT NOT NULL,
+          module               TEXT NOT NULL,
+          external_ref         TEXT NOT NULL,
+          state                TEXT NOT NULL DEFAULT 'active'
+                                CHECK (state IN ('active','archived','muted')),
+          created_at           INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          PRIMARY KEY (thread_id, module, external_ref)
+        );
+      `);
+      // Drop old trigger + index; rebuild on new table after rename.
+      db.exec(`DROP TRIGGER IF EXISTS hitl_retract_losers;`);
+      db.exec(`DROP INDEX IF EXISTS idx_hitl_deliveries_pending;`);
+      db.exec(`
+        CREATE TABLE deliveries_new (
+          id              INTEGER PRIMARY KEY AUTOINCREMENT,
+          target_kind     TEXT NOT NULL CHECK (target_kind IN ('reply','hitl_prompt')),
+          target_id       TEXT NOT NULL,
+          module          TEXT NOT NULL,
+          external_ref    TEXT,
+          state           TEXT NOT NULL DEFAULT 'pending' CHECK (state IN
+                            ('pending','delivered','retracted','acked','failed','skipped')),
+          attempted_at    INTEGER,
+          delivered_at    INTEGER,
+          retracted_at    INTEGER,
+          error           TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO deliveries_new
+          (target_kind, target_id, module, external_ref, state, delivered_at, retracted_at)
+        SELECT 'hitl_prompt', prompt_id, module_name, external_ref, state, delivered_at, retracted_at
+        FROM hitl_deliveries;
+      `);
+      db.exec(`DROP TABLE hitl_deliveries;`);
+      db.exec(`ALTER TABLE deliveries_new RENAME TO deliveries;`);
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_deliveries_pending ON deliveries(module, state) WHERE state IN ('pending','delivered')",
+      );
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_deliveries_target ON deliveries(target_kind, target_id)",
+      );
+      db.exec(`
+        CREATE TRIGGER IF NOT EXISTS hitl_retract_losers
+        AFTER UPDATE OF state ON hitl_prompts
+        WHEN NEW.state IN ('answered','user_confirmed','user_diverged','timeout_locked','cancelled')
+         AND OLD.state = 'open'
+        BEGIN
+          UPDATE deliveries
+          SET state = 'retracted', retracted_at = strftime('%s','now')
+          WHERE target_kind = 'hitl_prompt'
+            AND target_id = NEW.id
+            AND state IN ('pending','delivered')
+            AND (NEW.answered_by IS NULL OR module != NEW.answered_by);
+        END;
+      `);
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
