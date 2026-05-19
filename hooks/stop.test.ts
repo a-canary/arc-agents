@@ -21,10 +21,11 @@ function ledger(args: string[]): { stdout: string; status: number } {
 }
 
 function runHook(env: Record<string, string>, stdin = "{}"): { stdout: string; status: number } {
+  const { ARC_TASK_ID: _drop, ...parent } = process.env;
   const r = spawnSync("bash", [HOOK], {
     encoding: "utf8",
     input: stdin,
-    env: { ...process.env, ARC_LEDGER_DB: dbPath, ...env },
+    env: { ...parent, ARC_LEDGER_DB: dbPath, ...env },
   });
   return { stdout: r.stdout, status: r.status ?? 1 };
 }
