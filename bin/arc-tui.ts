@@ -42,10 +42,16 @@ switch (cmd) {
         // here. Without it, operators see (and can answer) timed-out prompts
         // long after the requesting worker has given up. (bin/arc-ux.ts:292
         // notes the reconciler is still missing.)
+        // Hide ack-only kinds (notify, show_artifact) from the answerable list.
+        // Per src/ledger/hitl-schemas.ts they carry no answer-shaped payload —
+        // surfacing them here would invite operators to type a reply that the
+        // answer verb would then refuse with exit 3 anyway. (A future `ack` verb
+        // is the right home for them; see ADR 0002.)
         `SELECT p.id, p.kind, p.class, p.payload, p.recommended
          FROM hitl_prompts p
          JOIN hitl_deliveries d ON d.prompt_id = p.id
          WHERE p.state = 'open'
+           AND p.kind IN ('ask_text','ask_choice','ask_confirm')
            AND (p.expires_at IS NULL OR p.expires_at > strftime('%s','now'))
            AND d.module_name = ?
            AND d.state IN ('pending','delivered')
@@ -82,10 +88,15 @@ switch (cmd) {
     // Without the delivery gate, any module could answer prompts targeted at
     // another module — the cascading retract trigger would then yank the
     // legitimate delivery. See arc-tui.test.ts "refuses to answer when not addressed".
+    // kind filter mirrors the list SELECT: notify/show_artifact are one-way per
+    // hitl-schemas.ts and must not be transitioned to 'answered' (doing so would
+    // also fire the retract cascade against sibling deliveries — see
+    // hitl_retract_losers trigger).
     const r = db.run(
       `UPDATE hitl_prompts
        SET state='answered', answer=?, answered_by=?, answered_at=?
        WHERE id=? AND state='open'
+         AND kind IN ('ask_text','ask_choice','ask_confirm')
          AND (expires_at IS NULL OR expires_at > strftime('%s','now'))
          AND EXISTS (
            SELECT 1 FROM hitl_deliveries d
@@ -95,7 +106,7 @@ switch (cmd) {
          )`,
       [answer, MODULE_NAME, now, id, MODULE_NAME],
     );
-    if (r.changes === 0) die(3, `prompt ${id} no longer open, expired, or not addressed to ${MODULE_NAME}`);
+    if (r.changes === 0) die(3, `prompt ${id} no longer open, expired, not answerable kind, or not addressed to ${MODULE_NAME}`);
     // Bump own delivery from pending → delivered so the retract trigger leaves it alone
     // (trigger only retracts deliveries whose module_name != answered_by).
     db.run(

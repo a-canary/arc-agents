@@ -219,6 +219,49 @@ test("answer refuses an expired prompt with exit 3", async () => {
   expect(got!.answered_by).toBeNull();
 });
 
+test("answer refuses a notify-kind prompt with exit 3", async () => {
+  // notify is one-way per src/ledger/hitl-schemas.ts — payload is {message, level}
+  // with no options/prompt. Allowing "answer" on it would silently mark a fire-and-forget
+  // notification as answered and fire the retract cascade against sibling deliveries.
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('pnotify', 'notify', 'impact', '{"message":"heads up","level":"info"}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pnotify', 'arc-tui', 'pending')`);
+  d.close();
+  const r = await runTui(["answer", "pnotify", "sneaky"]);
+  expect(r.exitCode).toBe(3);
+  const d2 = db();
+  const got = d2.query<{ state: string; answer: string | null; answered_by: string | null }, []>(
+    "SELECT state, answer, answered_by FROM hitl_prompts WHERE id='pnotify'",
+  ).get();
+  d2.close();
+  expect(got!.state).toBe("open");
+  expect(got!.answer).toBeNull();
+  expect(got!.answered_by).toBeNull();
+});
+
+test("list excludes notify and show_artifact (ack-only kinds)", async () => {
+  insertPrompt("pask"); // ask_choice — should appear
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('pn', 'notify', 'impact', '{"message":"hi","level":"info"}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pn', 'arc-tui', 'pending')`);
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state)
+     VALUES ('psa', 'show_artifact', 'impact', '{"artifacts":[{"type":"text/markdown","inline":"# hi"}]}', NULL, 'open')`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('psa', 'arc-tui', 'pending')`);
+  d.close();
+  const r = await runTui(["list"]);
+  expect(r.exitCode).toBe(0);
+  const ids = r.stdout.toString().trim().split("\n").filter(Boolean).map((l) => JSON.parse(l).id).sort();
+  expect(ids).toEqual(["pask"]);
+});
+
 test("list survives a malformed payload by surfacing _parse_error", async () => {
   insertPrompt("pgood");
   const d = db();
