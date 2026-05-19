@@ -53,8 +53,9 @@ switch (cmd) {
       "bun",
       [
         LEDGER, "create",
-        "--kind", "chat_in",
+        "--kind", "event",
         "--type", "interactive",
+        "--source-module", "arc-chat",
         "--title", title,
         "--body", message,
         "--thread", thread,
@@ -82,7 +83,7 @@ switch (cmd) {
         .query<{ id: string; title: string; body: string; state: string }, [string, string]>(
           `SELECT id, title, COALESCE(body_md, '') AS body, state
            FROM issues
-           WHERE thread_id=? AND kind='chat_out' AND id > ?
+           WHERE thread_id=? AND kind='reply' AND source_module='arc-chat' AND id > ?
            ORDER BY id`,
         )
         .all(thread, lastSeen);
@@ -103,7 +104,7 @@ switch (cmd) {
       .query<{ thread_id: string; last_id: string; turns: number }, [number]>(
         `SELECT thread_id, MAX(id) AS last_id, COUNT(*) AS turns
          FROM issues
-         WHERE thread_id IS NOT NULL AND kind IN ('chat_in','chat_out')
+         WHERE thread_id IS NOT NULL AND kind IN ('event','reply') AND source_module='arc-chat'
          GROUP BY thread_id
          ORDER BY last_id DESC
          LIMIT ?`,

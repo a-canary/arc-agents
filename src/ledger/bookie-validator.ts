@@ -4,9 +4,8 @@
 
 export const KIND_VALUES = [
   "task",
-  "chat_in",
-  "chat_out",
-  "encounter_reply",
+  "event",
+  "reply",
   "prd",
   "prefetch",
 ] as const;

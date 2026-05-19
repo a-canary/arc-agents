@@ -53,7 +53,7 @@ test("prints role + worktree banner", () => {
 test("counts only ready tasks (kind='task'), not other kinds", () => {
   ledger(["create", "--kind", "task", "--type", "mvp", "--title", "real task"]);
   ledger(["create", "--kind", "prd", "--type", "mvp", "--title", "a prd"]);
-  ledger(["create", "--kind", "chat_in", "--type", "mvp", "--title", "chat"]);
+  ledger(["create", "--kind", "event", "--type", "mvp", "--source-module", "arc-chat", "--title", "chat"]);
   const r = runHook({ ARC_ROLE: "worker" });
   expect(r.status).toBe(0);
   expect(r.stdout).toMatch(/ready tasks.*: 1/);

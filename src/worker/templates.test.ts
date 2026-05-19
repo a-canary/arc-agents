@@ -2,12 +2,12 @@ import { describe, expect, it } from "bun:test";
 import { renderSystemPrompt, resolveTemplate } from "./templates";
 
 describe("resolveTemplate", () => {
-  it("picks interactive frame for chat_out/interactive", () => {
-    expect(resolveTemplate("chat_out", "interactive").frame).toBe("interactive");
+  it("picks interactive frame for reply/interactive", () => {
+    expect(resolveTemplate("reply", "interactive").frame).toBe("interactive");
   });
 
-  it("picks intake frame for chat_in/interactive with grill+choose skills", () => {
-    const t = resolveTemplate("chat_in", "interactive");
+  it("picks intake frame for event/interactive with grill+choose skills", () => {
+    const t = resolveTemplate("event", "interactive");
     expect(t.frame).toBe("intake");
     expect(t.opening_skills).toContain("grill-with-docs");
     expect(t.opening_skills).toContain("choose-wisely");
@@ -41,15 +41,15 @@ describe("renderSystemPrompt", () => {
   });
 
   it("leading line carries kind+type+worker+task", () => {
-    const p = renderSystemPrompt({ ...base, kind: "chat_in", type: "interactive" });
-    expect(p.split("\n")[0]).toContain("kind=chat_in");
+    const p = renderSystemPrompt({ ...base, kind: "event", type: "interactive" });
+    expect(p.split("\n")[0]).toContain("kind=event");
     expect(p.split("\n")[0]).toContain("type=interactive");
     expect(p.split("\n")[0]).toContain("worker=arc-worker-i-abc");
     expect(p.split("\n")[0]).toContain("task=i-xyz");
   });
 
   it("opening-skills line omitted when none", () => {
-    const p = renderSystemPrompt({ ...base, kind: "chat_out", type: "interactive" });
+    const p = renderSystemPrompt({ ...base, kind: "reply", type: "interactive" });
     expect(p).not.toContain("Opening skills");
   });
 
