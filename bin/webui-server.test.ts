@@ -129,6 +129,47 @@ test("handler unknown path returns 404", () => {
   }
 });
 
+test("GET /drafts/:row_id returns 404 when row missing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/drafts/nope"));
+    expect(res.status).toBe(404);
+  } finally {
+    cleanup();
+  }
+});
+
+test("GET /drafts/:row_id returns primary null when draft_md unset", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "c1", title: "chat", type: "mvp", state: "ready" });
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/drafts/c1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ primary: null, alternatives: [] });
+  } finally {
+    cleanup();
+  }
+});
+
+test("GET /drafts/:row_id returns parsed draft_md JSON", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "c2", title: "chat", type: "mvp", state: "ready" });
+    const payload = JSON.stringify({ primary: "hello", alternatives: ["hi", "yo"] });
+    db.exec("UPDATE issues SET draft_md = ? WHERE id = 'c2'", [payload] as never);
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/drafts/c2"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body).toEqual({ primary: "hello", alternatives: ["hi", "yo"] });
+  } finally {
+    cleanup();
+  }
+});
+
 test("sseStream emits snapshot event with rows", async () => {
   const { db, cleanup } = freshDb();
   try {

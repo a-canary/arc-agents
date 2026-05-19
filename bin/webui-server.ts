@@ -145,6 +145,31 @@ export function sseStream(db: Database, panel: Panel, pollMs = POLL_MS): Readabl
   });
 }
 
+export type DraftPayload = { primary: string | null; alternatives: string[] };
+
+export function readDraft(db: Database, rowId: string): DraftPayload | null {
+  const row = db
+    .query<{ draft_md: string | null }, [string]>(
+      `SELECT draft_md FROM issues WHERE id = ?`,
+    )
+    .get(rowId);
+  if (!row) return null;
+  if (row.draft_md == null || row.draft_md === "") {
+    return { primary: null, alternatives: [] };
+  }
+  try {
+    const parsed = JSON.parse(row.draft_md);
+    const primary = typeof parsed?.primary === "string" ? parsed.primary : null;
+    const alternatives = Array.isArray(parsed?.alternatives)
+      ? parsed.alternatives.filter((a: unknown): a is string => typeof a === "string")
+      : [];
+    return { primary, alternatives };
+  } catch {
+    // Non-JSON legacy content — treat as primary text.
+    return { primary: row.draft_md, alternatives: [] };
+  }
+}
+
 export function buildHandler(db: Database) {
   return (req: Request): Response => {
     const url = new URL(req.url);
@@ -158,6 +183,20 @@ export function buildHandler(db: Database) {
     }
     if (url.pathname === "/sse/afk") {
       return new Response(sseStream(db, "afk"), { headers: sseHeaders() });
+    }
+    if (url.pathname.startsWith("/drafts/")) {
+      const rowId = decodeURIComponent(url.pathname.slice("/drafts/".length));
+      if (!rowId) return new Response("not found", { status: 404 });
+      const draft = readDraft(db, rowId);
+      if (!draft) {
+        return new Response(JSON.stringify({ error: "not found" }), {
+          status: 404,
+          headers: { "Content-Type": "application/json" },
+        });
+      }
+      return new Response(JSON.stringify(draft), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
     return new Response("not found", { status: 404 });
   };
