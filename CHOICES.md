@@ -123,6 +123,9 @@ Writes ledger rows on behalf of agents. Single point of validation.
 ### I-0006: Git Author
 Commits use the deployer's configured git user (`git config user.name` / `user.email`). No hardcoded author in framework code — repo is public, deployed by many.
 
+### I-0007: arc-webui Tailscale-Only Binding
+`bin/webui-server.ts` binds the tailscale0 interface address resolved via `resolveIfaceAddr()` (override with `ARC_WEBUI_IFACE`). Fails fast on `Bun.serve` boot if the interface is absent — no `0.0.0.0` fallback. Verified S10: socket listens only on `100.91.151.13:PORT`; connections from eno1 LAN IP and loopback are refused (`ECONNREFUSED`). Blocks public-network exposure of the HITL/AFK SSE feeds.
+
 ---
 
 ## UX
