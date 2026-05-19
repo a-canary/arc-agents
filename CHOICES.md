@@ -101,6 +101,13 @@ Replay-shadow fixtures use the claude session JSONL at `~/.claude/projects/<proj
 ### D-0004: Scratch
 `~/vault/scratch/<slug>/` — prototype outputs. Not in `~/repos/` or `~/worktrees/`.
 
+### D-0005: Artifact Store
+`~/vault/artifacts/<sha256>.<ext>` — HITL artifact bytes. See ADR 0006 §2, §4.
+- Content-addressable by sha256; identical artifacts dedup for free.
+- Write-once by interviewer (hash → write-if-absent → embed hash in `payload.artifacts[]`); modules read by hash.
+- Lifetime ref-counted via `hitl_deliveries` (transitively `prompt_id → payload.artifacts[]`).
+- `ledger vacuum` GCs unreachable artifacts (ADR 0006 §4 pass 3).
+
 ---
 
 ## Implementation
