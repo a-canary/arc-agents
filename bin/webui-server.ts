@@ -4,6 +4,9 @@
 // deltas on /sse/hitl and /sse/afk. See SLICE-PLAN-arc-webui.md.
 
 import { networkInterfaces } from "node:os";
+import { spawnSync } from "node:child_process";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { open } from "../src/ledger/db";
 import type { Database } from "bun:sqlite";
 
@@ -145,8 +148,77 @@ export function sseStream(db: Database, panel: Panel, pollMs = POLL_MS): Readabl
   });
 }
 
-export function buildHandler(db: Database) {
-  return (req: Request): Response => {
+export type ChatOutRunner = (args: {
+  thread_id: string;
+  body_md: string;
+}) => { ok: true; id: string } | { ok: false; error: string };
+
+export function defaultChatOutRunner(): ChatOutRunner {
+  const repo = dirname(dirname(fileURLToPath(import.meta.url)));
+  const ledger = join(repo, "bin", "ledger.ts");
+  return ({ thread_id, body_md }) => {
+    const title = body_md.length > 80 ? body_md.slice(0, 77) + "..." : body_md;
+    const dbFlag = process.env.ARC_LEDGER_DB ? ["--db", process.env.ARC_LEDGER_DB] : [];
+    const r = spawnSync(
+      "bun",
+      [
+        ledger, "create",
+        "--kind", "reply",
+        "--type", "interactive",
+        "--source-module", "arc-chat",
+        "--title", title,
+        "--body", body_md,
+        "--thread", thread_id,
+        "--agent", "webui",
+        ...dbFlag,
+      ],
+      { encoding: "utf8" },
+    );
+    if (r.status !== 0) return { ok: false, error: r.stderr || `exit ${r.status}` };
+    try {
+      const parsed = JSON.parse(r.stdout) as { id: string };
+      return { ok: true, id: parsed.id };
+    } catch (e) {
+      return { ok: false, error: `unparseable ledger output: ${(e as Error).message}` };
+    }
+  };
+}
+
+export async function handleChatOut(req: Request, runner: ChatOutRunner): Promise<Response> {
+  let parsed: unknown;
+  try {
+    parsed = await req.json();
+  } catch {
+    return new Response(JSON.stringify({ error: "invalid JSON body" }), {
+      status: 400,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  const body = parsed as { thread_id?: unknown; body_md?: unknown };
+  const thread_id = typeof body.thread_id === "string" ? body.thread_id.trim() : "";
+  const body_md = typeof body.body_md === "string" ? body.body_md : "";
+  if (!thread_id || !body_md) {
+    return new Response(
+      JSON.stringify({ error: "thread_id and body_md required" }),
+      { status: 400, headers: { "Content-Type": "application/json" } },
+    );
+  }
+  const result = runner({ thread_id, body_md });
+  if (!result.ok) {
+    return new Response(JSON.stringify({ error: result.error }), {
+      status: 500,
+      headers: { "Content-Type": "application/json" },
+    });
+  }
+  return new Response(JSON.stringify({ id: result.id, thread_id }), {
+    status: 201,
+    headers: { "Content-Type": "application/json" },
+  });
+}
+
+export function buildHandler(db: Database, chatOutRunner?: ChatOutRunner) {
+  const runner = chatOutRunner ?? defaultChatOutRunner();
+  return (req: Request): Response | Promise<Response> => {
     const url = new URL(req.url);
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ ok: true, iface: IFACE }), {
@@ -158,6 +230,9 @@ export function buildHandler(db: Database) {
     }
     if (url.pathname === "/sse/afk") {
       return new Response(sseStream(db, "afk"), { headers: sseHeaders() });
+    }
+    if (url.pathname === "/chat-out" && req.method === "POST") {
+      return handleChatOut(req, runner);
     }
     return new Response("not found", { status: 404 });
   };

@@ -5,10 +5,12 @@ import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
 import {
   buildHandler,
+  handleChatOut,
   queryAfkRows,
   queryHitlRows,
   resolveIfaceAddr,
   sseStream,
+  type ChatOutRunner,
 } from "./webui-server";
 
 function freshDb() {
@@ -216,6 +218,105 @@ test("server SSE delta smoke: insert after connect -> snapshot within 2s", async
     db.close();
     rmSync(dir, { recursive: true, force: true });
   }
+});
+
+test("POST /chat-out 201 with id from runner", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const calls: Array<{ thread_id: string; body_md: string }> = [];
+    const runner: ChatOutRunner = (a) => {
+      calls.push(a);
+      return { ok: true, id: "issue-abc" };
+    };
+    const handler = buildHandler(db, runner);
+    const res = await handler(
+      new Request("http://x/chat-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: "t-1", body_md: "hello" }),
+      }),
+    );
+    expect(res.status).toBe(201);
+    const body = await res.json();
+    expect(body.id).toBe("issue-abc");
+    expect(body.thread_id).toBe("t-1");
+    expect(calls).toEqual([{ thread_id: "t-1", body_md: "hello" }]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("POST /chat-out 400 when thread_id missing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const runner: ChatOutRunner = () => {
+      throw new Error("should not be called");
+    };
+    const handler = buildHandler(db, runner);
+    const res = await handler(
+      new Request("http://x/chat-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body_md: "hi" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  } finally {
+    cleanup();
+  }
+});
+
+test("POST /chat-out 400 when body_md missing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const runner: ChatOutRunner = () => {
+      throw new Error("should not be called");
+    };
+    const handler = buildHandler(db, runner);
+    const res = await handler(
+      new Request("http://x/chat-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: "t-1" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  } finally {
+    cleanup();
+  }
+});
+
+test("POST /chat-out 400 on invalid JSON", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const runner: ChatOutRunner = () => ({ ok: true, id: "x" });
+    const handler = buildHandler(db, runner);
+    const res = await handler(
+      new Request("http://x/chat-out", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "not-json",
+      }),
+    );
+    expect(res.status).toBe(400);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handleChatOut returns 500 on runner failure", async () => {
+  const runner: ChatOutRunner = () => ({ ok: false, error: "ledger boom" });
+  const res = await handleChatOut(
+    new Request("http://x/chat-out", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ thread_id: "t-1", body_md: "hi" }),
+    }),
+    runner,
+  );
+  expect(res.status).toBe(500);
+  const body = await res.json();
+  expect(body.error).toContain("ledger boom");
 });
 
 test("sseStream re-emits snapshot on row change", async () => {
