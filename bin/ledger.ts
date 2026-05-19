@@ -92,13 +92,14 @@ switch (cmd) {
     const blockedBy = input.blockedBy ?? null;
     const state = blockedBy ? "blocked" : "ready";
     const thread = getFlag("thread") ?? null;
+    const sourceModule = getFlag("source-module") ?? null;
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
     db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread],
+      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
     );
     db.run(
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
@@ -445,7 +446,7 @@ switch (cmd) {
         .query<{ id: string; kind: string; title: string; body: string }, [string, string]>(
           `SELECT id, kind, title, COALESCE(body_md, '') AS body
            FROM issues
-           WHERE thread_id=? AND id != ? AND kind IN ('chat_in','chat_out')
+           WHERE thread_id=? AND id != ? AND kind IN ('event','reply') AND source_module='arc-chat'
            ORDER BY id`,
         )
         .all(row.thread_id, id);
