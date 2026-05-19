@@ -2,6 +2,12 @@
 # arc-tui-loop — director-side render loop for the arc-tui reference module.
 # Beats heartbeat every 30s and prints any open prompts addressed to arc-tui.
 # Answer with: bun /home/aaron/repos/arc-agents/bin/arc-tui.ts answer <id> <ans>
+#
+# DEPRECATED (2026-05-19): 30s bash polling shim. Slated for deletion once the
+# Ink-based arc-tui (ledger task: arc-tui-ink-based-interactive-tui) lands and
+# replaces heartbeat/list polling with an event-driven render loop. Do not
+# extend; new behavior belongs in the Ink rewrite. Tracked by ledger task
+# retire-bin-arc-tui-loop-sh-shim.
 
 set -u
 REPO="$(dirname "$(realpath "${BASH_SOURCE[0]}")")/.."
