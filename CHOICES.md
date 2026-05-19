@@ -155,3 +155,6 @@ The two user-facing flows are both interviewer-mediated. **Intake (UX_1)**: on a
 
 ### U-0006: Canonical Artifact Types
 Interviewer produces medium-agnostic artifacts (`text/markdown`, `text/diff`, `chart/vega-lite`, `diagram/mermaid`, `image/png`, `table/rows`). Modules declare per-type render strategy (`native`, `rasterize-png`, `ascii-degrade`, …, `unsupported`). Conversion is the module's job; agents never produce per-medium variants.
+
+### U-0009: Pinned Heartbeat Defaults (60s/300s)
+Per-module `heartbeat.interval_sec` defaults to **60** (every minute; cheap, leaves headroom over `bin/arc-tui-loop.sh`'s 30s tick) and `heartbeat.stale_after_sec` defaults to **300** (5 minutes; survives one missed beat + cron drift while bouncing a wedged pusher before HITL retries pile up). Defaults live in `system/config-schema.json` and `src/ledger/ux-config.ts` (`HEARTBEAT_DEFAULTS`); a module config may override either field. The `list-alive-modules` ledger verb exposes the SQL-joined alive set so callers stop guessing their own threshold. Anchors: ADR 0006 §3, U-0001, U-0005.
