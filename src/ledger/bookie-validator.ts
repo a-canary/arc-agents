@@ -99,6 +99,9 @@ export function validateDecompose(input: DecomposeInput): ValidationError[] {
   if (children.length === 0) {
     errs.push({ field: "--child", message: "at least one --child required" });
   }
+  if (children.length > 5) {
+    errs.push({ field: "--child", message: "fanout cap of 5 exceeded" });
+  }
   for (const c of children) {
     if (!c || c.startsWith("--")) {
       errs.push({ field: "--child", message: `bad child title: '${c}'` });
