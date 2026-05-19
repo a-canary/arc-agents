@@ -242,3 +242,70 @@ test("009 retract cascade flips loser deliveries on answer", () => {
   expect(map["arc-tui"]).toBe("retracted");
   expect(map["arc-discord"]).toBe("retracted");
 });
+
+test("012 adds webui columns", () => {
+  const db = fresh();
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
+  expect(cols).toContain("priority");
+  expect(cols).toContain("paused");
+  expect(cols).toContain("deferred_at");
+  expect(cols).toContain("artifact_dir");
+  expect(cols).toContain("draft_md");
+  expect(cols).toContain("parent_id");
+});
+
+test("012 backfills priority from type bucket", () => {
+  const db = fresh();
+  const ins = (id: string, type: string) =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+       VALUES (?, 'p', 't', 'b', ?, 'ready', 'task')`,
+      [id, type],
+    );
+  // Insert pre-012-style; but since fresh() ran all migrations, priority will
+  // be NULL on these new rows and only the backfill UPDATE ran during 012.
+  // Verify default-on-insert behavior: new rows have NULL priority, callers
+  // set it explicitly via bookie. Backfill applies only to rows present at
+  // migration time.
+  ins("p_mvp", "mvp");
+  ins("p_int", "interactive");
+  ins("p_def", "deferred");
+  const rows = db
+    .query<{ id: string; priority: number | null }, []>("SELECT id, priority FROM issues ORDER BY id")
+    .all();
+  for (const r of rows) expect(r.priority).toBeNull();
+});
+
+test("012 paused defaults to 0 and enforces 0/1", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+     VALUES ('p1','p','t','b','mvp','ready','task')`,
+  );
+  const r = db.query<{ paused: number }, []>("SELECT paused FROM issues WHERE id='p1'").get();
+  expect(r?.paused).toBe(0);
+  expect(() =>
+    db.run("INSERT INTO issues (id,project,title,body_md,type,state,kind,paused) VALUES ('p2','p','t','b','mvp','ready','task',5)"),
+  ).toThrow();
+});
+
+test("012 backfill assigns priority to rows existing before the migration", () => {
+  // Simulate: stop at 011, insert legacy rows, then run 012 — the UPDATE
+  // backfill should populate priority based on type bucket.
+  const db = new Database(":memory:");
+  migrateUpTo(db, "011_class_urgency_schema");
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind)
+     VALUES ('old_mvp','p','t','b','mvp','ready','task'),
+            ('old_int','p','t','b','interactive','ready','task'),
+            ('old_def','p','t','b','deferred','ready','task')`,
+  );
+  migrate(db);
+  const rows = db
+    .query<{ id: string; priority: number }, []>("SELECT id, priority FROM issues ORDER BY id")
+    .all();
+  const m = Object.fromEntries(rows.map((r) => [r.id, r.priority]));
+  expect(m["old_int"]).toBe(0);
+  expect(m["old_mvp"]).toBe(30);
+  expect(m["old_def"]).toBe(80);
+});
