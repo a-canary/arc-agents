@@ -179,6 +179,12 @@ export function tick(): TickResult {
   const db = openWithMigrate(process.env.ARC_LEDGER_DB);
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
+  // Beat the arc-tui module heartbeat so bookie HITL writes aren't rejected
+  // by the no-alive-module fallback. STALE_SEC=300; factory ticks every ~5s.
+  db.run(
+    `INSERT INTO ux_heartbeats (module_name, last_beat) VALUES ('arc-tui', strftime('%s','now'))
+     ON CONFLICT(module_name) DO UPDATE SET last_beat=excluded.last_beat`,
+  );
   db.close();
   const reaped = [...reapedExited, ...reapedAge, ...reapedDone];
 
