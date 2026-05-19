@@ -256,6 +256,18 @@ switch (cmd) {
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+      if (state === "merged") {
+        const review = db
+          .query<{ c: number }, [string]>(
+            "SELECT COUNT(*) AS c FROM issue_events WHERE issue_id=? AND kind='diff_review'",
+          )
+          .get(id);
+        if (!review || review.c === 0) {
+          die(
+            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging.`,
+          );
+        }
+      }
     }
 
     const sets: string[] = ["updated_at=strftime('%s','now')"];

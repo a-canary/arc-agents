@@ -22,6 +22,21 @@ async function runRaw(db: string, ...args: string[]) {
   return await $`bun ${cli} ${args} --db ${db}`.quiet().nothrow();
 }
 
+async function stubDiffReview(db: string, id: string): Promise<void> {
+  await run(
+    db,
+    "event",
+    id,
+    "diff_review",
+    JSON.stringify({
+      consequences: [],
+      surprises_vs_brief: [],
+      gaps_vs_brief: [],
+      adr_conflicts: [],
+    }),
+  );
+}
+
 test("init + create + list + claim", async () => {
   const { db, cleanup } = freshDb();
   try {
@@ -116,6 +131,7 @@ test("update --state merged --evidence captures the evidence in the event payloa
       id: string;
     };
     await run(db, "update", c.id, "--state", "wip");
+    await stubDiffReview(db, c.id);
     await run(
       db,
       "update",
@@ -156,6 +172,7 @@ test("blocked → cascade-on-merge unblocks dep", async () => {
       "--blocked-by",
       JSON.stringify([a.id]),
     );
+    await stubDiffReview(db, a.id);
     await run(db, "update", a.id, "--state", "merged");
     const ready = (await run(db, "list", "--state", "ready")) as { title: string }[];
     expect(ready.map((r) => r.title)).toContain("b");
@@ -202,7 +219,7 @@ test("list default excludes terminal rows; --all includes them", async () => {
   } finally {
     cleanup();
   }
-});
+}, 15000);
 
 test("positional create is rejected", async () => {
   const { db, cleanup } = freshDb();
@@ -379,6 +396,7 @@ test("terminal state cannot transition", async () => {
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "z")) as {
       id: string;
     };
+    await stubDiffReview(db, c.id);
     await run(db, "update", c.id, "--state", "merged");
     const r = await runRaw(db, "update", c.id, "--state", "ready");
     expect(r.exitCode).not.toBe(0);
@@ -555,6 +573,7 @@ test("vacuum --events GCs old events on merged rows, retains last merged event",
       pastIds.push(c.id);
       await run(db, "event", c.id, "progress", "p1");
       await run(db, "event", c.id, "progress", "p2");
+      await stubDiffReview(db, c.id);
       await run(db, "update", c.id, "--state", "merged");
     }
     const recentIds: string[] = [];
@@ -562,6 +581,7 @@ test("vacuum --events GCs old events on merged rows, retains last merged event",
       const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", `recent-${i}`)) as { id: string };
       recentIds.push(c.id);
       await run(db, "event", c.id, "progress", "p1");
+      await stubDiffReview(db, c.id);
       await run(db, "update", c.id, "--state", "merged");
     }
 
@@ -578,9 +598,9 @@ test("vacuum --events GCs old events on merged rows, retains last merged event",
       older_than_days: number;
     };
     expect(r.older_than_days).toBe(30);
-    // Each past row had 4 events (created, 2x progress, merged). The last
-    // 'merged' event is retained; the other 3 are deleted. 5 rows × 3 = 15.
-    expect(r.events_deleted).toBe(15);
+    // Each past row had 5 events (created, 2x progress, diff_review, merged).
+    // The last 'merged' event is retained; the other 4 are deleted. 5 rows × 4 = 20.
+    expect(r.events_deleted).toBe(20);
 
     // Past rows: only the merged event remains as audit anchor.
     for (const id of pastIds) {
@@ -591,12 +611,12 @@ test("vacuum --events GCs old events on merged rows, retains last merged event",
     // Recent rows: untouched (within cutoff).
     for (const id of recentIds) {
       const shown = (await run(db, "show", id)) as { events: unknown[] };
-      expect(shown.events.length).toBe(3); // created, progress, merged
+      expect(shown.events.length).toBe(4); // created, progress, diff_review, merged
     }
   } finally {
     cleanup();
   }
-});
+}, 15000);
 
 // ADR 0006 §4 — vacuum GC of HITL deliveries + orphaned artifact blobs.
 
@@ -819,5 +839,49 @@ test("hitl emit ask_text with empty --prompt fails Zod (was silently accepted)",
   } finally {
     cleanup();
     rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
+test("update --state merged refuses without prior diff_review event", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(
+      db,
+      "create",
+      "--kind",
+      "task",
+      "--type",
+      "mvp",
+      "--title",
+      "no-review",
+    )) as { id: string };
+    const r = await runRaw(db, "update", c.id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/refuse merged: no diff_review/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged accepts after diff_review event logged", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(
+      db,
+      "create",
+      "--kind",
+      "task",
+      "--type",
+      "mvp",
+      "--title",
+      "with-review",
+    )) as { id: string };
+    await stubDiffReview(db, c.id);
+    const r = await runRaw(db, "update", c.id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).toBe(0);
+  } finally {
+    cleanup();
   }
 });
