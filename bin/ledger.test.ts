@@ -355,3 +355,61 @@ test("scratch-gc handles missing root gracefully", async () => {
     cleanup();
   }
 });
+
+test("vacuum --events GCs old events on merged rows, retains last merged event", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const nowS = Math.floor(Date.now() / 1000);
+    const oldTs = nowS - 60 * 86400; // 60d ago
+    const recentTs = nowS - 5 * 86400; // 5d ago
+
+    // 5 merged rows w/ events past cutoff (60d old), 2 within cutoff (5d).
+    const pastIds: string[] = [];
+    for (let i = 0; i < 5; i++) {
+      const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", `past-${i}`)) as { id: string };
+      pastIds.push(c.id);
+      await run(db, "event", c.id, "progress", "p1");
+      await run(db, "event", c.id, "progress", "p2");
+      await run(db, "update", c.id, "--state", "merged");
+    }
+    const recentIds: string[] = [];
+    for (let i = 0; i < 2; i++) {
+      const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", `recent-${i}`)) as { id: string };
+      recentIds.push(c.id);
+      await run(db, "event", c.id, "progress", "p1");
+      await run(db, "update", c.id, "--state", "merged");
+    }
+
+    // Backdate past rows' events to oldTs; recent stays current.
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(db);
+    const upd = raw.prepare("UPDATE issue_events SET ts = ? WHERE issue_id = ?");
+    for (const id of pastIds) upd.run(oldTs, id);
+    for (const id of recentIds) upd.run(recentTs, id);
+    raw.close();
+
+    const r = (await run(db, "vacuum", "--events", "--older-than", "30")) as {
+      events_deleted: number;
+      older_than_days: number;
+    };
+    expect(r.older_than_days).toBe(30);
+    // Each past row had 4 events (created, 2x progress, merged). The last
+    // 'merged' event is retained; the other 3 are deleted. 5 rows × 3 = 15.
+    expect(r.events_deleted).toBe(15);
+
+    // Past rows: only the merged event remains as audit anchor.
+    for (const id of pastIds) {
+      const shown = (await run(db, "show", id)) as { events: { kind: string }[] };
+      expect(shown.events.length).toBe(1);
+      expect(shown.events[0]!.kind).toBe("merged");
+    }
+    // Recent rows: untouched (within cutoff).
+    for (const id of recentIds) {
+      const shown = (await run(db, "show", id)) as { events: unknown[] };
+      expect(shown.events.length).toBe(3); // created, progress, merged
+    }
+  } finally {
+    cleanup();
+  }
+});

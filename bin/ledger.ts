@@ -477,6 +477,26 @@ switch (cmd) {
 
   case "vacuum": {
     const db = openWithMigrate(getFlag("db"));
+    if (args.includes("--events")) {
+      // Retention GC for issue_events on terminal (merged/cancelled) rows.
+      // Deletes events older than cutoff while preserving the row and its
+      // last terminal event (merged/cancelled) as an audit anchor.
+      const days = parseInt(getFlag("older-than") ?? "30", 10);
+      const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+      const r = db.run(
+        `DELETE FROM issue_events
+         WHERE ts < ?
+           AND issue_id IN (SELECT id FROM issues WHERE state IN ('merged','cancelled'))
+           AND seq NOT IN (
+             SELECT MAX(seq) FROM issue_events
+             WHERE kind = 'merged'
+             GROUP BY issue_id
+           )`,
+        [cutoff],
+      );
+      out({ events_deleted: r.changes, older_than_days: days });
+      break;
+    }
     db.exec("VACUUM");
     out({ vacuumed: true });
     break;
@@ -563,7 +583,10 @@ switch (cmd) {
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
-  vacuum
+  vacuum [--events --older-than N]     SQLite VACUUM, or GC issue_events on
+                                       merged/cancelled rows older than N days
+                                       (default 30); retains row + last merged
+                                       event as audit anchor
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
 
