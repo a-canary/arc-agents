@@ -5,6 +5,7 @@
 #   1. fixture   — at least one *.test.ts colocated test exists
 #   2. typecheck — `bun run typecheck` passes (tsc --noEmit)
 #   3. test      — `bun test` passes (full suite, bun's runner)
+#   4. author    — `bin/lint-no-hardcoded-author.sh` clean (I-0006)
 #
 # Usage: bin/merge-gate.sh [--project <path>]
 #   PROJECT env var or --project overrides cwd. Defaults to repo containing this script.
@@ -95,6 +96,23 @@ gate_test() {
   fi
 }
 
+# ── Gate 4: Author — no hardcoded commit-author literals (I-0006) ───────────
+
+gate_author() {
+  log "Gate 4: Author lint (I-0006)"
+  local script="$PROJECT/bin/lint-no-hardcoded-author.sh"
+  if ! [ -x "$script" ]; then
+    skip "author" "lint-no-hardcoded-author.sh missing or not executable"
+    return 0
+  fi
+  if run_cmd "'$script'" 30; then
+    pass "author" "no hardcoded author literals"
+  else
+    fail "author" "hardcoded author literal detected — see I-0006"
+    return 1
+  fi
+}
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 main() {
@@ -103,6 +121,7 @@ main() {
   gate_fixture   || true
   gate_typecheck || true
   gate_test      || true
+  gate_author    || true
 
   local failed
   failed=$(printf '%s\n' "${RESULTS[@]}" | grep -c "^FAIL" || true)
