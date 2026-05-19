@@ -17,6 +17,19 @@ CLAUDE="${CLAUDE_BIN:-claude}"
 DB_FLAG=()
 [ -n "${ARC_LEDGER_DB:-}" ] && DB_FLAG=(--db "${ARC_LEDGER_DB}")
 
+# Pre-claim budget guard (G-0006). Refuse to claim when the role is already
+# at or over its profiles/<role>.json daily_budget_usd cap. Exit 0 so the
+# factory respawn loop treats it as a soft no-op.
+ROLE="${ARC_ROLE:-developer}"
+set +e
+BUDGET_JSON="$(bun "$LEDGER_BIN" budget-check "$ROLE" "${DB_FLAG[@]}" 2>/dev/null)"
+BUDGET_RC=$?
+set -e
+if [ "$BUDGET_RC" = "2" ]; then
+  echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"budget-over-cap\",\"budget\":$BUDGET_JSON}"
+  exit 0
+fi
+
 # Atomic claim. Race-safe — losers get claimed=null and exit.
 # ARC_CLAIM_TYPE (set by factory for fast-pass pool) restricts claim to one type.
 TYPE_FLAG=()

@@ -9,6 +9,7 @@ import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
+import { checkBudget } from "../src/profiles/budget-guard";
 import type { HitlKind } from "../src/ledger/hitl-schemas";
 
 const args = process.argv.slice(2);
@@ -63,6 +64,18 @@ switch (cmd) {
     const db = open(getFlag("db"));
     const ran = migrate(db);
     out({ applied: ran });
+    break;
+  }
+
+  case "budget-check": {
+    // ledger budget-check <role>
+    // Pre-claim guard for G-0006. Exit 0 under cap, exit 2 when over.
+    const role = args[1] ?? die("role required");
+    if (role.startsWith("--")) die("role required (positional)");
+    const db = openWithMigrate(getFlag("db"));
+    const r = checkBudget(db, role);
+    out(r);
+    if (r.over) process.exit(2);
     break;
   }
 
