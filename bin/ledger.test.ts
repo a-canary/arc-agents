@@ -336,6 +336,34 @@ test("hitl emit: refuses + atomically spawns install task when no alive module (
   }
 });
 
+test("hitl emit: refuses class=taste without --recommended (tri-state)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await $`bun ${cli} hitl emit --class taste --kind ask_choice --prompt "pick" --option a --option b --db ${db}`
+      .quiet()
+      .nothrow();
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/--recommended required for class=taste/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("hitl emit: refuses class=impact with --timeout-sec (tri-state)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await $`bun ${cli} hitl emit --class impact --kind ask_confirm --prompt "merge?" --timeout-sec 60 --db ${db}`
+      .quiet()
+      .nothrow();
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/--timeout-sec forbidden for class=impact/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("hitl emit: proceeds when alive module implements kind (U-0001 happy path)", async () => {
   const { db, cleanup } = freshDb();
   const cfgDir = mkdtempSync(join(tmpdir(), "ux-cfg-"));

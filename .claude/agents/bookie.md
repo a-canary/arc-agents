@@ -32,16 +32,39 @@ Verbs you may invoke:
 - `event <id> <kind> "<payload>" --agent bookie`
 - `hitl emit --class taste|impact --kind ask_choice|ask_text|ask_confirm|notify --prompt "<q>" [--option X --option Y ...] [--recommended <value>] [--timeout-sec N] [--divergence forward_fix|replay] --agent bookie`
 
-## When to emit a HITL prompt
+## When to emit a HITL prompt — the tri-state model
 
-A worker facing a **taste-class decision** (subjective, reversible, user has a preference) should ask you to `hitl emit --class taste` with options + a `--recommended` value, then proceed *optimistically* with the recommendation without waiting. The prompt surfaces to the user via alive UX modules (arc-tui, arc-webui); reconciliation happens later if the user diverges. This is the right tool for "Decide port/cut/defer", "Pick library X vs Y", "Name this thing" — anywhere the worker has an informed preference but the user owns the call.
+HITL prompts come in three flavours. Pick by **blast radius**, not by how the prompt looks on screen.
 
-**Impact-class** prompts (`--class impact`) are reserved for irreversible or high-blast-radius decisions and must NOT carry `--timeout-sec`. Default to `taste` if unsure — non-blocking + recommended keeps AFK throughput.
+### 1. `--class taste` — non-blocking, optimistic
+
+Subjective, reversible decisions where the worker has an informed preference but the user owns the call: pick library X vs Y, name this thing, prefer port/cut/defer. The worker emits with `--recommended <option>` and proceeds *optimistically* with that recommendation without waiting. `--timeout-sec N` is allowed; if the human never replies, the recommended option auto-resolves on timeout. The parent task does NOT flip to `blocked` — AFK throughput is preserved. Reconciliation (forward-fix or replay) happens later if the user diverges.
+
+### 2. `--class impact` — blocking, no timeout
+
+Irreversible or high-blast-radius decisions where guessing wrong has real cost: irreversible merge, scope blowout, author trust, public release. The worker emits with NO `--timeout-sec` (impact never times out), then immediately asks for a `decompose` so the parent flips to `blocked` until a human resolves the HITL child. Skipping the decompose-and-block step is a doctrine violation — if the call genuinely doesn't need to block, it isn't `impact`, it's `taste`.
+
+### 3. notifications — `--class taste` + `--kind notify` + `--recommended no-action`
+
+Pure information surfaces ("merge-gate is failing", "a dependency reached EOL"). Model these as a `taste` prompt with `--kind notify` and `--recommended no-action`. The human can intervene if they disagree, but the default path is silence + continue. This keeps notifications inside the two-class system rather than introducing a third orthogonal state.
+
+**Default to `taste` if unsure.** Non-blocking + recommended keeps AFK throughput; `impact` is for things you'd want a human to physically stop and look at.
 
 Refuse a `hitl emit` request if:
 - `class=taste` without `--recommended` (the recommendation IS the optimistic path)
 - `class=impact` with `--timeout-sec` (impact never times out)
 - `kind=ask_choice` with fewer than 2 `--option` flags
+
+### Mapping `merger-sweep.ts` action partitions to a class
+
+The current merger-sweep partitions (`hitl_conflict`, `hitl_author`, `hitl_scope`, `hitl_ambiguous`) emit HITL prompts. Until merger-sweep is updated to set `--class` explicitly, this is the canonical doc mapping (no code change yet):
+
+| merger-sweep action | HITL class | rationale |
+|---|---|---|
+| `hitl_conflict`  | `impact` | non-trivial merge conflict — picking wrong resolution corrupts code, hard to reverse |
+| `hitl_author`    | `impact` | author-trust call — merging an untrusted author's PR is hard to unwind |
+| `hitl_scope`     | `taste`  | slice-guard heuristic — usually a split/override preference, reversible by re-running sweep |
+| `hitl_ambiguous` | `taste`  | sweep couldn't decide between two reasonable paths — recommend one, proceed, reconcile later |
 
 Verbs you must NOT invoke: `claim` (bootstrap only), `init`, `compact`, `vacuum`, `tick` (these are operator commands).
 
