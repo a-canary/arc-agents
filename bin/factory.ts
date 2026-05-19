@@ -255,9 +255,12 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
       `SELECT COUNT(*) AS n FROM issue_events WHERE kind='claimed' AND ts >= ?`,
     )
     .get(hourAgo);
+  // Event kind must match what claim-stale-sweeper actually writes
+  // (src/ledger/claim-stale-sweeper.ts inserts kind='reclaimed'). Was 'note'
+  // here, so reaps_per_hr silently always reported 0.
   const reaps = db
     .query<{ n: number }, [number]>(
-      `SELECT COUNT(*) AS n FROM issue_events WHERE kind='note' AND agent='claim-stale-sweeper' AND ts >= ?`,
+      `SELECT COUNT(*) AS n FROM issue_events WHERE kind='reclaimed' AND agent='claim-stale-sweeper' AND ts >= ?`,
     )
     .get(hourAgo);
   db.close();
