@@ -612,3 +612,49 @@ test("vacuum (no flags): runs all passes + SQLite VACUUM in one output", async (
     cleanup();
   }
 });
+
+// hitl emit must persist expires_at so arc-tui (and any future reconciler) can
+// reap prompts whose requesting worker has given up. Without it, a NULL
+// expires_at is treated as "live forever" by every consumer query.
+test("hitl emit with --timeout-sec persists expires_at = created_at + timeoutSec", async () => {
+  const { db, cleanup } = freshDb();
+  const cfgDir = mkdtempSync(join(tmpdir(), "ledger-cli-cfg-"));
+  const cfgPath = join(cfgDir, "config.yaml");
+  writeFileSync(
+    cfgPath,
+    `modules:\n  arc-tui:\n    cli: "arc-tui"\n    implements: [ask_text, ask_choice, ask_confirm, notify, show_artifact]\n    renders:\n      text/markdown: native\n    can_retract: true\n`,
+  );
+  try {
+    await run(db, "init");
+    // Keep heartbeat fresh so pickModulesForHitl returns arc-tui.
+    const d = new Database(db);
+    d.run(
+      `INSERT INTO ux_heartbeats (module_name, last_beat) VALUES ('arc-tui', strftime('%s','now'))`,
+    );
+    d.close();
+
+    const before = Math.floor(Date.now() / 1000);
+    const r = await $`bun ${cli} hitl emit --class taste --kind ask_choice --prompt q --option a --option b --recommended a --timeout-sec 90 --db ${db}`
+      .env({ ...process.env, ARC_CONFIG: cfgPath })
+      .quiet();
+    const after = Math.floor(Date.now() / 1000);
+    const { id } = JSON.parse(r.stdout.toString()) as { id: string };
+
+    const d2 = new Database(db);
+    const got = d2
+      .query<
+        { expires_at: number | null; timeout_sec: number | null },
+        [string]
+      >("SELECT expires_at, timeout_sec FROM hitl_prompts WHERE id=?")
+      .get(id);
+    d2.close();
+    expect(got!.timeout_sec).toBe(90);
+    expect(got!.expires_at).not.toBeNull();
+    // expires_at should land in [before+90, after+90].
+    expect(got!.expires_at!).toBeGreaterThanOrEqual(before + 90);
+    expect(got!.expires_at!).toBeLessThanOrEqual(after + 90);
+  } finally {
+    cleanup();
+    rmSync(cfgDir, { recursive: true, force: true });
+  }
+});

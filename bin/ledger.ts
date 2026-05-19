@@ -371,11 +371,14 @@ switch (cmd) {
       die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
 
     const id = `hitl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
+    const timeoutSecInt = timeoutSec ? parseInt(timeoutSec, 10) : null;
+    const nowSec = Math.floor(Date.now() / 1000);
+    const expiresAt = timeoutSecInt ? nowSec + timeoutSecInt : null;
     db.run(
       `INSERT INTO hitl_prompts
          (id, kind, class, payload, recommended, divergence_strategy, timeout_sec,
-          anchor_repo, anchor_branch, anchor_commit, emitted_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+          expires_at, anchor_repo, anchor_branch, anchor_commit, emitted_by)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
       [
         id,
         kind,
@@ -383,7 +386,8 @@ switch (cmd) {
         JSON.stringify(payload),
         recommended ?? null,
         divergence ?? null,
-        timeoutSec ? parseInt(timeoutSec, 10) : null,
+        timeoutSecInt,
+        expiresAt,
         anchorRepo ?? null,
         anchorBranch ?? null,
         anchorCommit ?? null,
