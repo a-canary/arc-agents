@@ -6,7 +6,11 @@
   "bin": {
     "ledger": "./bin/ledger.ts",
     "arc-launch": "./bin/launch.ts",
-    "wait-for-ledger": "./bin/wait-for-ledger.ts"
+    "wait-for-ledger": "./bin/wait-for-ledger.ts",
+    "arc-chat": "./bin/arc-chat.ts",
+    "arc-ux": "./bin/arc-ux.ts",
+    "arc-tui": "./bin/arc-tui.ts",
+    "factory": "./bin/factory.ts"
   },
   "scripts": {
     "test": "bun test",
