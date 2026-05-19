@@ -10,7 +10,8 @@
     "arc-ux": "./bin/arc-ux.ts",
     "arc-tui": "./bin/arc-tui.ts",
     "arc-replay": "./bin/arc-replay.ts",
-    "factory": "./bin/factory.ts"
+    "factory": "./bin/factory.ts",
+    "webui-server": "./bin/webui-server.ts"
   },
   "scripts": {
     "test": "bun test",
