@@ -2,9 +2,10 @@
 # merge-gate.sh — pipeline merge gate validation for arc-agents (Bun/TS).
 #
 # Gates (in order, all run; non-zero exit if any FAIL):
-#   1. fixture   — at least one *.test.ts colocated test exists
-#   2. typecheck — `bun run typecheck` passes (tsc --noEmit)
-#   3. test      — `bun test` passes (full suite, bun's runner)
+#   1. fixture     — at least one *.test.ts colocated test exists
+#   2. typecheck   — `bun run typecheck` passes (tsc --noEmit)
+#   3. test        — `bun test` passes (full suite, bun's runner)
+#   4. slice-guard — PR-scope G-0005 cap (modified-lines + top-level areas) vs BASE_REF
 #
 # Usage: bin/merge-gate.sh [--project <path>]
 #   PROJECT env var or --project overrides cwd. Defaults to repo containing this script.
@@ -95,14 +96,33 @@ gate_test() {
   fi
 }
 
+# ── Gate 4: Slice-guard — PR-scope G-0005 cap ───────────────────────────────
+
+gate_slice_guard() {
+  log "Gate 4: Slice-guard (PR-scope G-0005)"
+  local script="$PROJECT/bin/slice-guard.sh"
+  if [ ! -x "$script" ]; then
+    skip "slice-guard" "bin/slice-guard.sh missing or not executable"
+    return 0
+  fi
+  local out
+  if out=$(PROJECT="$PROJECT" "$script" 2>&1); then
+    pass "slice-guard" "$(echo "$out" | tail -1 | sed 's/"/\\"/g')"
+  else
+    fail "slice-guard" "$(echo "$out" | tail -3 | tr '\n' ';' | sed 's/"/\\"/g')"
+    return 1
+  fi
+}
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 main() {
   log "Starting merge gate project=$PROJECT branch=$BRANCH HEAD=$HEAD_HASH"
 
-  gate_fixture   || true
-  gate_typecheck || true
-  gate_test      || true
+  gate_fixture     || true
+  gate_typecheck   || true
+  gate_test        || true
+  gate_slice_guard || true
 
   local failed
   failed=$(printf '%s\n' "${RESULTS[@]}" | grep -c "^FAIL" || true)
