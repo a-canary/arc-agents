@@ -44,6 +44,15 @@ describe("arc-chat post", () => {
     expect(lst.out).toContain("interactive");
     expect(lst.out).toContain("ready");
   });
+
+  it("classifies the chat_in row as class=trust urgency=interactive per ADR 0005", () => {
+    const r = run(CHAT, ["post", "classify me", "--thread", "t-class"]);
+    const { id } = JSON.parse(r.out.trim());
+    const shown = run(LEDGER, ["show", id]);
+    const parsed = JSON.parse(shown.out.trim());
+    expect(parsed.issue.class).toBe("trust");
+    expect(parsed.issue.urgency).toBe("interactive");
+  });
 });
 
 describe("arc-chat tail --once", () => {
