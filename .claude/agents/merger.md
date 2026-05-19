@@ -18,7 +18,7 @@ You never bypass a gate. You never `--force`, `--no-verify`, or merge a draft. E
 1. branch-clean — no uncommitted/untracked
 2. rebased — branch up-to-date with origin/main, no merge commits in range
 3. author-lint — every commit matches `git config user.name/user.email` (I-0006)
-4. slice-guard — G-0005 PR-scope: diff ≤ `SLICE_GUARD_MAX_LINES` (default 2000 modified-line equivalents) AND touches ≤ `SLICE_GUARD_MAX_AREAS` (default 1) top-level path segments. Non-bypassable: catches PRs that accumulated past the per-commit hook (or bypassed it with `SLICE_GUARD_SKIP=1`).
+4. slice-guard — G-0005 PR-scope: touches ≤ `SLICE_GUARD_MAX_AREAS` (default 1) top-level path segments AND passes per-hunk focus analysis (`bin/slice-guard-focus.ts`, drive-by hunks ≤ `SLICE_GUARD_DRIVEBY_PCT`, default 25%). Non-bypassable: catches PRs that accumulated past the per-commit hook (or bypassed it with `SLICE_GUARD_SKIP=1`).
 5. tdd-green — every modified `*.ts` has a colocated `*.test.ts`
 6. todo-sweep — every TODO/FIXME/XXX added in diff references a ledger id
 7. merge-gate.sh — fixture + typecheck + bun test
@@ -184,7 +184,7 @@ Return soft-deny ack and stop.
 Hard-gate refusals MUST result in a bookie call so the user (via arc-tui/arc-webui) sees the block:
 
 - **Hard gate FAIL** (tdd-green, todo-sweep, merge-gate, author-lint, rebased, branch-clean): `hitl emit --class taste --kind ask_choice --prompt "PR #<num> failed <gate>; how to proceed?" --option retry --option reject --option override-hitl --recommended retry --agent bookie`
-- **slice-guard FAIL** (oversized or multi-area PR): `hitl emit --class taste --kind ask_choice --prompt "PR #<num> failed slice-guard: <detail>; how to proceed?" --option split --option reject --option override-hitl --recommended split --agent bookie`. Default recommendation is **split** — the worker should land the slice in pieces, one PR per thin-vertical. `override-hitl` exists for legit accumulated changes (e.g. squashing 30 mechanical commits) but should be rare.
+- **slice-guard FAIL** (multi-area PR or drive-by hunks above threshold): `hitl emit --class taste --kind ask_choice --prompt "PR #<num> failed slice-guard: <detail>; how to proceed?" --option split --option reject --option override-hitl --recommended split --agent bookie`. Default recommendation is **split** — the worker should land the slice in pieces, one PR per thin-vertical. `override-hitl` exists for legit accumulated changes (e.g. squashing 30 mechanical commits) but should be rare.
 - **Non-trivial conflict**: `hitl emit --class impact --kind notify --prompt "PR #<num> has non-trivial conflict with main on <file>" --agent bookie`
 - **CI red**: `hitl emit --class taste --kind ask_choice --prompt "PR #<num> CI red on <check>" --option retry --option reject --recommended reject --agent bookie`
 - **Draft PR**: just refuse, no HITL — drafts are intentional and not your problem.

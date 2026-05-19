@@ -58,7 +58,11 @@ SQL trigger flips dependents `blocked` → `ready` when all blockers merged. Pol
 `<repo>-<slug>`. Collision → append `-<xxxx>`. LLMs reason better on semantic slugs.
 
 ### G-0005: One Slice Per Worktree Per Commit
-Thin vertical tracer-bullets. 100k token smart-zone cap per issue.
+Thin vertical tracer-bullets. 100k token smart-zone cap per issue. Enforced
+by `hooks/pre-commit-slice-guard.sh` (structural: ≤1 top-level area) plus
+`bin/slice-guard-focus.ts` (agentic: per-hunk drive-by detection via
+minimax-m2.7; fails when >25% of hunks don't advance the stated task). The
+old flat 2000-modified-line cap is retired — focus, not size, is the signal.
 
 ### G-0006: Two-Tier Model Policy
 Opus 4.7 for synthesis ($10/day cap). minimax-m2.7 for impl (unlimited, direct API).
