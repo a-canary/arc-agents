@@ -107,6 +107,33 @@ export function validateDecompose(input: DecomposeInput): ValidationError[] {
   return errs;
 }
 
+// ADR 0002 module registry enforcement. Pure over (value, registry).
+// Applied at every bookie write touching a module-name column:
+//   issues.source_module, deliveries.module, thread_subscriptions.module.
+export function validateModuleName(
+  value: string | null | undefined,
+  registry: readonly string[],
+  field = "module",
+): ValidationError[] {
+  if (value === null || value === undefined) {
+    return [{ field, message: "required: module name must be set" }];
+  }
+  if (typeof value !== "string" || value.trim() === "") {
+    return [{ field, message: "must be a non-empty string" }];
+  }
+  if (!registry.includes(value)) {
+    const list = registry.length === 0 ? "<none registered>" : registry.join(", ");
+    return [{ field, message: `unknown module '${value}'. registered: ${list} (ADR 0002)` }];
+  }
+  return [];
+}
+
+// Convenience: pull registered module names out of a loaded UxConfig shape.
+// Typed loose so this stays in the pure-validator file (no ux-config import cycle).
+export function registeredModuleNames(cfg: { modules?: Record<string, unknown> }): string[] {
+  return Object.keys(cfg.modules ?? {});
+}
+
 export function validateStateTransition(from: State, to: State): ValidationError[] {
   if (from === to) return [];
   // Terminal states are merged|cancelled — these are forever.
