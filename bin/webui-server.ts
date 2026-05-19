@@ -91,6 +91,74 @@ export function queryAfkRows(db: Database): IssueRow[] {
   return [...inflight, ...recent];
 }
 
+type DagNode = {
+  id: string;
+  state: string;
+  title: string;
+  type: string;
+  kind: string;
+  parent_id: string | null;
+  thread_id: string | null;
+};
+type DagEdge = { from: string; to: string };
+
+export function queryDag(db: Database): { nodes: DagNode[]; edges: DagEdge[] } {
+  // Window: in-flight (claimed/wip/review/blocked) + ready (paused excluded),
+  // UNION last COMPLETED_LIMIT merged rows that are 1-deep parents of in-flight.
+  type Row = DagNode & { blocked_by: string | null };
+  const inflight = db
+    .query<Row, []>(
+      `SELECT id, state, title, type, kind, parent_id, thread_id, blocked_by
+         FROM issues
+        WHERE state IN ('claimed','wip','review','blocked','ready')
+          AND paused = 0
+        ORDER BY updated_at DESC`,
+    )
+    .all();
+  const inflightIds = new Set(inflight.map((r) => r.id));
+  const parentIds = new Set<string>();
+  for (const r of inflight) if (r.parent_id) parentIds.add(r.parent_id);
+  let parents: Row[] = [];
+  if (parentIds.size > 0) {
+    const placeholders = Array.from(parentIds, () => "?").join(",");
+    parents = db
+      .query<Row, string[]>(
+        `SELECT id, state, title, type, kind, parent_id, thread_id, blocked_by
+           FROM issues
+          WHERE state = 'merged' AND id IN (${placeholders})
+          ORDER BY updated_at DESC
+          LIMIT ${COMPLETED_LIMIT}`,
+      )
+      .all(...Array.from(parentIds));
+  }
+  const all = [...inflight, ...parents.filter((p) => !inflightIds.has(p.id))];
+  const nodeIds = new Set(all.map((r) => r.id));
+  const nodes: DagNode[] = all.map((r) => ({
+    id: r.id,
+    state: r.state,
+    title: r.title,
+    type: r.type,
+    kind: r.kind,
+    parent_id: r.parent_id,
+    thread_id: r.thread_id,
+  }));
+  const edges: DagEdge[] = [];
+  for (const r of all) {
+    if (!r.blocked_by) continue;
+    let deps: unknown;
+    try {
+      deps = JSON.parse(r.blocked_by);
+    } catch {
+      continue;
+    }
+    if (!Array.isArray(deps)) continue;
+    for (const d of deps) {
+      if (typeof d === "string" && nodeIds.has(d)) edges.push({ from: d, to: r.id });
+    }
+  }
+  return { nodes, edges };
+}
+
 function digest(rows: IssueRow[]): string {
   // Cheap fingerprint: id|state|updated_at per row. Caller compares strings.
   let h = "";
@@ -155,6 +223,11 @@ export function buildHandler(db: Database) {
     }
     if (url.pathname === "/sse/hitl") {
       return new Response(sseStream(db, "hitl"), { headers: sseHeaders() });
+    }
+    if (url.pathname === "/dag") {
+      return new Response(JSON.stringify(queryDag(db)), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
     if (url.pathname === "/sse/afk") {
       return new Response(sseStream(db, "afk"), { headers: sseHeaders() });

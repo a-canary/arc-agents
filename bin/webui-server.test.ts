@@ -6,6 +6,7 @@ import { openWithMigrate } from "../src/ledger/db";
 import {
   buildHandler,
   queryAfkRows,
+  queryDag,
   queryHitlRows,
   resolveIfaceAddr,
   sseStream,
@@ -100,6 +101,55 @@ test("queryAfkRows excludes paused rows", () => {
     const ids = queryAfkRows(db).map((r) => r.id);
     expect(ids).toContain("live");
     expect(ids).not.toContain("off");
+  } finally {
+    cleanup();
+  }
+});
+
+test("queryDag returns in-flight nodes + blocked_by edges + 1-deep merged parents", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "parent-merged", title: "p", state: "merged" });
+    insertIssue(db, { id: "kid-wip", title: "k", state: "wip" });
+    db.exec("UPDATE issues SET parent_id='parent-merged' WHERE id='kid-wip'");
+    insertIssue(db, { id: "dep", title: "dep", state: "ready" });
+    insertIssue(db, { id: "blocker-host", title: "host", state: "blocked" });
+    db.exec(`UPDATE issues SET blocked_by='["dep"]' WHERE id='blocker-host'`);
+    insertIssue(db, { id: "unrelated-merged", title: "u", state: "merged" });
+    insertIssue(db, { id: "paused-row", title: "pa", state: "ready" });
+    db.exec("UPDATE issues SET paused=1 WHERE id='paused-row'");
+
+    const { nodes, edges } = queryDag(db);
+    const ids = nodes.map((n) => n.id).sort();
+    expect(ids).toContain("kid-wip");
+    expect(ids).toContain("dep");
+    expect(ids).toContain("blocker-host");
+    expect(ids).toContain("parent-merged");
+    expect(ids).not.toContain("unrelated-merged");
+    expect(ids).not.toContain("paused-row");
+    expect(edges).toContainEqual({ from: "dep", to: "blocker-host" });
+    const kid = nodes.find((n) => n.id === "kid-wip")!;
+    expect(kid.title).toBe("k");
+    expect(kid.parent_id).toBe("parent-merged");
+    expect(kid.type).toBe("mvp");
+    expect(kid.kind).toBe("task");
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /dag returns nodes + edges JSON", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "a", title: "a", state: "ready" });
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/dag"));
+    expect(res.status).toBe(200);
+    expect(res.headers.get("Content-Type")).toContain("application/json");
+    const body = await res.json();
+    expect(Array.isArray(body.nodes)).toBe(true);
+    expect(Array.isArray(body.edges)).toBe(true);
+    expect(body.nodes.map((n: { id: string }) => n.id)).toContain("a");
   } finally {
     cleanup();
   }
