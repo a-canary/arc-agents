@@ -218,3 +218,53 @@ test("anchor captured for taste prompts when run inside a git repo", async () =>
   expect(got[0]!.anchor_commit).toMatch(/^[0-9a-f]{40}$/);
   expect(got[0]!.anchor_branch).toBeTruthy();
 });
+
+test("thread-merge writes merged_into on existing subscription rows", async () => {
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO thread_subscriptions (thread_id, subscriber) VALUES (?, ?)`,
+    ["t-src", "alice"],
+  );
+  db.run(
+    `INSERT INTO thread_subscriptions (thread_id, subscriber) VALUES (?, ?)`,
+    ["t-src", "bob"],
+  );
+  db.close();
+  const r = await runUx(["thread-merge", "--src", "t-src", "--dest", "t-dest"]);
+  expect(r.exitCode).toBe(0);
+  const got = rows<{ subscriber: string; merged_into: string | null }>(
+    "SELECT subscriber, merged_into FROM thread_subscriptions WHERE thread_id='t-src' ORDER BY subscriber",
+  );
+  expect(got).toEqual([
+    { subscriber: "alice", merged_into: "t-dest" },
+    { subscriber: "bob", merged_into: "t-dest" },
+  ]);
+});
+
+test("thread-merge inserts marker row when no subscriptions exist", async () => {
+  const r = await runUx(["thread-merge", "--src", "empty-src", "--dest", "empty-dest"]);
+  expect(r.exitCode).toBe(0);
+  const got = rows<{ thread_id: string; subscriber: string; merged_into: string | null }>(
+    "SELECT thread_id, subscriber, merged_into FROM thread_subscriptions WHERE thread_id='empty-src'",
+  );
+  expect(got).toEqual([
+    { thread_id: "empty-src", subscriber: "__merge_marker__", merged_into: "empty-dest" },
+  ]);
+});
+
+test("thread-merge rejects identical src and dest", async () => {
+  const r = await runUx(["thread-merge", "--src", "same", "--dest", "same"]);
+  expect(r.exitCode).toBe(2);
+});
+
+test("thread_subscriptions schema present with merged_into column and index", async () => {
+  const cols = rows<{ name: string }>("PRAGMA table_info(thread_subscriptions)");
+  const names = cols.map((c) => c.name);
+  expect(names).toContain("thread_id");
+  expect(names).toContain("subscriber");
+  expect(names).toContain("merged_into");
+  const idx = rows<{ name: string }>(
+    "SELECT name FROM sqlite_master WHERE type='index' AND tbl_name='thread_subscriptions'",
+  );
+  expect(idx.some((r) => r.name === "idx_thread_subs_merged_into")).toBe(true);
+});

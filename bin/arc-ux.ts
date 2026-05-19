@@ -312,6 +312,30 @@ switch (cmd) {
     commonAsk("show_artifact", { caption, artifacts });
     break;
   }
+  case "thread-merge": {
+    // ADR 0006 deferred capability scaffold. Marks `src` thread as merged
+    // into `dest` by updating thread_subscriptions.merged_into. No fanout —
+    // a downstream consumer (when one exists) reads the column.
+    const src = flag("src") ?? die(2, "--src required");
+    const dest = flag("dest") ?? die(2, "--dest required");
+    if (src === dest) die(2, "--src and --dest must differ");
+    const db = open();
+    migrate(db);
+    const res = db.run(
+      `UPDATE thread_subscriptions SET merged_into = ? WHERE thread_id = ?`,
+      [dest, src],
+    );
+    // Also record an explicit subscription-less merge marker so the column
+    // reflects intent even when no rows existed yet.
+    if (res.changes === 0) {
+      db.run(
+        `INSERT INTO thread_subscriptions (thread_id, subscriber, merged_into) VALUES (?, ?, ?)`,
+        [src, "__merge_marker__", dest],
+      );
+    }
+    process.stdout.write(JSON.stringify({ src, dest, updated: res.changes }) + "\n");
+    break;
+  }
   default:
-    die(2, `usage: arc-ux <ask-text|ask-choice|ask-confirm|notify|show-artifact> [flags]`);
+    die(2, `usage: arc-ux <ask-text|ask-choice|ask-confirm|notify|show-artifact|thread-merge> [flags]`);
 }

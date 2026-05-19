@@ -515,6 +515,24 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "012_thread_subscriptions",
+    // ADR 0006 — deferred capability scaffold for cross-thread merge.
+    // Table + nullable merged_into column written by `arc-ux thread-merge`.
+    // No UI fanout consumes this yet; future use cases promote it.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS thread_subscriptions (
+          thread_id   TEXT NOT NULL,
+          subscriber  TEXT NOT NULL,
+          merged_into TEXT,
+          created_at  INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          PRIMARY KEY (thread_id, subscriber)
+        );
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_thread_subs_merged_into ON thread_subscriptions(merged_into) WHERE merged_into IS NOT NULL");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
