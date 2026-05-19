@@ -25,21 +25,12 @@ export const TYPE_VALUES = [
 export type Type = (typeof TYPE_VALUES)[number];
 
 // ADR 0005: orthogonal class + urgency replace single `type`.
-export const CLASS_VALUES = [
-  "BUG",
-  "MVP",
-  "ops",
-  "hygiene",
-  "quality",
-  "trust",
-  "scale",
-  "efficiency",
-  "class_unset",
-] as const;
-export type Class = (typeof CLASS_VALUES)[number];
-
-export const URGENCY_VALUES = ["interactive", "nominal", "deferred"] as const;
-export type Urgency = (typeof URGENCY_VALUES)[number];
+// Owned by `schema-enums.ts`; re-exported here so callers of bookie-validator
+// keep working unchanged.
+export { CLASS_VALUES, URGENCY_VALUES } from "./schema-enums";
+export type { Class, Urgency } from "./schema-enums";
+import { CLASS_VALUES, URGENCY_VALUES } from "./schema-enums";
+import type { Class, Urgency } from "./schema-enums";
 
 export const STATE_VALUES = [
   "ready",

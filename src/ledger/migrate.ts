@@ -2,6 +2,7 @@
 // Apply order is append-only. Each migration checks current state before running.
 
 import { Database } from "bun:sqlite";
+import { CLASS_VALUES, URGENCY_VALUES, sqlInList } from "./schema-enums";
 
 export type Migration = {
   id: string;
@@ -397,6 +398,8 @@ export const migrations: Migration[] = [
       // CHECK during rebuild only because the INSERT...SELECT below relies on the rewrite
       // CASE to map them — but we want post-rename validation strict, so the new CHECK
       // lists only the post-ADR-0005 kind set).
+      // CHECK lists for class/urgency are generated from schema-enums.ts to
+      // keep migration 011 and the runtime validators on the same enum.
       db.exec(`
         CREATE TABLE issues_new (
           id            TEXT PRIMARY KEY,
@@ -413,9 +416,9 @@ export const migrations: Migration[] = [
           kind          TEXT NOT NULL DEFAULT 'task'
                         CHECK (kind IN ('task','event','reply','prd','prefetch')),
           class         TEXT NOT NULL DEFAULT 'class_unset'
-                        CHECK (class IN ('BUG','MVP','ops','hygiene','quality','trust','scale','efficiency','class_unset')),
+                        CHECK (class IN (${sqlInList(CLASS_VALUES)})),
           urgency       TEXT NOT NULL DEFAULT 'nominal'
-                        CHECK (urgency IN ('interactive','nominal','deferred')),
+                        CHECK (urgency IN (${sqlInList(URGENCY_VALUES)})),
           source_module TEXT,
           blocked_by    TEXT CHECK (blocked_by IS NULL OR blocked_by LIKE '[%]'),
           worktree_path TEXT,
