@@ -85,3 +85,42 @@ test("no-op when nothing stale", () => {
   expect(r.reset).toBe(0);
   expect(r.ids).toEqual([]);
 });
+
+test("resets orphan claim with NULL claimed_by", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "orphan", "claimed", now - 60, null); // fresh claimed_at, no owner
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(1);
+  expect(r.ids).toEqual(["orphan"]);
+  expect(db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='orphan'").get()?.state).toBe("ready");
+});
+
+test("resets orphan claim with NULL claimed_at", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "orphan", "claimed", null, "w1");
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(1);
+  expect(r.ids).toEqual(["orphan"]);
+});
+
+test("resets fully-orphan claim (both NULL)", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "orphan", "claimed", null, null);
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(1);
+});
+
+test("orphan reset event payload labels it as orphan", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "x", "claimed", null, null);
+  sweepStaleClaims(db, { now });
+  const rows = db.query<{ payload_md: string }, []>(
+    "SELECT payload_md FROM issue_events WHERE issue_id='x' AND kind='reclaimed'",
+  ).all();
+  expect(rows.length).toBe(1);
+  expect(rows[0]!.payload_md.toLowerCase()).toContain("orphan");
+});
