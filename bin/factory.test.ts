@@ -57,8 +57,8 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
-function createTask(title: string, type = "mvp") {
-  const r = bun([LEDGER, "create", "--kind", "task", "--type", type, "--title", title]);
+function createTask(title: string, _type = "mvp") {
+  const r = bun([LEDGER, "create", "--kind", "task", "--class", "MVP", "--urgency", "nominal", "--title", title]);
   if (r.status !== 0) throw new Error(`create failed: ${r.stderr}`);
   return JSON.parse(r.stdout).id;
 }

@@ -126,11 +126,11 @@ export function reapFinished(db: any): string[] {
   return reaped;
 }
 
-type ReadyRow = { id: string; kind: string; type: string; title: string };
+type ReadyRow = { id: string; kind: string; urgency: string; title: string };
 
-export function listReady(typeFilter?: string): ReadyRow[] {
+export function listReady(urgencyFilter?: string): ReadyRow[] {
   const args = [LEDGER, "spawn-ready", ...DB_FLAG];
-  if (typeFilter) args.push("--type", typeFilter);
+  if (urgencyFilter) args.push("--urgency", urgencyFilter);
   const r = spawnSync("bun", args, { encoding: "utf8" });
   if (r.status !== 0) return [];
   try {
@@ -158,7 +158,7 @@ export function spawnWorker(pool: "any" | "interactive" = "any"): string {
   // Pass worker name as arg so the shell can pass it to `ledger claim`.
   // For interactive pool, restrict the claim to type=interactive so a fast-pass slot
   // never wastes itself on a backlog task that landed in the queue first.
-  const env = pool === "interactive" ? { ...process.env, ARC_CLAIM_TYPE: "interactive" } : process.env;
+  const env = pool === "interactive" ? { ...process.env, ARC_CLAIM_URGENCY: "interactive" } : process.env;
   spawnSync("tmux", ["new-session", "-d", "-s", name, "bash", SHELL, name], { env });
   return name;
 }

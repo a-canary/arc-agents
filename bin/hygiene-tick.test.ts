@@ -40,11 +40,11 @@ async function tick() {
 function listCron() {
   const db = new Database(dbPath);
   const rows = db.query<
-    { id: string; title: string; project: string; type: string; kind: string; state: string; created_at: number },
+    { id: string; title: string; project: string; class: string; kind: string; state: string; created_at: number },
     []
   >(
-    `SELECT id, title, project, type, kind, state, created_at
-     FROM issues WHERE type='cron' ORDER BY created_at ASC, id ASC`,
+    `SELECT id, title, project, class, kind, state, created_at
+     FROM issues WHERE class='ops' ORDER BY created_at ASC, id ASC`,
   ).all();
   db.close();
   return rows;
@@ -59,7 +59,7 @@ test("first tick creates one cron task for the first repo in the list", async ()
 
   const rows = listCron();
   expect(rows.length).toBe(1);
-  expect(rows[0]!.type).toBe("cron");
+  expect(rows[0]!.class).toBe("ops");
   expect(rows[0]!.kind).toBe("task");
   expect(rows[0]!.state).toBe("ready");
   expect(rows[0]!.project).toBe("ke");
@@ -82,7 +82,7 @@ test("rotation wraps around after exhausting the list", async () => {
   for (let i = 0; i < 4; i++) {
     await tick();
     const d = new Database(dbPath);
-    d.run(`UPDATE issues SET state='merged' WHERE type='cron' AND state!='merged'`);
+    d.run(`UPDATE issues SET state='merged' WHERE class='ops' AND state!='merged'`);
     d.close();
   }
   const rows = listCron();
@@ -125,7 +125,7 @@ test("empty repos list exits 2", async () => {
 test("body references the skill so a worker knows what to do", async () => {
   await tick();
   const db = new Database(dbPath);
-  const got = db.query<{ body_md: string }, []>("SELECT body_md FROM issues WHERE type='cron'").get();
+  const got = db.query<{ body_md: string }, []>("SELECT body_md FROM issues WHERE class='ops'").get();
   db.close();
   expect(got!.body_md).toContain("/improve-codebase-architecture");
   expect(got!.body_md).toContain("ke");

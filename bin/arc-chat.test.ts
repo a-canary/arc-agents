@@ -55,7 +55,7 @@ describe("arc-chat tail --once", () => {
 
   it("emits reply rows for the thread", () => {
     run(LEDGER, [
-      "create", "--kind", "reply", "--type", "interactive",
+      "create", "--kind", "reply", "--class", "class_unset", "--urgency", "interactive",
       "--source-module", "arc-chat",
       "--title", "reply text", "--body", "reply text full", "--thread", "t-y",
     ]);
@@ -83,7 +83,7 @@ describe("render-prompt thread replay", () => {
   it("includes prior chat turns in the rendered prompt", () => {
     run(CHAT, ["post", "first user msg", "--thread", "t-r"]);
     run(LEDGER, [
-      "create", "--kind", "reply", "--type", "interactive",
+      "create", "--kind", "reply", "--class", "class_unset", "--urgency", "interactive",
       "--source-module", "arc-chat",
       "--title", "prior reply", "--body", "prior reply body", "--thread", "t-r",
     ]);

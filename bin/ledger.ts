@@ -71,12 +71,15 @@ switch (cmd) {
     const input: CreateInput = {
       title: getFlag("title"),
       kind: getFlag("kind"),
-      type: getFlag("type"),
+      class: getFlag("class"),
+      urgency: getFlag("urgency"),
+      hitl: getFlag("hitl"),
       body: getFlag("body"),
       acceptance: getFlag("acceptance"),
       parent: getFlag("parent"),
       blockedBy: getFlag("blocked-by"),
       project: getFlag("project"),
+      legacyType: getFlag("type"),
     };
     const errs = validateCreate(input, positionalAfterVerb());
     if (errs.length > 0) {
@@ -84,7 +87,9 @@ switch (cmd) {
     }
     const project = input.project ?? "arc-agents";
     const kind = input.kind!;
-    const type = input.type!;
+    const cls = input.class!;
+    const urgency = input.urgency!;
+    const hitl = input.hitl === "1" ? 1 : 0;
     const title = input.title!;
     const body = input.body ?? "";
     const acceptance = input.acceptance ?? "";
@@ -97,9 +102,9 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
     db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
+      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, class, urgency, hitl, state, kind, blocked_by, thread_id, source_module)
+       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+      [id, project, parent, title, body, acceptance, cls, urgency, hitl, state, kind, blockedBy, thread, sourceModule],
     );
     db.run(
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
@@ -110,19 +115,21 @@ switch (cmd) {
   }
 
   case "claim": {
-    // ledger claim <worker> [--type X]
-    // --type restricts the claim to a single priority class (used by fast-pass
-    // interactive pool so a reserved slot doesn't burn on backlog work).
+    // ledger claim <worker> [--urgency X]
+    // --urgency restricts the claim to one priority bucket (fast-pass slot
+    // uses --urgency interactive so its slot doesn't burn on backlog).
     const worker = args[1] ?? die("worker required");
     if (worker.startsWith("--")) die("worker required (positional)");
-    const typeFilter = getFlag("type");
+    if (getFlag("type") !== undefined)
+      die("--type removed (ADR 0005 §4). use --urgency <interactive|nominal|deferred>");
+    const urgencyFilter = getFlag("urgency");
     const db = openWithMigrate(getFlag("db"));
-    const typeClause = typeFilter ? "AND type=?2" : "";
+    const urgencyClause = urgencyFilter ? "AND urgency=?2" : "";
     const sql = `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${urgencyClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
          RETURNING id`;
-    const row = typeFilter
-      ? db.query<{ id: string }, [string, string]>(sql).get(worker, typeFilter)
+    const row = urgencyFilter
+      ? db.query<{ id: string }, [string, string]>(sql).get(worker, urgencyFilter)
       : db.query<{ id: string }, [string]>(sql).get(worker);
     if (!row) {
       out({ claimed: null });
@@ -170,8 +177,8 @@ switch (cmd) {
       for (const title of children) {
         const id = mintId(db, title);
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by)
-           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL)`,
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, class, urgency, hitl, state, kind, blocked_by)
+           VALUES (?, ?, ?, ?, '', '', 'class_unset', 'nominal', 1, 'ready', 'task', NULL)`,
           [id, parentRow.project, parent, title],
         );
         db.run(
@@ -272,7 +279,10 @@ switch (cmd) {
   case "list": {
     const state = getFlag("state");
     const kind = getFlag("kind");
-    const type = getFlag("type");
+    if (getFlag("type") !== undefined)
+      die("--type removed (ADR 0005 §4). use --class and/or --urgency");
+    const cls = getFlag("class");
+    const urgency = getFlag("urgency");
     const limit = parseInt(getFlag("limit") ?? "100", 10);
     const where: string[] = [];
     const vals: (string | number)[] = [];
@@ -284,11 +294,15 @@ switch (cmd) {
       where.push("kind=?");
       vals.push(kind);
     }
-    if (type) {
-      where.push("type=?");
-      vals.push(type);
+    if (cls) {
+      where.push("class=?");
+      vals.push(cls);
     }
-    const sql = `SELECT id, state, kind, type, title FROM issues ${
+    if (urgency) {
+      where.push("urgency=?");
+      vals.push(urgency);
+    }
+    const sql = `SELECT id, state, kind, class, urgency, hitl, title FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
     } ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT ?`;
     vals.push(limit);
@@ -417,12 +431,14 @@ switch (cmd) {
   }
 
   case "spawn-ready": {
-    const type = getFlag("type");
+    if (getFlag("type") !== undefined)
+      die("--type removed (ADR 0005 §4). use --urgency");
+    const urgency = getFlag("urgency");
     const db = openWithMigrate(getFlag("db"));
-    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
-      type ? "AND type=?" : ""
+    const sql = `SELECT id, kind, class, urgency, hitl, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
+      urgency ? "AND urgency=?" : ""
     } ORDER BY ${TYPE_PRIORITY_SQL}, id`;
-    out(type ? db.query(sql).all(type) : db.query(sql).all());
+    out(urgency ? db.query(sql).all(urgency) : db.query(sql).all());
     break;
   }
 
@@ -433,8 +449,8 @@ switch (cmd) {
     const worker = getFlag("worker") ?? "unknown";
     const db = openWithMigrate(getFlag("db"));
     const row = db
-      .query<{ kind: string; type: string; thread_id: string | null }, [string]>(
-        `SELECT kind, type, thread_id FROM issues WHERE id=?`,
+      .query<{ kind: string; urgency: string; hitl: number; thread_id: string | null }, [string]>(
+        `SELECT kind, urgency, hitl, thread_id FROM issues WHERE id=?`,
       )
       .get(id);
     if (!row) die(`no issue ${id}`);
@@ -454,7 +470,8 @@ switch (cmd) {
     process.stdout.write(
       renderSystemPrompt({
         kind: row.kind,
-        type: row.type,
+        urgency: row.urgency,
+        hitl: row.hitl,
         worker,
         task: id,
         thread_id: row.thread_id ?? undefined,
@@ -489,20 +506,21 @@ switch (cmd) {
     console.log(`ledger <verb> [args]
 
   init                                 run migrations
-  create --kind --type --title [...]   insert row (flag-only)
+  create --kind --class --urgency --title [--hitl 0|1] [...]
+                                       insert row (flag-only). ADR 0005 §4: --type removed
                                        flags: --project --body --acceptance --parent --blocked-by --agent
-  claim <worker> [--type T]            atomic claim of highest-priority ready task
-                                       (--type restricts to one priority class)
+  claim <worker> [--urgency U]         atomic claim of highest-priority ready task
+                                       (--urgency restricts to one bucket)
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
   update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
                                        emit HITL prompt + fanout to alive UX modules
-  list [--state --kind --type --limit]
+  list [--state --kind --class --urgency --limit]
   show <id>
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
-  spawn-ready [--type]                 emit JSON for ready rows
+  spawn-ready [--urgency U]            emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
   vacuum

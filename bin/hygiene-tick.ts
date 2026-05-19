@@ -42,7 +42,7 @@ function hasOpenHygiene(repo: string): boolean {
   const row = db
     .query<{ n: number }, [string, ...string[]]>(
       `SELECT COUNT(*) AS n FROM issues
-       WHERE type='cron' AND project=? AND state NOT IN (${placeholders})`,
+       WHERE class='ops' AND project=? AND state NOT IN (${placeholders})`,
     )
     .get(repo, ...TERMINAL);
   return (row?.n ?? 0) > 0;
@@ -52,7 +52,7 @@ function hasOpenHygiene(repo: string): boolean {
 function nextSkillFor(repo: string): string {
   const row = db
     .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM issues WHERE type='cron' AND project=?`,
+      `SELECT COUNT(*) AS n FROM issues WHERE class='ops' AND project=?`,
     )
     .get(repo);
   const n = row?.n ?? 0;
@@ -65,7 +65,7 @@ function nextSkillFor(repo: string): string {
 function lastCreatedFor(repo: string): number | null {
   const row = db
     .query<{ ts: number | null }, [string]>(
-      `SELECT MAX(created_at) AS ts FROM issues WHERE type='cron' AND project=?`,
+      `SELECT MAX(created_at) AS ts FROM issues WHERE class='ops' AND project=?`,
     )
     .get(repo);
   return row?.ts ?? null;
@@ -96,7 +96,7 @@ const { repo, skill } = pick;
 // (the issues table doesn't store a rowid-style monotonic field we can query, but
 // cron rotation tests rely on stable order).
 const seqRow = db
-  .query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM issues WHERE type='cron'`)
+  .query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM issues WHERE class='ops'`)
   .get();
 const seq = String((seqRow?.n ?? 0) + 1).padStart(6, "0");
 const title = `hygiene: ${repo} — /${skill}`;
@@ -104,8 +104,8 @@ const body = `Run \`/${skill}\` against the \`${repo}\` repo as part of the rota
 const id = `${seq}-${mintId(db, title)}`;
 
 db.run(
-  `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind)
-   VALUES (?, ?, ?, ?, '', 'cron', 'ready', 'task')`,
+  `INSERT INTO issues (id, project, title, body_md, acceptance_md, class, urgency, state, kind)
+   VALUES (?, ?, ?, ?, '', 'ops', 'nominal', 'ready', 'task')`,
   [id, repo, title, body],
 );
 db.run(

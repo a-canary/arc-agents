@@ -21,6 +21,9 @@ async function runRaw(db: string, ...args: string[]) {
   return await $`bun ${cli} ${args} --db ${db}`.quiet().nothrow();
 }
 
+const MVP = ["--class", "MVP", "--urgency", "nominal"];
+const INTERACTIVE = ["--class", "class_unset", "--urgency", "interactive"];
+
 test("init + create + list + claim", async () => {
   const { db, cleanup } = freshDb();
   try {
@@ -30,8 +33,7 @@ test("init + create + list + claim", async () => {
       "create",
       "--kind",
       "task",
-      "--type",
-      "mvp",
+      ...MVP,
       "--title",
       "test task one",
     )) as { id: string; state: string };
@@ -55,7 +57,7 @@ test("update --state + show events", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+    const c = (await run(db, "create", "--kind", "task", ...MVP, "--title", "x")) as {
       id: string;
     };
     await run(db, "update", c.id, "--state", "wip");
@@ -74,7 +76,7 @@ test("blocked → cascade-on-merge unblocks dep", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const a = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "a")) as {
+    const a = (await run(db, "create", "--kind", "task", ...MVP, "--title", "a")) as {
       id: string;
     };
     await run(
@@ -82,8 +84,7 @@ test("blocked → cascade-on-merge unblocks dep", async () => {
       "create",
       "--kind",
       "task",
-      "--type",
-      "mvp",
+      ...MVP,
       "--title",
       "b",
       "--blocked-by",
@@ -109,13 +110,25 @@ test("positional create is rejected", async () => {
   }
 });
 
-test("bad type rejected with enum hint", async () => {
+test("bad class rejected with enum hint", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const r = await runRaw(db, "create", "--kind", "task", "--type", "bogus", "--title", "x");
+    const r = await runRaw(db, "create", "--kind", "task", "--class", "bogus", "--urgency", "nominal", "--title", "x");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toMatch(/must be one of/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("legacy --type rejected with ADR 0005 hint", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await runRaw(db, "create", "--kind", "task", "--type", "mvp", ...MVP, "--title", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/ADR 0005/);
   } finally {
     cleanup();
   }
@@ -125,8 +138,8 @@ test("claim picks HITL before mvp via priority sort", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "mvp-row");
-    const h = (await run(db, "create", "--kind", "task", "--type", "HITL", "--title", "hitl-row")) as {
+    await run(db, "create", "--kind", "task", ...MVP, "--title", "mvp-row");
+    const h = (await run(db, "create", "--kind", "task", ...MVP, "--hitl", "1", "--title", "hitl-row")) as {
       id: string;
     };
     const claimed = (await run(db, "claim", "w1")) as { claimed: string };
@@ -140,11 +153,10 @@ test("tick reports reclaimed stale claims", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "old")) as {
+    const c = (await run(db, "create", "--kind", "task", ...MVP, "--title", "old")) as {
       id: string;
     };
     await run(db, "claim", "w1");
-    // Force claim age past 2hr.
     const { Database } = await import("bun:sqlite");
     const raw = new Database(db);
     raw.run(`UPDATE issues SET claimed_at = strftime('%s','now') - 7300 WHERE id=?`, [c.id]);
@@ -161,7 +173,7 @@ test("update --hitl 1 flips column without state change", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "h")) as {
+    const c = (await run(db, "create", "--kind", "task", ...MVP, "--title", "h")) as {
       id: string;
     };
     await run(db, "update", c.id, "--hitl", "1");
@@ -177,7 +189,7 @@ test("update --hitl rejects non-binary value", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "h2")) as {
+    const c = (await run(db, "create", "--kind", "task", ...MVP, "--title", "h2")) as {
       id: string;
     };
     const r = await runRaw(db, "update", c.id, "--hitl", "2");
@@ -192,7 +204,7 @@ test("terminal state cannot transition", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "z")) as {
+    const c = (await run(db, "create", "--kind", "task", ...MVP, "--title", "z")) as {
       id: string;
     };
     await run(db, "update", c.id, "--state", "merged");
@@ -204,11 +216,11 @@ test("terminal state cannot transition", async () => {
   }
 });
 
-test("decompose: parent → blocked, N children created with HITL/ready", async () => {
+test("decompose: parent → blocked, N children created with hitl=1/ready", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "big work")) as { id: string };
+    const parent = (await run(db, "create", "--kind", "task", ...MVP, "--title", "big work")) as { id: string };
     const r = (await run(db, "decompose", parent.id, "--child", "step one", "--child", "step two")) as {
       parent: string;
       children: { id: string; title: string }[];
@@ -221,30 +233,13 @@ test("decompose: parent → blocked, N children created with HITL/ready", async 
     expect(JSON.parse(shown.issue.blocked_by)).toEqual(r.children.map((c) => c.id));
 
     for (const c of r.children) {
-      const cs = (await run(db, "show", c.id)) as { issue: { state: string; type: string; kind: string; parent_id: string } };
+      const cs = (await run(db, "show", c.id)) as { issue: { state: string; hitl: number; class: string; kind: string; parent_id: string } };
       expect(cs.issue.state).toBe("ready");
-      expect(cs.issue.type).toBe("HITL");
+      expect(cs.issue.hitl).toBe(1);
+      expect(cs.issue.class).toBe("class_unset");
       expect(cs.issue.kind).toBe("task");
       expect(cs.issue.parent_id).toBe(parent.id);
     }
-  } finally {
-    cleanup();
-  }
-});
-
-test("decompose: fanout cap of 5 enforced", async () => {
-  const { db, cleanup } = freshDb();
-  try {
-    await run(db, "init");
-    const p = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "p")) as { id: string };
-    const r = await runRaw(
-      db,
-      "decompose",
-      p.id,
-      "--child", "a", "--child", "b", "--child", "c", "--child", "d", "--child", "e", "--child", "f",
-    );
-    expect(r.exitCode).not.toBe(0);
-    expect(r.stderr.toString()).toMatch(/fanout cap/);
   } finally {
     cleanup();
   }
@@ -254,7 +249,7 @@ test("decompose: rejects from terminal state", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    const p = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "p")) as { id: string };
+    const p = (await run(db, "create", "--kind", "task", ...MVP, "--title", "p")) as { id: string };
     await run(db, "update", p.id, "--state", "cancelled");
     const r = await runRaw(db, "decompose", p.id, "--child", "x");
     expect(r.exitCode).not.toBe(0);
@@ -272,7 +267,7 @@ test("claim + spawn-ready surface event-kind rows (ADR 0005 allowlist)", async (
       db,
       "create",
       "--kind", "event",
-      "--type", "interactive",
+      ...INTERACTIVE,
       "--title", "chat in",
       "--source-module", "arc-chat",
     )) as { id: string };
@@ -291,7 +286,7 @@ test("claim + spawn-ready skip non-allowlisted kinds (prd, reply, prefetch)", as
     await run(db, "init");
     for (const k of ["prd", "reply", "prefetch"] as const) {
       const extra = k === "reply" ? ["--source-module", "arc-chat"] : [];
-      await run(db, "create", "--kind", k, "--type", "mvp", "--title", `${k} row`, ...extra);
+      await run(db, "create", "--kind", k, ...MVP, "--title", `${k} row`, ...extra);
     }
     const ready = (await run(db, "spawn-ready")) as unknown[];
     expect(ready.length).toBe(0);

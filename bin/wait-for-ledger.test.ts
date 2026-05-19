@@ -15,8 +15,8 @@ test("emits json line when ready row exists for kind", async () => {
     const db = new Database(dbPath);
     migrate(db);
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
-       VALUES ('t-1','p','t','b','mvp','ready','task')`,
+      `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind)
+       VALUES ('t-1','p','t','b','MVP','nominal','ready','task')`,
     );
     db.close();
 
