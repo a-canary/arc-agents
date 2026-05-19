@@ -141,6 +141,31 @@ test("factory does not reap sessions younger than MAX_AGE", () => {
   expect(listWorkers()).toContain(sessName);
 });
 
+test("factory --metrics prints snapshot with all 5 fields", () => {
+  // Seed: one claimed task (counts as claim event), one ready task.
+  const id1 = createTask("done");
+  bun([LEDGER, "claim", "w1"]);
+  createTask("waiting");
+  // Spawn a fake worker session so alive-workers > 0.
+  const sess = `${prefix}-a-met01`;
+  tmux(["new-session", "-d", "-s", sess, "sleep", "300"]);
+
+  const r = bun([FACTORY, "--metrics"], { ARC_SLOTS_ANY: "4", ARC_SLOTS_INTERACTIVE: "2" });
+  expect(r.status).toBe(0);
+  const m = JSON.parse(r.stdout);
+  expect(m).toHaveProperty("alive_workers");
+  expect(m).toHaveProperty("claims_per_hr");
+  expect(m).toHaveProperty("reaps_per_hr");
+  expect(m).toHaveProperty("seconds_since_last_spawn");
+  expect(m).toHaveProperty("slots");
+  expect(m.alive_workers).toBeGreaterThanOrEqual(1);
+  expect(m.claims_per_hr).toBeGreaterThanOrEqual(1);
+  expect(m.slots.any.cap).toBe(4);
+  expect(m.slots.interactive.cap).toBe(2);
+  // id1 referenced to satisfy lint
+  expect(id1).toBeTruthy();
+});
+
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
