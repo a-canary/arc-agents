@@ -33,7 +33,7 @@ async function runTui(args: string[]) {
     .nothrow();
 }
 
-function insertPrompt(id: string, kind = "ask_choice", payload = { prompt: "pick", options: ["a", "b"], artifacts: [] }) {
+function insertPrompt(id: string, kind = "ask_choice", payload: Record<string, unknown> = { prompt: "pick", options: ["a", "b"], artifacts: [] }) {
   const d = db();
   d.run(
     `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state, timeout_sec)
@@ -41,7 +41,7 @@ function insertPrompt(id: string, kind = "ask_choice", payload = { prompt: "pick
     [id, kind, JSON.stringify(payload)],
   );
   d.run(
-    `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, 'arc-tui', 'pending')`,
+    `INSERT INTO deliveries (target_kind, target_id, module, state) VALUES ('hitl_prompt', ?, 'arc-tui', 'pending')`,
     [id],
   );
   d.close();
@@ -105,17 +105,17 @@ test("answering already-answered prompt is a no-op (loser case), exits 3", async
 test("answer fires retract cascade on losing deliveries", async () => {
   insertPrompt("p3");
   const d = db();
-  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p3', 'arc-webui', 'delivered')`);
-  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p3', 'arc-discord', 'delivered')`);
+  d.run(`INSERT INTO deliveries (target_kind, target_id, module, state) VALUES ('hitl_prompt', 'p3', 'arc-webui', 'delivered')`);
+  d.run(`INSERT INTO deliveries (target_kind, target_id, module, state) VALUES ('hitl_prompt', 'p3', 'arc-discord', 'delivered')`);
   d.close();
   const r = await runTui(["answer", "p3", "a"]);
   expect(r.exitCode).toBe(0);
   const d2 = db();
-  const got = d2.query<{ module_name: string; state: string }, []>(
-    "SELECT module_name, state FROM hitl_deliveries WHERE prompt_id='p3' ORDER BY module_name",
+  const got = d2.query<{ module: string; state: string }, []>(
+    "SELECT module, state FROM deliveries WHERE target_kind='hitl_prompt' AND target_id='p3' ORDER BY module",
   ).all();
   d2.close();
-  const map = Object.fromEntries(got.map((r) => [r.module_name, r.state]));
+  const map = Object.fromEntries(got.map((r) => [r.module, r.state]));
   expect(map["arc-tui"]).toBe("delivered"); // winner — bumped from pending to delivered
   expect(map["arc-webui"]).toBe("retracted");
   expect(map["arc-discord"]).toBe("retracted");
@@ -130,7 +130,7 @@ test("list prints open prompts addressed to arc-tui as JSON lines", async () => 
     `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state, timeout_sec)
      VALUES ('px', 'ask_text', 'taste', '{"prompt":"x","artifacts":[]}', 'y', 'open', 60)`,
   );
-  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('px', 'arc-webui', 'pending')`);
+  d.run(`INSERT INTO deliveries (target_kind, target_id, module, state) VALUES ('hitl_prompt', 'px', 'arc-webui', 'pending')`);
   d.close();
 
   const r = await runTui(["list"]);
@@ -143,7 +143,7 @@ test("list prints open prompts addressed to arc-tui as JSON lines", async () => 
 test("list ignores retracted and acked deliveries", async () => {
   insertPrompt("p6");
   const d = db();
-  d.run(`UPDATE hitl_deliveries SET state='retracted' WHERE prompt_id='p6'`);
+  d.run(`UPDATE deliveries SET state='retracted' WHERE target_kind='hitl_prompt' AND target_id='p6'`);
   d.close();
   const r = await runTui(["list"]);
   expect(r.exitCode).toBe(0);

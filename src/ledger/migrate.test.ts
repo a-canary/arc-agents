@@ -223,8 +223,8 @@ test("009 retract cascade flips loser deliveries on answer", () => {
   );
   for (const m of ["arc-tui", "arc-webui", "arc-discord"]) {
     db.run(
-      `INSERT INTO hitl_deliveries (prompt_id, module_name, state, delivered_at)
-       VALUES ('p1', ?, 'delivered', strftime('%s','now'))`,
+      `INSERT INTO deliveries (target_kind, target_id, module, state, delivered_at)
+       VALUES ('hitl_prompt', 'p1', ?, 'delivered', strftime('%s','now'))`,
       [m],
     );
   }
@@ -233,12 +233,90 @@ test("009 retract cascade flips loser deliveries on answer", () => {
             answered_at=strftime('%s','now') WHERE id='p1'`,
   );
   const states = db
-    .query<{ module_name: string; state: string }, []>(
-      "SELECT module_name, state FROM hitl_deliveries WHERE prompt_id='p1' ORDER BY module_name",
+    .query<{ module: string; state: string }, []>(
+      "SELECT module, state FROM deliveries WHERE target_kind='hitl_prompt' AND target_id='p1' ORDER BY module",
     )
     .all();
-  const map = Object.fromEntries(states.map((r) => [r.module_name, r.state]));
+  const map = Object.fromEntries(states.map((r) => [r.module, r.state]));
   expect(map["arc-webui"]).toBe("delivered"); // winner stays
   expect(map["arc-tui"]).toBe("retracted");
   expect(map["arc-discord"]).toBe("retracted");
+});
+
+test("012 creates artifacts table with FK to issues", () => {
+  const db = fresh();
+  const cols = db
+    .query<{ name: string }, []>("PRAGMA table_info(artifacts)")
+    .all()
+    .map((r) => r.name);
+  expect(cols).toContain("uuid");
+  expect(cols).toContain("kind");
+  expect(cols).toContain("ref_path");
+  expect(cols).toContain("inline_body");
+  expect(cols).toContain("bytes");
+  expect(cols).toContain("originating_row_id");
+  // FK enforced
+  db.exec("PRAGMA foreign_keys=ON");
+  expect(() =>
+    db.run(
+      `INSERT INTO artifacts (uuid, kind, inline_body, bytes, originating_row_id)
+       VALUES ('a1', 'text/markdown', 'hi', 2, 'nonexistent')`,
+    ),
+  ).toThrow();
+});
+
+test("012 creates thread_subscriptions with state CHECK", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO thread_subscriptions (thread_id, module, external_ref)
+     VALUES ('t1', 'arc-discord', 'ch-1')`,
+  );
+  expect(() =>
+    db.run(
+      `INSERT INTO thread_subscriptions (thread_id, module, external_ref, state)
+       VALUES ('t2', 'arc-discord', 'ch-2', 'bogus')`,
+    ),
+  ).toThrow();
+});
+
+test("012 renames hitl_deliveries -> deliveries with target_kind backfill", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "011_class_urgency_schema");
+  db.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, timeout_sec)
+     VALUES ('plegacy', 'ask_choice', 'taste', '{}', 'a', 60)`,
+  );
+  db.run(
+    `INSERT INTO hitl_deliveries (prompt_id, module_name, state)
+     VALUES ('plegacy', 'arc-tui', 'pending')`,
+  );
+  migrate(db);
+  // Old table gone
+  const tables = db
+    .query<{ name: string }, []>("SELECT name FROM sqlite_master WHERE type='table'")
+    .all()
+    .map((r) => r.name);
+  expect(tables).not.toContain("hitl_deliveries");
+  expect(tables).toContain("deliveries");
+  const row = db
+    .query<{ target_kind: string; target_id: string; module: string; state: string }, []>(
+      "SELECT target_kind, target_id, module, state FROM deliveries",
+    )
+    .get();
+  expect(row?.target_kind).toBe("hitl_prompt");
+  expect(row?.target_id).toBe("plegacy");
+  expect(row?.module).toBe("arc-tui");
+  expect(row?.state).toBe("pending");
+});
+
+test("012 deliveries CHECK enforces target_kind enum", () => {
+  const db = fresh();
+  expect(() =>
+    db.run(
+      `INSERT INTO deliveries (target_kind, target_id, module) VALUES ('bogus', 'x', 'arc-tui')`,
+    ),
+  ).toThrow();
+  db.run(
+    `INSERT INTO deliveries (target_kind, target_id, module) VALUES ('reply', 'r1', 'arc-tui')`,
+  );
 });
