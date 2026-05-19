@@ -129,6 +129,13 @@ test("claim picks HITL before mvp via priority sort", async () => {
     const h = (await run(db, "create", "--kind", "task", "--type", "HITL", "--title", "hitl-row")) as {
       id: string;
     };
+    // ADR 0005: sort is (urgency, class, created_at, id). Pin HITL row to
+    // (BUG, interactive) so it outranks mvp deterministically — without this
+    // the test relied on alphabetical id-tiebreak luck.
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(db);
+    raw.run("UPDATE issues SET class='BUG', urgency='interactive' WHERE id=?", [h.id]);
+    raw.close();
     const claimed = (await run(db, "claim", "w1")) as { claimed: string };
     expect(claimed.claimed).toBe(h.id);
   } finally {
