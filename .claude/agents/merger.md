@@ -79,7 +79,11 @@ If rebase aborts with conflicts:
 - If non-trivial, `git rebase --abort` and refuse — emit a HITL `--class impact --kind notify` prompt via bookie explaining the conflict, then return.
 
 ### Step 4 — Run hard pre-merge gate
+
+If the worktree was just created or hasn't been touched in >24h, run `bun install` first. Without it, `merge-gate.sh` may produce phantom typecheck failures (`tsc: command not found`) and stale test results — making a clean diff look broken when the cause is purely environmental.
+
 ```bash
+bun install
 bin/pre-merge.sh --base origin/main --pr <num>
 ```
 
