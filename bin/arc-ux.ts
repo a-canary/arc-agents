@@ -81,10 +81,24 @@ function gitAnchor(): { repo: string; branch: string; commit: string } | null {
 type AliveModule = { name: string; implements: string[]; can_retract: boolean };
 
 function bootstrapTaskIfNeeded(reason: string): void {
-  // Atomically spawn an install/repair task via the `ledger` CLI. The bookie
-  // is the canonical write path; we shell out instead of duplicating its
-  // validation here. Idempotency: we use a deterministic slug, so re-runs
-  // collide on PK and become no-ops.
+  // Pre-check: if a non-terminal "Install a UX surface module" issue is already
+  // queued, no-op. mintId (src/ledger/db.ts) appends a random suffix on PK
+  // collision rather than failing, so without this guard every refusal floods
+  // the queue with duplicate install tasks.
+  const db = open();
+  const existing = db
+    .query<{ id: string }, []>(
+      `SELECT id FROM issues
+       WHERE title = 'Install a UX surface module'
+         AND state NOT IN ('merged','cancelled')
+       LIMIT 1`,
+    )
+    .get();
+  db.close();
+  if (existing) return;
+
+  // First-time spawn: shell out to the bookie via `ledger create` so we don't
+  // duplicate its validation here.
   spawnSync(
     "bun",
     [

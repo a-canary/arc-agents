@@ -127,6 +127,27 @@ test("no alive module -> exit 3, spawn no row in hitl_prompts", async () => {
   expect(prompts.length).toBe(0);
 });
 
+test("repeated bootstrap spawns at most one install task (idempotent)", async () => {
+  // No heartbeats; two back-to-back asks should both refuse and both nudge the
+  // bookie to spawn the install task — but the install task itself must dedupe.
+  // mintId appends a random suffix on PK collision (src/ledger/db.ts:29), so
+  // without an explicit pre-check the bootstrap path generates a new row per
+  // call, flooding the queue.
+  for (let i = 0; i < 3; i++) {
+    const r = await runUx([
+      "ask-choice",
+      "--prompt", "x",
+      "--options", "a,b",
+      "--recommended", "a",
+    ]);
+    expect(r.exitCode).toBe(3);
+  }
+  const installs = rows<{ id: string }>(
+    "SELECT id FROM issues WHERE title='Install a UX surface module'",
+  );
+  expect(installs.length).toBe(1);
+});
+
 test("class=impact from worker role exits 4", async () => {
   heartbeat("arc-tui");
   const r = await runUx(
