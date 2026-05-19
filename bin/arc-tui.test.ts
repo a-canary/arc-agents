@@ -33,7 +33,11 @@ async function runTui(args: string[]) {
     .nothrow();
 }
 
-function insertPrompt(id: string, kind = "ask_choice", payload = { prompt: "pick", options: ["a", "b"], artifacts: [] }) {
+function insertPrompt(
+  id: string,
+  kind = "ask_choice",
+  payload: { prompt: string; options?: string[]; artifacts: unknown[] } = { prompt: "pick", options: ["a", "b"], artifacts: [] },
+) {
   const d = db();
   d.run(
     `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state, timeout_sec)
