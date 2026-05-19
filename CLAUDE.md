@@ -45,7 +45,7 @@ bun link && bun link arc-agents      # registers ledger, arc-launch, wait-for-le
 
 **Issue lifecycle:** `ready → claimed → wip → review → merged` (or `→ blocked / failed / cancelled`). `merged` and `cancelled` are terminal. Cascade-on-merge: a SQL trigger flips dependents `blocked → ready` when all blockers merge; `ledger tick` is the polling backstop.
 
-**Decomposition:** an AFK worker that hits a blocker only a human can resolve atomically inserts N HITL children + sets `parent.blocked_by=[childIds]` + flips parent to `blocked`. Fanout cap = 5, recursion allowed.
+**Decomposition:** an AFK worker that hits a blocker only a human can resolve atomically inserts N HITL children + sets `parent.blocked_by=[childIds]` + flips parent to `blocked`. No fanout cap (see `G-0009`); recursion allowed. Doctrine advises re-shaping past ~5 children.
 
 ## Layout
 

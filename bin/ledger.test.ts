@@ -232,24 +232,6 @@ test("decompose: parent → blocked, N children created with HITL/ready", async 
   }
 });
 
-test("decompose: fanout cap of 5 enforced", async () => {
-  const { db, cleanup } = freshDb();
-  try {
-    await run(db, "init");
-    const p = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "p")) as { id: string };
-    const r = await runRaw(
-      db,
-      "decompose",
-      p.id,
-      "--child", "a", "--child", "b", "--child", "c", "--child", "d", "--child", "e", "--child", "f",
-    );
-    expect(r.exitCode).not.toBe(0);
-    expect(r.stderr.toString()).toMatch(/fanout cap/);
-  } finally {
-    cleanup();
-  }
-});
-
 test("decompose: rejects from terminal state", async () => {
   const { db, cleanup } = freshDb();
   try {

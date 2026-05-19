@@ -69,6 +69,9 @@ Move files; subagents fix refs.
 ### G-0008: TypeScript Default
 TS over Python where reasonable. Bun runtime.
 
+### G-0009: No Hardcoded Decompose Fanout Cap
+Decomposition has no enforced fanout ceiling. The previous cap=5 was a heuristic, not an invariant — atomic insert + parent.blocked_by update is the only correctness requirement, and arbitrary N satisfies that. Agent doctrine (`roles/AGENTS.md` §2) keeps "past ~5 children, re-shape" as advisory guidance. Recursion remains allowed. Risk of runaway fanout is bounded by per-worker budgets + factory concurrency, not by validator rejection.
+
 ---
 
 ## Skills
