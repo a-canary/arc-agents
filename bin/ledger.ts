@@ -399,6 +399,44 @@ switch (cmd) {
     break;
   }
 
+  case "pause": {
+    // ledger pause <id>  → set paused=1. Idempotent.
+    const id = args[1];
+    if (!id || id.startsWith("--")) die("id required (positional)");
+    const db = openWithMigrate(getFlag("db"));
+    const row = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(id);
+    if (!row) die(`no such issue: ${id}`);
+    db.run(`UPDATE issues SET paused=1, updated_at=strftime('%s','now') WHERE id=?`, [id]);
+    db.run(`INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'progress', ?, 'paused')`, [
+      id,
+      getFlag("agent") ?? "cli",
+    ]);
+    out({ id, paused: true });
+    break;
+  }
+
+  case "defer": {
+    // ledger defer <id>  → priority -= 100, deferred_at = now(). Rejoin queue lower.
+    const id = args[1];
+    if (!id || id.startsWith("--")) die("id required (positional)");
+    const db = openWithMigrate(getFlag("db"));
+    const row = db
+      .query<{ priority: number | null }, [string]>("SELECT priority FROM issues WHERE id=?")
+      .get(id);
+    if (!row) die(`no such issue: ${id}`);
+    const next = (row.priority ?? 0) - 100;
+    db.run(
+      `UPDATE issues SET priority=?, deferred_at=strftime('%s','now'), updated_at=strftime('%s','now') WHERE id=?`,
+      [next, id],
+    );
+    db.run(
+      `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'progress', ?, ?)`,
+      [id, getFlag("agent") ?? "cli", `deferred (priority=${next})`],
+    );
+    out({ id, priority: next, deferred: true });
+    break;
+  }
+
   case "tick": {
     // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr).
     const db = openWithMigrate(getFlag("db"));
@@ -559,6 +597,8 @@ switch (cmd) {
                                        emit HITL prompt + fanout to alive UX modules
   list [--state --kind --type --limit]
   show <id>
+  pause <id>                           set paused=1 (waiter/factory skip)
+  defer <id>                           priority -= 100, deferred_at=now()
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue

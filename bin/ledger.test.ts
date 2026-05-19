@@ -342,6 +342,65 @@ test("scratch-gc lists stale dirs (dry-run) and --apply deletes", async () => {
   }
 });
 
+test("pause sets paused=1 and logs event (via bookie agent flag)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "p")) as {
+      id: string;
+    };
+    const r = (await run(db, "pause", c.id, "--agent", "bookie")) as { paused: boolean };
+    expect(r.paused).toBe(true);
+    const shown = (await run(db, "show", c.id)) as {
+      issue: { paused: number };
+      events: { kind: string; agent: string; payload_md: string }[];
+    };
+    expect(shown.issue.paused).toBe(1);
+    const ev = shown.events.find((e) => e.payload_md === "paused");
+    expect(ev?.agent).toBe("bookie");
+  } finally {
+    cleanup();
+  }
+});
+
+test("defer decrements priority by 100 and sets deferred_at", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "d")) as {
+      id: string;
+    };
+    const r1 = (await run(db, "defer", c.id, "--agent", "bookie")) as {
+      priority: number;
+      deferred: boolean;
+    };
+    expect(r1.deferred).toBe(true);
+    expect(r1.priority).toBe(-100);
+    const r2 = (await run(db, "defer", c.id, "--agent", "bookie")) as { priority: number };
+    expect(r2.priority).toBe(-200);
+    const shown = (await run(db, "show", c.id)) as {
+      issue: { priority: number; deferred_at: number };
+    };
+    expect(shown.issue.priority).toBe(-200);
+    expect(shown.issue.deferred_at).toBeGreaterThan(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("pause/defer reject missing id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const a = await runRaw(db, "pause");
+    expect(a.exitCode).not.toBe(0);
+    const b = await runRaw(db, "defer");
+    expect(b.exitCode).not.toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
 test("scratch-gc handles missing root gracefully", async () => {
   const { db, cleanup } = freshDb();
   try {
