@@ -593,6 +593,36 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
     },
   },
+  {
+    id: "014_event_kind_diff_review",
+    // Expand issue_events.kind CHECK to include 'diff_review'. The ledger
+    // CLI's merge gate (bin/ledger.ts update --state=merged) requires a
+    // prior diff_review event; without this kind in the CHECK, the gate is
+    // unsatisfiable.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE issue_events_new (
+          seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+          issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          ts         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          agent      TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','claimed','progress','blocked','unblocked',
+                                     'evidence','complete','failed','review','merged',
+                                     'budget-blocked','mirror-conflict','note','reclaimed',
+                                     'diff_review')),
+          payload_md TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO issue_events_new (seq, issue_id, ts, agent, kind, payload_md)
+        SELECT seq, issue_id, ts, agent, kind, payload_md FROM issue_events;
+      `);
+      db.exec("DROP TABLE issue_events");
+      db.exec("ALTER TABLE issue_events_new RENAME TO issue_events");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

@@ -25,7 +25,7 @@ type Template = {
   extras?: string[];
 };
 
-const DEFAULT_OVERLAYS = ["caveman", "bookie-routing", "commit-author"];
+const DEFAULT_OVERLAYS = ["caveman", "bookie-routing", "commit-author", "diff-review"];
 const DEFAULT_DOCTRINE = ["AGENTS.md"];
 
 const TABLE: Partial<Record<`${Kind}/${Type}`, Template>> = {
