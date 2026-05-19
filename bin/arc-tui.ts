@@ -37,10 +37,16 @@ switch (cmd) {
         { id: string; kind: string; class: string; payload: string; recommended: string | null },
         [string]
       >(
+        // Hide expired prompts even though they're still state='open' — no
+        // reconciler exists yet to flip them, so the expires_at check lives
+        // here. Without it, operators see (and can answer) timed-out prompts
+        // long after the requesting worker has given up. (bin/arc-ux.ts:292
+        // notes the reconciler is still missing.)
         `SELECT p.id, p.kind, p.class, p.payload, p.recommended
          FROM hitl_prompts p
          JOIN hitl_deliveries d ON d.prompt_id = p.id
          WHERE p.state = 'open'
+           AND (p.expires_at IS NULL OR p.expires_at > strftime('%s','now'))
            AND d.module_name = ?
            AND d.state IN ('pending','delivered')
          ORDER BY p.id`,
@@ -80,6 +86,7 @@ switch (cmd) {
       `UPDATE hitl_prompts
        SET state='answered', answer=?, answered_by=?, answered_at=?
        WHERE id=? AND state='open'
+         AND (expires_at IS NULL OR expires_at > strftime('%s','now'))
          AND EXISTS (
            SELECT 1 FROM hitl_deliveries d
            WHERE d.prompt_id=hitl_prompts.id
@@ -88,7 +95,7 @@ switch (cmd) {
          )`,
       [answer, MODULE_NAME, now, id, MODULE_NAME],
     );
-    if (r.changes === 0) die(3, `prompt ${id} no longer open or not addressed to ${MODULE_NAME}`);
+    if (r.changes === 0) die(3, `prompt ${id} no longer open, expired, or not addressed to ${MODULE_NAME}`);
     // Bump own delivery from pending → delivered so the retract trigger leaves it alone
     // (trigger only retracts deliveries whose module_name != answered_by).
     db.run(

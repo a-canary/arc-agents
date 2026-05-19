@@ -180,6 +180,45 @@ test("refuses to answer when delivery to arc-tui was already retracted", async (
   expect(r.exitCode).toBe(3);
 });
 
+test("list hides prompts whose expires_at has passed", async () => {
+  // arc-ux.ts:292 expects a reconciler to flip expired prompts; none exists yet,
+  // so arc-tui must filter them out at read-time. Otherwise operators see (and
+  // can answer) prompts whose requesting worker has already given up.
+  insertPrompt("pfresh");
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state, timeout_sec, expires_at)
+     VALUES ('pexp', 'ask_choice', 'taste', '{"prompt":"x","options":["a","b"],"artifacts":[]}', 'a', 'open', 60, strftime('%s','now') - 10)`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pexp', 'arc-tui', 'pending')`);
+  d.close();
+
+  const r = await runTui(["list"]);
+  expect(r.exitCode).toBe(0);
+  const ids = r.stdout.toString().trim().split("\n").filter(Boolean).map((l) => JSON.parse(l).id).sort();
+  expect(ids).toEqual(["pfresh"]);
+});
+
+test("answer refuses an expired prompt with exit 3", async () => {
+  const d = db();
+  d.run(
+    `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, state, timeout_sec, expires_at)
+     VALUES ('pexp2', 'ask_choice', 'taste', '{"prompt":"x","options":["a","b"],"artifacts":[]}', 'a', 'open', 60, strftime('%s','now') - 10)`,
+  );
+  d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('pexp2', 'arc-tui', 'pending')`);
+  d.close();
+  const r = await runTui(["answer", "pexp2", "x"]);
+  expect(r.exitCode).toBe(3);
+  const d2 = db();
+  const got = d2.query<{ state: string; answer: string | null; answered_by: string | null }, []>(
+    "SELECT state, answer, answered_by FROM hitl_prompts WHERE id='pexp2'",
+  ).get();
+  d2.close();
+  expect(got!.state).toBe("open");
+  expect(got!.answer).toBeNull();
+  expect(got!.answered_by).toBeNull();
+});
+
 test("list survives a malformed payload by surfacing _parse_error", async () => {
   insertPrompt("pgood");
   const d = db();
