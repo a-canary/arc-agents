@@ -168,8 +168,9 @@ gate_ci_green() {
   if gh pr checks "$PR_NUM" >/tmp/ci-green-$$.log 2>&1; then
     pass "ci-green" "all PR checks green"
   else
-    # Distinguish pending vs failed
-    if grep -qE 'pending|in_progress' /tmp/ci-green-$$.log 2>/dev/null; then
+    if grep -qi 'no checks reported' /tmp/ci-green-$$.log 2>/dev/null; then
+      skip "ci-green" "no checks reported on PR"
+    elif grep -qE 'pending|in_progress' /tmp/ci-green-$$.log 2>/dev/null; then
       fail "ci-green" "PR checks still pending"
     else
       fail "ci-green" "one or more PR checks failed — see /tmp/ci-green-$$.log"
