@@ -46,7 +46,7 @@ test("passes through when ARC_TASK_ID is unset (non-worker session)", () => {
 });
 
 test("blocks with checklist when task is in non-terminal state", () => {
-  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--class", "MVP", "--urgency", "nominal", "--title", "t"]).stdout);
   ledger(["update", c.id, "--state", "claimed"]);
   const r = runHook({ ARC_TASK_ID: c.id });
   expect(r.status).toBe(0);
@@ -57,7 +57,7 @@ test("blocks with checklist when task is in non-terminal state", () => {
 });
 
 test("passes through when task is merged", () => {
-  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--class", "MVP", "--urgency", "nominal", "--title", "t"]).stdout);
   ledger(["update", c.id, "--state", "merged", "--evidence", "ok", "--pr", "branch/x"]);
   const r = runHook({ ARC_TASK_ID: c.id });
   expect(r.status).toBe(0);
@@ -65,7 +65,7 @@ test("passes through when task is merged", () => {
 });
 
 test("passes through when task is blocked (decomposed)", () => {
-  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--class", "MVP", "--urgency", "nominal", "--title", "t"]).stdout);
   ledger(["decompose", c.id, "--child", "step a"]);
   const r = runHook({ ARC_TASK_ID: c.id });
   expect(r.status).toBe(0);
@@ -73,7 +73,7 @@ test("passes through when task is blocked (decomposed)", () => {
 });
 
 test("passes through when stop_hook_active is true (avoids infinite loop)", () => {
-  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--class", "MVP", "--urgency", "nominal", "--title", "t"]).stdout);
   ledger(["update", c.id, "--state", "claimed"]);
   const r = runHook({ ARC_TASK_ID: c.id }, '{"stop_hook_active": true}');
   expect(r.status).toBe(0);
