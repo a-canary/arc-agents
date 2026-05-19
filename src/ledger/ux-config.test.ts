@@ -8,6 +8,9 @@ import {
   loadConfig,
   validateHitlWrite,
   pickModulesForHitl,
+  aliveModulesDetail,
+  aliveModuleNames,
+  HEARTBEAT_DEFAULTS,
   type UxConfig,
 } from "./ux-config";
 
@@ -160,6 +163,43 @@ test("validateHitlWrite rejects unrenderable required artifact type", () => {
     artifacts: [{ type: "image/png" }],
   });
   expect(errs.some((e) => e.field === "artifacts")).toBe(true);
+});
+
+test("HEARTBEAT_DEFAULTS pins U-0009 numbers (60s/300s)", () => {
+  expect(HEARTBEAT_DEFAULTS.interval_sec).toBe(60);
+  expect(HEARTBEAT_DEFAULTS.stale_after_sec).toBe(300);
+});
+
+test("aliveModuleNames defaults to stale_after_sec=300 when caller omits arg", () => {
+  const db = freshDb();
+  beat(db, "fresh-mod", -100);     // 100s old → alive under 300s window
+  beat(db, "borderline-mod", -299); // just under threshold → alive
+  beat(db, "stale-mod", -400);     // 400s old → stale
+  const got = aliveModuleNames(db).sort();
+  expect(got).toEqual(["borderline-mod", "fresh-mod"]);
+});
+
+test("aliveModulesDetail returns module_name + last_beat + alive bool", () => {
+  const db = freshDb();
+  beat(db, "fresh-mod", -50);
+  beat(db, "stale-mod", -500);
+  const rows = aliveModulesDetail(db);
+  const byName = Object.fromEntries(rows.map((r) => [r.module_name, r]));
+  expect(byName["fresh-mod"]!.alive).toBe(true);
+  expect(byName["stale-mod"]!.alive).toBe(false);
+  expect(typeof byName["fresh-mod"]!.last_beat).toBe("number");
+  expect(typeof byName["stale-mod"]!.last_beat).toBe("number");
+});
+
+test("aliveModulesDetail honors --stale-after-sec override", () => {
+  const db = freshDb();
+  beat(db, "mod-a", -120); // 2min ago
+  // Tight 60s window → mod-a is stale.
+  const tight = aliveModulesDetail(db, 60);
+  expect(tight.find((r) => r.module_name === "mod-a")!.alive).toBe(false);
+  // Wide 1hr window → mod-a is alive.
+  const wide = aliveModulesDetail(db, 3600);
+  expect(wide.find((r) => r.module_name === "mod-a")!.alive).toBe(true);
 });
 
 test("validateHitlWrite accepts artifact with rasterize-png strategy", () => {

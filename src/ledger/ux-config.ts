@@ -54,9 +54,19 @@ export function loadConfig(path: string = defaultConfigPath()): UxConfig {
   return configSchema.parse(raw);
 }
 
-const STALE_SEC = 300;
+// Pinned per CHOICES U-0009. Schema mirrors these in system/config-schema.json.
+// interval_sec=60 (cheap, leaves headroom over arc-tui-loop's 30s tick).
+// stale_after_sec=300 (survives one missed beat + cron drift; bounces wedged
+// pushers before HITL retries pile up).
+export const HEARTBEAT_DEFAULTS = {
+  interval_sec: 60,
+  stale_after_sec: 300,
+} as const;
 
-export function aliveModuleNames(db: Database, staleSec = STALE_SEC): string[] {
+export function aliveModuleNames(
+  db: Database,
+  staleSec: number = HEARTBEAT_DEFAULTS.stale_after_sec,
+): string[] {
   const cutoff = Math.floor(Date.now() / 1000) - staleSec;
   return db
     .query<{ module_name: string }, [number]>(
@@ -64,6 +74,32 @@ export function aliveModuleNames(db: Database, staleSec = STALE_SEC): string[] {
     )
     .all(cutoff)
     .map((r) => r.module_name);
+}
+
+export type ModuleAliveness = {
+  module_name: string;
+  last_beat: number;
+  alive: boolean;
+};
+
+// SQL-joined alive set: every module that has ever beat, with current liveness
+// decision baked in. Backs `bin/ledger.ts list-alive-modules` (U-0009) so
+// callers stop reimplementing the threshold compare.
+export function aliveModulesDetail(
+  db: Database,
+  staleSec: number = HEARTBEAT_DEFAULTS.stale_after_sec,
+): ModuleAliveness[] {
+  const cutoff = Math.floor(Date.now() / 1000) - staleSec;
+  return db
+    .query<{ module_name: string; last_beat: number }, []>(
+      "SELECT module_name, last_beat FROM ux_heartbeats ORDER BY module_name",
+    )
+    .all()
+    .map((r) => ({
+      module_name: r.module_name,
+      last_beat: r.last_beat,
+      alive: r.last_beat > cutoff,
+    }));
 }
 
 export function pickModulesForHitl(db: Database, cfg: UxConfig, kind: HitlKind): UxModule[] {
