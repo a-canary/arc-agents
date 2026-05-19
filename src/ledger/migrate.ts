@@ -562,6 +562,34 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_issues_paused ON issues(paused) WHERE paused=1");
     },
   },
+  {
+    id: "013_event_kind_reclaimed",
+    // Expand issue_events.kind CHECK to include 'reclaimed', emitted by
+    // claim-stale-sweeper so operators have a forensic trail of which worker
+    // hung and for how long before its claim was reset.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE issue_events_new (
+          seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+          issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          ts         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          agent      TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','claimed','progress','blocked','unblocked',
+                                     'evidence','complete','failed','review','merged',
+                                     'budget-blocked','mirror-conflict','note','reclaimed')),
+          payload_md TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO issue_events_new (seq, issue_id, ts, agent, kind, payload_md)
+        SELECT seq, issue_id, ts, agent, kind, payload_md FROM issue_events;
+      `);
+      db.exec("DROP TABLE issue_events");
+      db.exec("ALTER TABLE issue_events_new RENAME TO issue_events");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

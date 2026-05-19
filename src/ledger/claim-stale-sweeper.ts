@@ -23,8 +23,8 @@ export function sweepStaleClaims(db: Database, opts: SweepOptions = {}): SweepRe
   const cutoff = now - staleAfterSec;
 
   const stale = db
-    .query<{ id: string }, [number]>(
-      `SELECT id FROM issues WHERE state='claimed' AND claimed_at IS NOT NULL AND claimed_at < ?`,
+    .query<{ id: string; claimed_by: string | null; claimed_at: number | null }, [number]>(
+      `SELECT id, claimed_by, claimed_at FROM issues WHERE state='claimed' AND claimed_at IS NOT NULL AND claimed_at < ?`,
     )
     .all(cutoff);
 
@@ -33,14 +33,17 @@ export function sweepStaleClaims(db: Database, opts: SweepOptions = {}): SweepRe
   const ids = stale.map((r) => r.id);
 
   db.transaction(() => {
-    for (const id of ids) {
+    for (const r of stale) {
+      const ageSec = r.claimed_at != null ? now - r.claimed_at : staleAfterSec;
+      const ageHr = (ageSec / 3600).toFixed(1);
+      const who = r.claimed_by ?? "unknown";
       db.run(
         `UPDATE issues SET state='ready', claimed_by=NULL, claimed_at=NULL, updated_at=strftime('%s','now') WHERE id=?`,
-        [id],
+        [r.id],
       );
       db.run(
-        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'claim-stale-sweeper', ?)`,
-        [id, `claim reset: stale > ${staleAfterSec}s`],
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'reclaimed', 'claim-stale-sweeper', ?)`,
+        [r.id, `stale claim by ${who} reset after ${ageHr}hr`],
       );
     }
   })();

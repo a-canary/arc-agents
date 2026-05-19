@@ -56,10 +56,24 @@ test("logs an audit event per reset", () => {
   ins(db, "x", "claimed", now - 7201);
   sweepStaleClaims(db, { now });
   const events = db.query<{ agent: string; payload_md: string }, []>(
-    "SELECT agent, payload_md FROM issue_events WHERE issue_id='x' AND kind='note'",
+    "SELECT agent, payload_md FROM issue_events WHERE issue_id='x' AND kind='reclaimed'",
   ).all();
   expect(events.length).toBe(1);
   expect(events[0]!.agent).toBe("claim-stale-sweeper");
+});
+
+test("reclaimed event records worker id and age", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "x", "claimed", now - 7201, "arc-worker-zz9");
+  sweepStaleClaims(db, { now });
+  const rows = db.query<{ payload_md: string }, []>(
+    "SELECT payload_md FROM issue_events WHERE issue_id='x' AND kind='reclaimed'",
+  ).all();
+  expect(rows.length).toBe(1);
+  const p = rows[0]!.payload_md;
+  expect(p).toContain("arc-worker-zz9");
+  expect(p).toMatch(/2\.0hr/);
 });
 
 test("no-op when nothing stale", () => {
