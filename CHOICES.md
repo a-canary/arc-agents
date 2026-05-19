@@ -69,6 +69,9 @@ Move files; subagents fix refs.
 ### G-0008: TypeScript Default
 TS over Python where reasonable. Bun runtime.
 
+### G-0009: Ledger State Reflects External Truth
+Terminal ledger states (`merged`) must correspond to verified external truth, not worker self-report. The bookie refuses `update --state merged` unless evidence_md contains a PR URL whose GitHub state is MERGED. Workers cannot fabricate progress by setting terminal state without the corresponding external event having actually happened. Applies to `merged` today; extensible to other terminal states (e.g. `failed` proof-of-evidence) later. Implementation: bookie pre-write check (PR #98).
+
 ---
 
 ## Skills
