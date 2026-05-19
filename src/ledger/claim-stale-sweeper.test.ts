@@ -124,3 +124,55 @@ test("orphan reset event payload labels it as orphan", () => {
   expect(rows.length).toBe(1);
   expect(rows[0]!.payload_md.toLowerCase()).toContain("orphan");
 });
+
+test("resets arctest-* claim older than 5min default", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "zombie", "claimed", now - 301, "arctest-abc-def123");
+  ins(db, "real", "claimed", now - 301, "arc-worker-xy12"); // not arctest, under 2hr → safe
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(1);
+  expect(r.ids).toEqual(["zombie"]);
+  expect(db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='zombie'").get()?.state).toBe("ready");
+  expect(db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='real'").get()?.state).toBe("claimed");
+});
+
+test("does not reset arctest-* claim younger than 5min", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "fresh-arctest", "claimed", now - 60, "arctest-abc-def123");
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(0);
+});
+
+test("arctest reset event payload labels it as arctest zombie", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "z", "claimed", now - 600, "arctest-xy-q9z000");
+  sweepStaleClaims(db, { now });
+  const rows = db.query<{ payload_md: string }, []>(
+    "SELECT payload_md FROM issue_events WHERE issue_id='z' AND kind='reclaimed'",
+  ).all();
+  expect(rows.length).toBe(1);
+  expect(rows[0]!.payload_md).toContain("arctest");
+  expect(rows[0]!.payload_md).toContain("arctest-xy-q9z000");
+});
+
+test("custom arctestStaleAfterSec respects override", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "z", "claimed", now - 120, "arctest-tight-001");
+  // Default 300s wouldn't catch a 120s-old claim; tighter 60s should.
+  const r = sweepStaleClaims(db, { now, arctestStaleAfterSec: 60 });
+  expect(r.reset).toBe(1);
+  expect(r.ids).toEqual(["z"]);
+});
+
+test("non-arctest claim under 2hr threshold is not reset even if older than 5min", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  // 1hr old, real worker — must NOT be swept by the arctest path
+  ins(db, "real-long-job", "claimed", now - 3600, "arc-worker-real");
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(0);
+});
