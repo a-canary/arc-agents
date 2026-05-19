@@ -1,0 +1,83 @@
+{
+  "$schema": "https://json-schema.org/draft/2020-12/schema",
+  "$id": "https://github.com/arc-agents/arc-agents/system/config-schema.json",
+  "title": "arc config.yaml",
+  "description": "Declarative contract for ~/.config/arc/config.yaml. Per CHOICES U-0005: config declares what should exist; ledger tracks liveness via heartbeats. No transport, auth, or endpoint fields — those are the module's internal business. See docs/adr/0002-ux-module-contract.md.",
+  "type": "object",
+  "additionalProperties": false,
+  "required": ["ux_modules"],
+  "properties": {
+    "ux_modules": {
+      "type": "array",
+      "description": "Registered UX modules fulfilling the UX Module Contract.",
+      "items": { "$ref": "#/$defs/uxModule" }
+    }
+  },
+  "$defs": {
+    "uxModule": {
+      "type": "object",
+      "additionalProperties": false,
+      "required": ["name", "implements", "renders", "can_retract", "cli"],
+      "properties": {
+        "name": {
+          "type": "string",
+          "description": "Unique module id (e.g. arc-webui, arc-tui, arc-discord). Used as module_name in hitl_deliveries.",
+          "pattern": "^[a-z][a-z0-9-]*$"
+        },
+        "implements": {
+          "type": "array",
+          "description": "UX Module Contract verbs the module implements.",
+          "items": {
+            "enum": ["ask_text", "ask_choice", "ask_confirm", "notify", "show_artifact"]
+          },
+          "uniqueItems": true,
+          "minItems": 1
+        },
+        "renders": {
+          "type": "object",
+          "description": "Per-artifact-type render strategy. Keys are canonical artifact mime-like types (CHOICES U-0006). Values are render strategies — 'unsupported' means the bookie will skip delivery to this module for that artifact type.",
+          "additionalProperties": false,
+          "properties": {
+            "text/markdown":     { "$ref": "#/$defs/renderStrategy" },
+            "text/diff":         { "$ref": "#/$defs/renderStrategy" },
+            "chart/vega-lite":   { "$ref": "#/$defs/renderStrategy" },
+            "diagram/mermaid":   { "$ref": "#/$defs/renderStrategy" },
+            "image/png":         { "$ref": "#/$defs/renderStrategy" },
+            "table/rows":        { "$ref": "#/$defs/renderStrategy" }
+          }
+        },
+        "can_retract": {
+          "type": "boolean",
+          "description": "True if the module can undo a render (edit/delete external message, hide UI element). Email-style modules set false; the bookie will mark loser deliveries retracted without invoking retract."
+        },
+        "cli": {
+          "type": "string",
+          "description": "Binary on PATH that implements the module entrypoint (render/retract operations on hitl_deliveries rows)."
+        },
+        "pusher": {
+          "type": ["string", "null"],
+          "description": "Optional pusher daemon binary for async mediums (Discord, email). Null/omitted for sync mediums (TUI, webui) that poll the ledger directly."
+        },
+        "heartbeat": {
+          "type": "object",
+          "additionalProperties": false,
+          "required": ["interval_sec", "stale_after_sec"],
+          "properties": {
+            "interval_sec":     { "type": "integer", "minimum": 1 },
+            "stale_after_sec":  { "type": "integer", "minimum": 1 }
+          }
+        }
+      }
+    },
+    "renderStrategy": {
+      "enum": [
+        "native",
+        "rasterize-png",
+        "ascii-degrade",
+        "html-degrade",
+        "truncate-codeblock",
+        "unsupported"
+      ]
+    }
+  }
+}
