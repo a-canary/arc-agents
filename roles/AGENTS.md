@@ -24,7 +24,7 @@ When a worker hits a decision outside its CHOICES scope, a risky/irreversible ac
 
 The `~/agents/` predecessor wrote `outbox/concern-*.md` files for this. In arc-agents the mechanism is the ledger:
 
-1. Worker writes N HITL child rows via bookie (recursion allowed, no fanout cap — but if you're past ~5 children the task probably isn't atomic; re-shape instead).
+1. Worker writes N HITL child rows via bookie (recursion allowed, fanout cap = 5 — if you need more, the task isn't atomic; re-shape into an umbrella child instead).
 2. Worker sets `parent.blocked_by = [childIds]`, flips `parent.state = blocked`.
 3. Interviewer (or `class=taste` worker) emits a `hitl_prompts` row if the decision is user-facing.
 
