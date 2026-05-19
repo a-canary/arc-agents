@@ -205,6 +205,70 @@ test("stale heartbeat (>300s) is treated as not alive", async () => {
   expect(r.exitCode).toBe(3);
 });
 
+test("reply inherits thread_id+source_module from ARC_TASK_ID and fans out", async () => {
+  // Seed a chat_in row (kind=event, source_module=arc-chat) and an active subscription.
+  const tid = "00000000-0000-4000-8000-000000000001";
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, thread_id, source_module)
+     VALUES ('chat-seed', 'arc-agents', 'hi', 'hi', '', 'interactive', 'claimed', 'event', ?, 'arc-chat')`,
+    [tid],
+  );
+  db.run(
+    `INSERT INTO thread_subscriptions (thread_id, module, external_ref, state)
+     VALUES (?, 'arc-chat', 'tail-1', 'active')`,
+    [tid],
+  );
+  db.close();
+
+  const r = await runUx(["reply", "--message", "hello back"], { ARC_TASK_ID: "chat-seed" });
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.thread_id).toBe(tid);
+  expect(out.source_module).toBe("arc-chat");
+  expect(out.fanout.inserted).toBe(1);
+
+  const replies = rows<{ id: string; kind: string; source_module: string; thread_id: string; body: string }>(
+    "SELECT id, kind, source_module, thread_id, body_md AS body FROM issues WHERE kind='reply'",
+  );
+  expect(replies.length).toBe(1);
+  expect(replies[0]!.source_module).toBe("arc-chat");
+  expect(replies[0]!.thread_id).toBe(tid);
+  expect(replies[0]!.body).toBe("hello back");
+
+  const dels = rows<{ module: string; state: string; target_id: string }>(
+    "SELECT module, state, target_id FROM deliveries WHERE target_kind='reply'",
+  );
+  expect(dels.length).toBe(1);
+  expect(dels[0]!.module).toBe("arc-chat");
+  expect(dels[0]!.state).toBe("pending");
+  expect(dels[0]!.target_id).toBe(out.id);
+});
+
+test("reply --thread/--source-module overrides work without ARC_TASK_ID", async () => {
+  const tid = "00000000-0000-4000-8000-000000000002";
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO thread_subscriptions (thread_id, module, external_ref, state)
+     VALUES (?, 'arc-chat', 'tail-x', 'active')`,
+    [tid],
+  );
+  db.close();
+  const r = await runUx([
+    "reply", "--message", "yo", "--thread", tid, "--source-module", "arc-chat",
+  ]);
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.thread_id).toBe(tid);
+  expect(out.fanout.inserted).toBe(1);
+});
+
+test("reply with no thread context exits 2", async () => {
+  const r = await runUx(["reply", "--message", "lonely"]);
+  expect(r.exitCode).toBe(2);
+  expect(r.stderr.toString()).toContain("no thread");
+});
+
 test("anchor captured for taste prompts when run inside a git repo", async () => {
   heartbeat("arc-tui");
   const r = await runUx([

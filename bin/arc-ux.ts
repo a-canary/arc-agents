@@ -21,10 +21,16 @@
 //             4 worker tried class=impact, 5 timed out waiting (impact only).
 
 import { spawnSync } from "child_process";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { open } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { parsePayload, type HitlKind } from "../src/ledger/hitl-schemas";
 import { loadConfig, pickModulesForHitl, validateHitlWrite } from "../src/ledger/ux-config";
+import { fanout } from "../src/arc-ux/deliveries";
+
+const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
+const LEDGER_BIN = join(REPO, "bin", "ledger.ts");
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -312,6 +318,61 @@ switch (cmd) {
     commonAsk("show_artifact", { caption, artifacts });
     break;
   }
+  case "reply": {
+    // arc-ux reply --message "..." [--thread T] [--source-module M] [--title "..."]
+    // Inherits thread_id + source_module from the active claim (ARC_TASK_ID)
+    // unless overridden. Inserts kind=reply row via ledger CLI, then fans out
+    // deliveries to active subscriptions on the thread.
+    const message = flag("message") ?? die(2, "--message required");
+    let thread = flag("thread") ?? null;
+    let sourceModule = flag("source-module") ?? null;
+    const titleFlag = flag("title");
+
+    if ((!thread || !sourceModule) && process.env.ARC_TASK_ID) {
+      const db = open(process.env.ARC_LEDGER_DB);
+      const row = db
+        .query<{ thread_id: string | null; source_module: string | null }, [string]>(
+          "SELECT thread_id, source_module FROM issues WHERE id=?",
+        )
+        .get(process.env.ARC_TASK_ID);
+      if (row) {
+        if (!thread) thread = row.thread_id;
+        if (!sourceModule) sourceModule = row.source_module;
+      }
+    }
+
+    if (!thread) die(2, "no thread: pass --thread T or run inside a claim whose row has thread_id");
+    if (!sourceModule) die(2, "no source_module: pass --source-module M or run inside a claim whose row has source_module");
+
+    const title = titleFlag ?? (message.length > 80 ? message.slice(0, 77) + "..." : message);
+    const dbFlag = process.env.ARC_LEDGER_DB ? ["--db", process.env.ARC_LEDGER_DB] : [];
+    const r = spawnSync(
+      "bun",
+      [
+        LEDGER_BIN, "create",
+        "--kind", "reply",
+        "--type", "interactive",
+        "--source-module", sourceModule,
+        "--title", title,
+        "--body", message,
+        "--thread", thread,
+        "--agent", process.env.ARC_ROLE ?? "arc-ux",
+        ...dbFlag,
+      ],
+      { encoding: "utf8" },
+    );
+    if (r.status !== 0) die(3, `ledger create failed: ${r.stderr.trim()}`);
+    let replyId: string | undefined;
+    try { replyId = JSON.parse(r.stdout).id; } catch { /* ignore */ }
+    if (!replyId) die(3, `ledger create returned no id: ${r.stdout}`);
+
+    const db = open(process.env.ARC_LEDGER_DB);
+    migrate(db);
+    const fanRes = fanout(db, { target_kind: "reply", target_id: replyId, thread_id: thread });
+    process.stdout.write(JSON.stringify({ id: replyId, thread_id: thread, source_module: sourceModule, fanout: fanRes }) + "\n");
+    break;
+  }
+
   default:
-    die(2, `usage: arc-ux <ask-text|ask-choice|ask-confirm|notify|show-artifact> [flags]`);
+    die(2, `usage: arc-ux <ask-text|ask-choice|ask-confirm|notify|show-artifact|reply> [flags]`);
 }
