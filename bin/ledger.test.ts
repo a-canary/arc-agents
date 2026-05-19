@@ -250,6 +250,76 @@ test("claim picks HITL before mvp via priority sort", async () => {
   }
 });
 
+test("create --class --urgency writes ADR 0005 fields (no longer silently class_unset)", async () => {
+  // Before this fix: every `ledger create` call silently defaulted to
+  // class='class_unset' because the INSERT omitted the column. That meant
+  // every chat-in row, every bookie-spawned task, and every seed-helper task
+  // hit the triage backlog. The CLI must accept --class/--urgency and pass
+  // them through, or the entire ADR 0005 priority model is dead on arrival.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(
+      db,
+      "create",
+      "--kind",
+      "task",
+      "--type",
+      "mvp",
+      "--title",
+      "fix the thing",
+      "--class",
+      "BUG",
+      "--urgency",
+      "interactive",
+    )) as { id: string };
+    const shown = (await run(db, "show", c.id)) as {
+      issue: { class: string; urgency: string };
+    };
+    expect(shown.issue.class).toBe("BUG");
+    expect(shown.issue.urgency).toBe("interactive");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose children inherit parent's class+urgency (not class_unset)", async () => {
+  // HITL children spawned by AFK decomposition silently went to class_unset
+  // because the decompose INSERT also omitted the columns. That dumped every
+  // decomposed sub-task into triage. Children should inherit the parent's
+  // class+urgency so a BUG/interactive decomposition stays BUG/interactive.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const p = (await run(
+      db,
+      "create",
+      "--kind",
+      "task",
+      "--type",
+      "mvp",
+      "--title",
+      "parent",
+      "--class",
+      "BUG",
+      "--urgency",
+      "interactive",
+    )) as { id: string };
+    const dec = (await run(db, "decompose", p.id, "--child", "kid-a", "--child", "kid-b")) as {
+      children: { id: string }[];
+    };
+    for (const k of dec.children) {
+      const shown = (await run(db, "show", k.id)) as {
+        issue: { class: string; urgency: string };
+      };
+      expect(shown.issue.class).toBe("BUG");
+      expect(shown.issue.urgency).toBe("interactive");
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test("tick reports reclaimed stale claims", async () => {
   const { db, cleanup } = freshDb();
   try {

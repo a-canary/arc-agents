@@ -62,6 +62,8 @@ export type CreateInput = {
   acceptance?: string;
   parent?: string | null;
   blockedBy?: string | null;
+  class?: string;
+  urgency?: string;
 };
 
 export type ValidationError = { field: string; message: string };
@@ -87,6 +89,15 @@ export function validateCreate(input: CreateInput, positional: string[] = []): V
   }
   if (input.blockedBy && !looksLikeJsonArray(input.blockedBy)) {
     errs.push({ field: "--blocked-by", message: "must be a JSON array of issue ids, e.g. '[\"i-foo\"]'" });
+  }
+  // ADR 0005: --class / --urgency are optional at the CLI layer (schema
+  // defaults class_unset / nominal for backwards compat). When provided,
+  // they must be valid enum members.
+  if (input.class !== undefined && !CLASS_VALUES.includes(input.class as Class)) {
+    errs.push({ field: "--class", message: `must be one of: ${CLASS_VALUES.join(", ")}` });
+  }
+  if (input.urgency !== undefined && !URGENCY_VALUES.includes(input.urgency as Urgency)) {
+    errs.push({ field: "--urgency", message: `must be one of: ${URGENCY_VALUES.join(", ")}` });
   }
 
   return errs;
