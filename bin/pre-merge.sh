@@ -9,10 +9,11 @@
 #   1. branch-clean   — no uncommitted changes, working tree clean
 #   2. rebased        — head is rebased on $BASE (no merge commits in branch)
 #   3. author-lint    — every commit author matches I-0006 (a-canary)
-#   4. tdd-green      — colocated *.test.ts for every prod .ts in diff
-#   5. todo-sweep     — TODO/FIXME/XXX reference a ledger task or PR
-#   6. merge-gate     — fixture + typecheck + bun test (bin/merge-gate.sh)
-#   7. ci-green       — gh pr checks <num> all PASS (if --pr passed)
+#   4. slice-guard    — G-0005 PR-scope: ≤2000 lines + ≤1 top-level area
+#   5. tdd-green      — colocated *.test.ts for every prod .ts in diff
+#   6. todo-sweep     — TODO/FIXME/XXX reference a ledger task or PR
+#   7. merge-gate     — fixture + typecheck + bun test (bin/merge-gate.sh)
+#   8. ci-green       — gh pr checks <num> all PASS (if --pr passed)
 #
 # Usage:
 #   bin/pre-merge.sh [--base <ref>] [--pr <num>] [--project <path>]
@@ -111,9 +112,25 @@ gate_author_lint() {
   pass "author-lint" "all commits authored by $expected_name"
 }
 
-# Gate 4: tdd-green
+# Gate 4: slice-guard (G-0005 PR-scope)
+gate_slice_guard() {
+  log "Gate 4: slice-guard"
+  if [ ! -x "$BIN/slice-guard.sh" ]; then
+    skip "slice-guard" "bin/slice-guard.sh not found"
+    return
+  fi
+  if "$BIN/slice-guard.sh" --base "$BASE" --project "$PROJECT" >/tmp/slice-guard-$$.log 2>&1; then
+    pass "slice-guard" "PR within G-0005 caps"
+  else
+    local detail
+    detail=$(grep -m1 -oP '"detail":"\K[^"]+' /tmp/slice-guard-$$.log 2>/dev/null || echo "oversized")
+    fail "slice-guard" "$detail"
+  fi
+}
+
+# Gate 5: tdd-green
 gate_tdd_green() {
-  log "Gate 4: tdd-green"
+  log "Gate 5: tdd-green"
   if [ ! -x "$BIN/tdd-green.sh" ]; then
     skip "tdd-green" "bin/tdd-green.sh not found"
     return
@@ -125,9 +142,9 @@ gate_tdd_green() {
   fi
 }
 
-# Gate 5: todo-sweep
+# Gate 6: todo-sweep
 gate_todo_sweep() {
-  log "Gate 5: todo-sweep"
+  log "Gate 6: todo-sweep"
   if [ ! -x "$BIN/todo-sweep.sh" ]; then
     skip "todo-sweep" "bin/todo-sweep.sh not found"
     return
@@ -139,9 +156,9 @@ gate_todo_sweep() {
   fi
 }
 
-# Gate 6: merge-gate (fixture + typecheck + bun test)
+# Gate 7: merge-gate (fixture + typecheck + bun test)
 gate_merge_gate() {
-  log "Gate 6: merge-gate (fixture+typecheck+test)"
+  log "Gate 7: merge-gate (fixture+typecheck+test)"
   if [ ! -x "$BIN/merge-gate.sh" ]; then
     fail "merge-gate" "bin/merge-gate.sh not found"
     return
@@ -153,9 +170,9 @@ gate_merge_gate() {
   fi
 }
 
-# Gate 7: ci-green (gh pr checks)
+# Gate 8: ci-green (gh pr checks)
 gate_ci_green() {
-  log "Gate 7: ci-green"
+  log "Gate 8: ci-green"
   if [ -z "$PR_NUM" ]; then
     skip "ci-green" "no --pr given"
     return
@@ -183,6 +200,7 @@ log "Starting pre-merge gate project=$PROJECT base=$BASE pr=${PR_NUM:-<none>}"
 gate_branch_clean
 gate_rebased
 gate_author_lint
+gate_slice_guard
 gate_tdd_green
 gate_todo_sweep
 gate_merge_gate
