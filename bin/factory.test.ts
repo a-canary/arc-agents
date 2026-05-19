@@ -166,6 +166,44 @@ test("factory --metrics prints snapshot with all 5 fields", () => {
   expect(id1).toBeTruthy();
 });
 
+test("worker-shell.sh refuses arctest-* claim against canon ledger (no ARC_LEDGER_DB)", () => {
+  const shell = join(REPO, "bin", "worker-shell.sh");
+  // No ARC_LEDGER_DB → script computes EFFECTIVE_DB = $HOME/vault/ledger.db
+  // (canon). With WORKER=arctest-*, guard must refuse before any ledger write.
+  // Strip ARC_LEDGER_DB out of process.env explicitly.
+  const env: Record<string, string> = {};
+  for (const [k, v] of Object.entries(process.env)) {
+    if (k !== "ARC_LEDGER_DB" && v !== undefined) env[k] = v;
+  }
+  env.CLAUDE_BIN = fakeClaude;
+  const r = spawnSync("bash", [shell, "arctest-guard-canon"], { encoding: "utf8", env });
+  expect(r.status).toBe(2);
+  expect(r.stderr).toContain("arctest-claim-against-canon-refused");
+  // No stdout claim payload — the guard fires before ledger claim runs.
+  expect(r.stdout).toBe("");
+});
+
+test("worker-shell.sh refuses arctest-* claim when ARC_LEDGER_DB explicitly points at canon", () => {
+  const shell = join(REPO, "bin", "worker-shell.sh");
+  const canonDb = `${process.env.HOME}/vault/ledger.db`;
+  const env = { ...process.env, ARC_LEDGER_DB: canonDb, CLAUDE_BIN: fakeClaude };
+  const r = spawnSync("bash", [shell, "arctest-guard-explicit"], { encoding: "utf8", env });
+  expect(r.status).toBe(2);
+  expect(r.stderr).toContain("arctest-claim-against-canon-refused");
+});
+
+test("worker-shell.sh allows arctest-* claim against a non-canon (test) ledger", () => {
+  // This is the happy path for tests: arctest worker + ARC_LEDGER_DB set to
+  // a tmp file. Guard must not fire; the claim path runs and (with no tasks)
+  // returns claimed=null via the normal race-lost-or-empty branch.
+  const shell = join(REPO, "bin", "worker-shell.sh");
+  const env = { ...process.env, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude };
+  const r = spawnSync("bash", [shell, "arctest-guard-noncanon"], { encoding: "utf8", env });
+  expect(r.status).toBe(0);
+  expect(r.stderr).not.toContain("arctest-claim-against-canon-refused");
+  expect(r.stdout).toContain("race-lost-or-empty");
+});
+
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
