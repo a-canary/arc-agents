@@ -1,6 +1,6 @@
 import { test, expect } from "bun:test";
 import { $ } from "bun";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, statSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -282,6 +282,155 @@ test("claim + spawn-ready surface event-kind rows (ADR 0005 allowlist)", async (
     expect(claimed.claimed).toBe(ev.id);
   } finally {
     cleanup();
+  }
+});
+
+test("event verb appends row visible via show", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "ev")) as {
+      id: string;
+    };
+    const r = (await run(db, "event", c.id, "note", "hello world")) as {
+      logged: boolean;
+    };
+    expect(r.logged).toBe(true);
+    const shown = (await run(db, "show", c.id)) as {
+      events: { kind: string; payload_md: string }[];
+    };
+    const note = shown.events.find((e) => e.kind === "note");
+    expect(note?.payload_md).toBe("hello world");
+  } finally {
+    cleanup();
+  }
+});
+
+test("event verb rejects when id is missing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await runRaw(db, "event");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/id required/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("compact archives merged rows past 30-day cutoff", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const old = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "old")) as {
+      id: string;
+    };
+    const fresh = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "fresh")) as {
+      id: string;
+    };
+    await run(db, "update", old.id, "--state", "merged");
+    await run(db, "update", fresh.id, "--state", "merged");
+    // Backdate `old` past 30 days; leave `fresh` at now.
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(db);
+    raw.run(`UPDATE issues SET updated_at = strftime('%s','now') - 31*24*3600 WHERE id=?`, [old.id]);
+    raw.close();
+    const r = (await run(db, "compact")) as { archived: number };
+    expect(r.archived).toBe(1);
+    const r2 = await runRaw(db, "show", old.id);
+    expect(r2.exitCode).not.toBe(0);
+    const stillThere = (await run(db, "show", fresh.id)) as { issue: { id: string } };
+    expect(stillThere.issue.id).toBe(fresh.id);
+  } finally {
+    cleanup();
+  }
+});
+
+test("compact on empty db is a no-op", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "compact")) as { archived: number };
+    expect(r.archived).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("vacuum on empty db succeeds", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "vacuum")) as { vacuumed: boolean };
+    expect(r.vacuumed).toBe(true);
+    // File still exists and readable.
+    expect(statSync(db).size).toBeGreaterThan(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("hitl emit class=taste without --recommended is rejected", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await runRaw(
+      db,
+      "hitl", "emit",
+      "--class", "taste",
+      "--kind", "ask_confirm",
+      "--prompt", "ok?",
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/recommended/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("hitl emit fans out to alive ux modules", async () => {
+  const { db, cleanup } = freshDb();
+  const dir = mkdtempSync(join(tmpdir(), "arc-cfg-"));
+  const cfgPath = join(dir, "config.yaml");
+  writeFileSync(
+    cfgPath,
+    `modules:\n  test-ui:\n    implements:\n      - ask_confirm\n    can_retract: true\n`,
+  );
+  try {
+    await run(db, "init");
+    // Mark module alive via heartbeat row.
+    const { Database } = await import("bun:sqlite");
+    const raw = new Database(db);
+    raw.run(`INSERT INTO ux_heartbeats (module_name, last_beat) VALUES (?, strftime('%s','now'))`, [
+      "test-ui",
+    ]);
+    raw.close();
+    const r = await $`bun ${cli} hitl emit --class impact --kind ask_confirm --prompt ${"go?"} --db ${db}`
+      .env({ ...process.env, ARC_CONFIG: cfgPath })
+      .quiet();
+    const out = JSON.parse(r.stdout.toString()) as {
+      id: string;
+      deliveries: string[];
+    };
+    expect(out.deliveries).toEqual(["test-ui"]);
+    const raw2 = new Database(db);
+    const promptRow = raw2
+      .query<{ kind: string; class: string }, [string]>(
+        "SELECT kind, class FROM hitl_prompts WHERE id=?",
+      )
+      .get(out.id);
+    expect(promptRow?.kind).toBe("ask_confirm");
+    expect(promptRow?.class).toBe("impact");
+    const deliv = raw2
+      .query<{ module_name: string; state: string }, [string]>(
+        "SELECT module_name, state FROM hitl_deliveries WHERE prompt_id=?",
+      )
+      .all(out.id);
+    expect(deliv).toEqual([{ module_name: "test-ui", state: "pending" }]);
+    raw2.close();
+  } finally {
+    cleanup();
+    rmSync(dir, { recursive: true, force: true });
   }
 });
 
