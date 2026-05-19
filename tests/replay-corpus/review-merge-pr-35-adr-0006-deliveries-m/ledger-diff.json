@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 933,
+      "ts": 1779174305,
+      "agent": "arc-worker-a-8ppsym",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-8ppsym",
+      "issue_id": "review-merge-pr-35-adr-0006-deliveries-m"
+    }
+  ]
+}

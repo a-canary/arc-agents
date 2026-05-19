@@ -1,0 +1,246 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "fix-typecheck-regression-in-bin-arc-tui-",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "fix-typecheck-regression-in-bin-arc-tui-",
+    "task_kind": "task",
+    "task_type": "mvp",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-en68pt",
+    "claimed_at": 1779172987,
+    "terminated_at": 1779172987,
+    "terminal_state": "merged",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": "worker/fix-arc-tui-typecheck"
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 38,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "c8fbeb8fcde8060fd89895b5e81990818fd0a13140f1935a6ef072a6879762a6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "9e9adf2e09db4040d31286fa7e686057a6bd7680e4a92010623a6636bdc492c9",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Read",
+        "input_sha256": "bbeffd3191157e33a4292c017055ec7eff1f9e64dafd24052df451a510c88e8c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "f174164bd19ed853c5d72972d1b75cdf19532336fb76aabf4089302063b6af54",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Read",
+        "input_sha256": "3987b2f2e972b8270398fefe9992cd1c7accc25b6ad9f2f4a41085f2b4d24346",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "451cf1ad7d6f8be1606b7a1573b91d068db236b8ccc2ecc490e706def7ab50cd",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Bash",
+        "input_sha256": "909448a29bf04a015a6fee2dc6d178cd5dfcd5fa942fa8e75ddf18c8d77bd0a1",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Bash",
+        "input_sha256": "a4204de0fa11ec4e787a329323ecd8e6e7199a478646ebcae3879d353a49554b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Bash",
+        "input_sha256": "51870ef78bba940d5cd2d2b9b26ab4757657f4ac6a74898064600cbceaa4c059",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Edit",
+        "input_sha256": "db156a456772b005add0b4a56da953c04574b2fe911bbf825bd2ea569bba60e1",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Read",
+        "input_sha256": "2443a08a920ebe8fbd9ad487afec39106be49bdee1abd08eede5e56b8746a53e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Edit",
+        "input_sha256": "db156a456772b005add0b4a56da953c04574b2fe911bbf825bd2ea569bba60e1",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Bash",
+        "input_sha256": "7ef6530813fc62760eac212564abe289c190d092fce8f2c346b22d23437c272f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Bash",
+        "input_sha256": "93d647ae22c2ca21bb44c65007e73ed743558478e13c96e354254e5454736195",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Bash",
+        "input_sha256": "70cdd60476f0f658d94b5857bf20dc99980ab5130433a2ed13fbfc35cbd04ba4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "1c0700b696c1bb266df9b437344b50bcb63b320d94ee504785bfe5330e3ed3ab",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Bash",
+        "input_sha256": "81aa639fa667afacb01c22f5be6069436e092e3b42e7cb187558d6d0cd718db3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "22c599c1c9b2fe4e43255a9b3a8eb6a3caeb4a42f2a187e888dda41acf1fb3d3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Write",
+        "input_sha256": "7cd288d211480f16dc8c90cfc966d6257f4f88174f90405acdfc64c320927b3b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Bash",
+        "input_sha256": "3ffb8039805c7a0fbca852c7d1f158fe9f177b313f0cf829795029de8e00fb99",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 20,
+        "tool": "Bash",
+        "input_sha256": "a08ad7ae0878acb139b52e5d458c629550468213deac9c6d5aeb1fa795cb7cf7",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 21,
+        "tool": "Agent",
+        "input_sha256": "e19e5c4318ebd9cc975fdf849963843c04d2c3965b4a2915210f6cabc644416b",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 21,
+        "subagent_type": "bookie",
+        "purpose": "Mark task merged"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "fix-typecheck-regression-in-bin-arc-tui-",
+        "event_kind": "claimed",
+        "payload_md_sha256": "0eb90cb0ed644731228c2b810ee773256e487fdc59e017bc45cae0dba3728349",
+        "payload_md_preview": "claimed by arc-worker-a-en68pt"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "fix-typecheck-regression-in-bin-arc-tui-",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/27"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 172,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session f2bd4420-2336-40ac-8734-1b87b12e52f4.jsonl. evidence: PR #27 (commit 8dfec84): added options:[] to ask_text payload in bin/arc-tui.test.ts:126; bun run typecheck exits 0; bun test bin/arc-tui.test.ts 7/7 pass"
+  }
+}

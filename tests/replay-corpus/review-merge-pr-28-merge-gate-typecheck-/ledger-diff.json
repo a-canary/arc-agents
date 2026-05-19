@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 874,
+      "ts": 1779173307,
+      "agent": "arc-worker-a-w6awzi",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-w6awzi",
+      "issue_id": "review-merge-pr-28-merge-gate-typecheck-"
+    }
+  ]
+}

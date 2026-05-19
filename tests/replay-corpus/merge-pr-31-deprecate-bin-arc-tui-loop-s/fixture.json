@@ -1,0 +1,141 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "merge-pr-31-deprecate-bin-arc-tui-loop-s",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "merge-pr-31-deprecate-bin-arc-tui-loop-s",
+    "task_kind": "task",
+    "task_type": "quality",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-et56vc",
+    "claimed_at": 1779174005,
+    "terminated_at": 1779174005,
+    "terminal_state": "blocked",
+    "parent_id": "retire-bin-arc-tui-loop-sh-shim",
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 13,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "4c583cb7fe9a90f1437e43080656dd8d7cae3449824514fe7f2e04489f22edfa",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "574c580a9160881454daadb8be29818f414a1fddab5a8d74e74d936175740644",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "e6f5307ba8574b8a8611f9fd284f3e2fd61e8c280309136a949f2b61466e568b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "e3832483e5eabe0f70b6a463b36b2a77168271ae99e2f0df319a748c99eb9686",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "1c94a4f9213c8106870bcc4078ae8944be9b5930d708f6b1f60a552c4c00cdec",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "f91e3f98f30c041d3b90e017e5f73a552658ce6de0404cf806a34f585df5d631",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Agent",
+        "input_sha256": "b37413a58ecd6117d602733bbda10055b8e9ad1c59cbaf3c4799b96533648fc3",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 6,
+        "subagent_type": "bookie",
+        "purpose": "Decompose to HITL child"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "merge-pr-31-deprecate-bin-arc-tui-loop-s",
+        "event_kind": "claimed",
+        "payload_md_sha256": "03f830e4a782b0feb50a512fe402de656cf8919abd9c11b636a0ad7d287d4b2c",
+        "payload_md_preview": "claimed by arc-worker-a-et56vc"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "merge-pr-31-deprecate-bin-arc-tui-loop-s",
+        "from": "claimed",
+        "to": "blocked"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": null
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 78,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 913b3c5f-c36c-4edd-a4f2-a7d22ab7dea9.jsonl. evidence: "
+  }
+}

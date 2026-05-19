@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 939,
+      "ts": 1779174377,
+      "agent": "arc-worker-a-qzxx8h",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-qzxx8h",
+      "issue_id": "rebase-merge-pr-16-retire-bin-launch-ts"
+    }
+  ]
+}

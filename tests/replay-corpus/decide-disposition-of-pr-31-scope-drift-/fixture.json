@@ -1,0 +1,120 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "decide-disposition-of-pr-31-scope-drift-",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "decide-disposition-of-pr-31-scope-drift-",
+    "task_kind": "task",
+    "task_type": "quality",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-qi6mga",
+    "claimed_at": 1779174315,
+    "terminated_at": 1779174315,
+    "terminal_state": "blocked",
+    "parent_id": "merge-pr-31-deprecate-bin-arc-tui-loop-s",
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 7,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "d8e86a34420016a79f32025073924ec97216eff8f61b57ffdc384fd7d3fcb9a2",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "293541dabc82705413d39f14b69f3093cdb2a9bee251ae89e451ea60041ef2f8",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "037e23304b4e3834479f6c8db2a5b478a3864f36f826bbb0d13760ae046802e3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Agent",
+        "input_sha256": "b92db63a7d73632b3fb0f4c3010aa33a435897fe8a394f2f7df6ff844ce090d1",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 3,
+        "subagent_type": "bookie",
+        "purpose": "Emit hitl_prompts + block on PR31"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "decide-disposition-of-pr-31-scope-drift-",
+        "event_kind": "claimed",
+        "payload_md_sha256": "6e2d8f9d751499e0c501b7fad22ce9bfc6cdb51f0ed2d017b37c2f74eac108a0",
+        "payload_md_preview": "claimed by arc-worker-a-qi6mga"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "decide-disposition-of-pr-31-scope-drift-",
+        "from": "claimed",
+        "to": "blocked"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": null
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 61,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 7a611143-d4eb-40a2-a790-1764cbc90109.jsonl. evidence: awaiting human disposition; hitl prompt hitl-mpcahes6-xesdrw emitted. Parent merge-pr-31-deprecate-bin-arc-tui-loop-s remains blocked on this row."
+  }
+}

@@ -1,0 +1,30 @@
+[
+  {
+    "id": "g-0007-no-symlinks-migration-lint",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "G-0007 no-symlinks migration lint",
+    "body_md": "G-0007 forbids symlinks during migrations. Add a CI/local lint: bin/lint-migrations.sh greps src/ledger/migrate.ts and any migration files for `symlink(`, `symlinkSync`, `ln -s`. Fail loud. Wire into bin/merge-gate.sh.",
+    "acceptance_md": "bin/lint-migrations.sh exits 1 on a fixture that contains symlinkSync; exits 0 on clean tree; merge-gate invokes it.",
+    "type": "quality",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": "[\"review-merge-pr-24-g-0007-no-symlinks-mi\"]",
+    "worktree_path": "/home/aaron/worktrees/arc-agents-g-0007-no-symlinks-lint",
+    "branch": "worker/g-0007-no-symlinks-lint",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/24",
+    "evidence_md": "Merged to main as 589e208 on 2026-05-19; HITL review child merged.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779171118,
+    "updated_at": 1779172321,
+    "claimed_at": 1779172287,
+    "claimed_by": "arc-worker-a-a3yn9q"
+  }
+]

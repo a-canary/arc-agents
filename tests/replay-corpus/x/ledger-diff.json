@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 848,
+      "ts": 1779172940,
+      "agent": "arc-worker-a-eh1ebv",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-eh1ebv",
+      "issue_id": "x"
+    }
+  ]
+}

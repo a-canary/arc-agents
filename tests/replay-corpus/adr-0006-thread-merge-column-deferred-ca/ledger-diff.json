@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 834,
+      "ts": 1779171941,
+      "agent": "arc-worker-a-9x28tq",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-9x28tq",
+      "issue_id": "adr-0006-thread-merge-column-deferred-ca"
+    }
+  ]
+}
