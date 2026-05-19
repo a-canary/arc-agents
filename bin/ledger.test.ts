@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { $ } from "bun";
-import { mkdtempSync, rmSync } from "node:fs";
+import { Database } from "bun:sqlite";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -416,6 +417,91 @@ test("vacuum --events GCs old events on merged rows, retains last merged event",
       const shown = (await run(db, "show", id)) as { events: unknown[] };
       expect(shown.events.length).toBe(3); // created, progress, merged
     }
+  } finally {
+    cleanup();
+  }
+});
+
+// ADR 0006 §4 — vacuum GC of HITL deliveries + orphaned artifact blobs.
+
+function insertPrompt(d: Database, id: string, state: string, createdAt: number, artifactPaths: string[] = []) {
+  const payload = JSON.stringify({ prompt: "x", artifacts: artifactPaths.map((p) => ({ type: "image/png", path: p })) });
+  d.run(
+    `INSERT INTO hitl_prompts (id, created_at, kind, class, payload, recommended, state, timeout_sec)
+     VALUES (?, ?, 'ask_text', 'taste', ?, 'y', ?, 60)`,
+    [id, createdAt, payload, state],
+  );
+}
+
+test("vacuum --deliveries: prunes terminal-prompt deliveries older than --older-than", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const d = new Database(db);
+    const now = Math.floor(Date.now() / 1000);
+    const old = now - 40 * 24 * 3600;
+    insertPrompt(d, "p-old-terminal", "answered", old);
+    insertPrompt(d, "p-recent-terminal", "answered", now - 5 * 24 * 3600);
+    insertPrompt(d, "p-old-open", "open", old);
+    d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-old-terminal','arc-tui','retracted')`);
+    d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-recent-terminal','arc-tui','retracted')`);
+    d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-old-open','arc-tui','pending')`);
+    d.close();
+
+    const r = (await run(db, "vacuum", "--deliveries", "--older-than", "30")) as { deliveries_deleted: number };
+    expect(r.deliveries_deleted).toBe(1);
+
+    const d2 = new Database(db);
+    const remaining = d2
+      .query<{ prompt_id: string }, []>("SELECT prompt_id FROM hitl_deliveries ORDER BY prompt_id")
+      .all()
+      .map((x) => x.prompt_id);
+    d2.close();
+    expect(remaining).toEqual(["p-old-open", "p-recent-terminal"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("vacuum --artifacts: unlinks blobs unreachable from live deliveries", async () => {
+  const { db, cleanup } = freshDb();
+  const home = mkdtempSync(join(tmpdir(), "vacuum-home-"));
+  const artDir = join(home, "vault", "artifacts");
+  mkdirSync(artDir, { recursive: true });
+  const keep = join(artDir, "keep.png");
+  const orphan = join(artDir, "orphan.png");
+  writeFileSync(keep, "K".repeat(100));
+  writeFileSync(orphan, "O".repeat(250));
+  try {
+    await run(db, "init");
+    const d = new Database(db);
+    const now = Math.floor(Date.now() / 1000);
+    insertPrompt(d, "p-live", "open", now, [keep]);
+    insertPrompt(d, "p-dead", "answered", now, [orphan]);
+    d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-live','arc-tui','delivered')`);
+    d.run(`INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-dead','arc-tui','retracted')`);
+    d.close();
+
+    const proc = await $`HOME=${home} bun ${cli} vacuum --artifacts --db ${db}`.quiet();
+    const r = JSON.parse(proc.stdout.toString()) as { artifacts_unlinked: number; artifacts_bytes_freed: number };
+    expect(r.artifacts_unlinked).toBe(1);
+    expect(r.artifacts_bytes_freed).toBe(250);
+    expect(existsSync(keep)).toBe(true);
+    expect(existsSync(orphan)).toBe(false);
+  } finally {
+    cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("vacuum (no flags): runs all passes + SQLite VACUUM in one output", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "vacuum")) as Record<string, unknown>;
+    expect(r).toHaveProperty("deliveries_deleted");
+    expect(r).toHaveProperty("artifacts_unlinked");
+    expect(r).toHaveProperty("vacuumed", true);
   } finally {
     cleanup();
   }
