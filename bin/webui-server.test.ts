@@ -7,6 +7,7 @@ import {
   buildHandler,
   queryAfkRows,
   queryHitlRows,
+  queryThread,
   resolveIfaceAddr,
   sseStream,
 } from "./webui-server";
@@ -177,6 +178,104 @@ test("sseStream re-emits snapshot on row change", async () => {
     }
     expect(saw).toBe(true);
     await reader.cancel();
+  } finally {
+    cleanup();
+  }
+});
+
+test("queryThread by issue id returns issue + events", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "t1", title: "thread anchor", state: "wip" });
+    db.exec(
+      `INSERT INTO issue_events (issue_id, ts, agent, kind, payload_md)
+       VALUES ('t1', 100, 'bookie', 'created', 'born'),
+              ('t1', 101, 'worker-x', 'claimed', 'mine')`,
+    );
+    const v = queryThread(db, "t1");
+    expect(v).not.toBeNull();
+    expect(v!.issue.id).toBe("t1");
+    expect(v!.events.length).toBe(2);
+    expect(v!.events[0]!.kind).toBe("created");
+    expect(v!.events[1]!.agent).toBe("worker-x");
+    expect(v!.related).toEqual([]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("queryThread returns null for unknown id", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    expect(queryThread(db, "nope")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("queryThread by thread_id returns anchor + related rows", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "a", title: "first", updated_at: 100 });
+    insertIssue(db, { id: "b", title: "second", updated_at: 200 });
+    insertIssue(db, { id: "c", title: "third", updated_at: 300 });
+    db.exec("UPDATE issues SET thread_id='T-1' WHERE id IN ('a','b','c')");
+    const v = queryThread(db, "T-1");
+    expect(v).not.toBeNull();
+    expect(v!.issue.id).toBe("a");
+    expect(v!.related.map((r) => r.id)).toEqual(["b", "c"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("queryThread by issue id includes thread siblings in related", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "a", title: "first", updated_at: 100 });
+    insertIssue(db, { id: "b", title: "second", updated_at: 200 });
+    db.exec("UPDATE issues SET thread_id='T-2' WHERE id IN ('a','b')");
+    const v = queryThread(db, "b");
+    expect(v!.issue.id).toBe("b");
+    expect(v!.related.map((r) => r.id)).toEqual(["a"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /thread/:id returns 200 + json for known issue", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "t1", title: "x", state: "wip" });
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/thread/t1"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.issue.id).toBe("t1");
+    expect(Array.isArray(body.events)).toBe(true);
+    expect(Array.isArray(body.related)).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /thread/:id returns 404 for unknown", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/thread/nope"));
+    expect(res.status).toBe(404);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /thread/ (empty id) returns 400", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/thread/"));
+    expect(res.status).toBe(400);
   } finally {
     cleanup();
   }

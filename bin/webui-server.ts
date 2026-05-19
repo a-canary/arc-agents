@@ -91,6 +91,61 @@ export function queryAfkRows(db: Database): IssueRow[] {
   return [...inflight, ...recent];
 }
 
+type IssueEvent = {
+  seq: number;
+  issue_id: string;
+  ts: number;
+  agent: string;
+  kind: string;
+  payload_md: string | null;
+};
+
+export type ThreadView = {
+  issue: IssueRow;
+  events: IssueEvent[];
+  related: IssueRow[];
+};
+
+const ISSUE_COLS = `id, project, parent_id, title, type, state, kind, class, urgency,
+              hitl, priority, paused, deferred_at, artifact_dir, draft_md,
+              pr_url, thread_id, blocked_by, updated_at`;
+
+export function queryThread(db: Database, id: string): ThreadView | null {
+  const issue = db
+    .query<IssueRow, [string]>(`SELECT ${ISSUE_COLS} FROM issues WHERE id = ?`)
+    .get(id);
+  if (issue) {
+    const events = db
+      .query<IssueEvent, [string]>(
+        `SELECT seq, issue_id, ts, agent, kind, payload_md
+           FROM issue_events WHERE issue_id = ? ORDER BY seq ASC`,
+      )
+      .all(id);
+    const related = issue.thread_id
+      ? db
+          .query<IssueRow, [string, string]>(
+            `SELECT ${ISSUE_COLS} FROM issues WHERE thread_id = ? AND id != ? ORDER BY updated_at ASC`,
+          )
+          .all(issue.thread_id, id)
+      : [];
+    return { issue, events, related };
+  }
+  const rows = db
+    .query<IssueRow, [string]>(
+      `SELECT ${ISSUE_COLS} FROM issues WHERE thread_id = ? ORDER BY updated_at ASC`,
+    )
+    .all(id);
+  if (rows.length === 0) return null;
+  const anchor = rows[0]!;
+  const events = db
+    .query<IssueEvent, [string]>(
+      `SELECT seq, issue_id, ts, agent, kind, payload_md
+         FROM issue_events WHERE issue_id = ? ORDER BY seq ASC`,
+    )
+    .all(anchor.id);
+  return { issue: anchor, events, related: rows.slice(1) };
+}
+
 function digest(rows: IssueRow[]): string {
   // Cheap fingerprint: id|state|updated_at per row. Caller compares strings.
   let h = "";
@@ -158,6 +213,15 @@ export function buildHandler(db: Database) {
     }
     if (url.pathname === "/sse/afk") {
       return new Response(sseStream(db, "afk"), { headers: sseHeaders() });
+    }
+    if (url.pathname.startsWith("/thread/")) {
+      const id = decodeURIComponent(url.pathname.slice("/thread/".length));
+      if (!id) return new Response("missing id", { status: 400 });
+      const thread = queryThread(db, id);
+      if (!thread) return new Response("not found", { status: 404 });
+      return new Response(JSON.stringify(thread), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
     return new Response("not found", { status: 404 });
   };
