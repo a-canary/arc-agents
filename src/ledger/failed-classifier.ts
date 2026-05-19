@@ -10,7 +10,8 @@
 
 export type FailedRow = {
   id: string;
-  type: string;
+  hitl: number;
+  class: string;
   title: string;
   body_md: string;
   evidence_md: string | null;
@@ -55,9 +56,12 @@ export function classifyFailed(row: FailedRow, events: FailedEvent[]): Classific
   }
   if (reasons.length > 0) return { verdict: "needs-HITL", reasons };
 
-  // HITL types always escalate.
-  if (row.type === "HITL" || row.type === "security") {
-    return { verdict: "needs-HITL", reasons: [`type=${row.type} requires human review`] };
+  // HITL rows and trust-class (security) rows always escalate.
+  if (row.hitl === 1) {
+    return { verdict: "needs-HITL", reasons: ["hitl=1 requires human review"] };
+  }
+  if (row.class === "trust") {
+    return { verdict: "needs-HITL", reasons: ["class=trust requires human review"] };
   }
 
   if (events.some((e) => e.kind === "budget-blocked")) {

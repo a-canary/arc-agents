@@ -11,8 +11,8 @@ function setup(): Database {
 
 function ins(db: Database, id: string, state: string, claimedAt: number | null, claimedBy: string | null = "w1") {
   db.run(
-    `INSERT INTO issues (id, project, title, body_md, type, state, kind, claimed_at, claimed_by)
-     VALUES (?, 'p', 't', 'b', 'mvp', ?, 'task', ?, ?)`,
+    `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind, claimed_at, claimed_by)
+     VALUES (?, 'p', 't', 'b', 'MVP', 'nominal', ?, 'task', ?, ?)`,
     [id, state, claimedAt, claimedBy],
   );
 }

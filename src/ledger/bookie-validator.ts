@@ -11,18 +11,25 @@ export const KIND_VALUES = [
 ] as const;
 export type Kind = (typeof KIND_VALUES)[number];
 
-export const TYPE_VALUES = [
-  "interactive",
-  "HITL",
-  "cron",
-  "mvp",
-  "security",
+export const CLASS_VALUES = [
+  "BUG",
+  "MVP",
+  "ops",
+  "hygiene",
   "quality",
+  "trust",
   "scale",
   "efficiency",
+  "class_unset",
+] as const;
+export type Class = (typeof CLASS_VALUES)[number];
+
+export const URGENCY_VALUES = [
+  "interactive",
+  "nominal",
   "deferred",
 ] as const;
-export type Type = (typeof TYPE_VALUES)[number];
+export type Urgency = (typeof URGENCY_VALUES)[number];
 
 export const STATE_VALUES = [
   "ready",
@@ -39,12 +46,17 @@ export type State = (typeof STATE_VALUES)[number];
 export type CreateInput = {
   title?: string;
   kind?: string;
-  type?: string;
+  class?: string;
+  urgency?: string;
+  hitl?: string;
   project?: string;
   body?: string;
   acceptance?: string;
   parent?: string | null;
   blockedBy?: string | null;
+  // Reject hint: passed in raw so we can emit a precise error when the caller
+  // still uses the legacy --type flag. ADR 0005 §4 — column dropped.
+  legacyType?: string;
 };
 
 export type ValidationError = { field: string; message: string };
@@ -55,7 +67,14 @@ export function validateCreate(input: CreateInput, positional: string[] = []): V
   if (positional.length > 0) {
     errs.push({
       field: "args",
-      message: `positional args not allowed for create: got [${positional.join(", ")}]. use --title, --kind, --type, --project`,
+      message: `positional args not allowed for create: got [${positional.join(", ")}]. use --title, --kind, --class, --urgency, --project`,
+    });
+  }
+
+  if (input.legacyType !== undefined) {
+    errs.push({
+      field: "--type",
+      message: "removed (ADR 0005 §4). use --class <BUG|MVP|ops|hygiene|quality|trust|scale|efficiency|class_unset> + --urgency <interactive|nominal|deferred> + optional --hitl 1",
     });
   }
 
@@ -65,8 +84,14 @@ export function validateCreate(input: CreateInput, positional: string[] = []): V
   if (!input.kind || !KIND_VALUES.includes(input.kind as Kind)) {
     errs.push({ field: "--kind", message: `must be one of: ${KIND_VALUES.join(", ")}` });
   }
-  if (!input.type || !TYPE_VALUES.includes(input.type as Type)) {
-    errs.push({ field: "--type", message: `must be one of: ${TYPE_VALUES.join(", ")}` });
+  if (!input.class || !CLASS_VALUES.includes(input.class as Class)) {
+    errs.push({ field: "--class", message: `must be one of: ${CLASS_VALUES.join(", ")}` });
+  }
+  if (!input.urgency || !URGENCY_VALUES.includes(input.urgency as Urgency)) {
+    errs.push({ field: "--urgency", message: `must be one of: ${URGENCY_VALUES.join(", ")}` });
+  }
+  if (input.hitl !== undefined && input.hitl !== "0" && input.hitl !== "1") {
+    errs.push({ field: "--hitl", message: "must be 0 or 1" });
   }
   if (input.blockedBy && !looksLikeJsonArray(input.blockedBy)) {
     errs.push({ field: "--blocked-by", message: "must be a JSON array of issue ids, e.g. '[\"i-foo\"]'" });

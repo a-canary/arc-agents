@@ -21,6 +21,49 @@ test("schema_migrations records applied ids", () => {
   const ids = db.query<{ id: string }, []>("SELECT id FROM schema_migrations ORDER BY id").all().map((r) => r.id);
   expect(ids).toContain("001_issues_base");
   expect(ids).toContain("005_unblock_trigger");
+  expect(ids).toContain("012_drop_type_column");
+});
+
+test("012 drops type column", () => {
+  const db = fresh();
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
+  expect(cols).not.toContain("type");
+  expect(cols).toContain("class");
+  expect(cols).toContain("urgency");
+  expect(cols).toContain("hitl");
+});
+
+test("012 rebuilds idx_issues_ready over (state, kind, urgency, class)", () => {
+  const db = fresh();
+  const idx = db
+    .query<{ sql: string }, []>(
+      "SELECT sql FROM sqlite_master WHERE type='index' AND name='idx_issues_ready'",
+    )
+    .get();
+  expect(idx?.sql).toContain("urgency");
+  expect(idx?.sql).toContain("class");
+  expect(idx?.sql).not.toContain("type");
+});
+
+test("012 preserves all rows from before drop", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "011_class_urgency_schema");
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, class, urgency, state, kind)
+     VALUES ('keep1', 'p', 't', 'b', 'mvp', 'MVP', 'nominal', 'ready', 'task')`,
+  );
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, class, urgency, state, kind)
+     VALUES ('keep2', 'p', 't', 'b', 'security', 'trust', 'nominal', 'ready', 'task')`,
+  );
+  migrate(db);
+  const rows = db.query<{ id: string; class: string; urgency: string }, []>(
+    "SELECT id, class, urgency FROM issues ORDER BY id",
+  ).all();
+  expect(rows).toEqual([
+    { id: "keep1", class: "MVP", urgency: "nominal" },
+    { id: "keep2", class: "trust", urgency: "nominal" },
+  ]);
 });
 
 test("007 adds encounter_* columns", () => {
@@ -29,7 +72,6 @@ test("007 adds encounter_* columns", () => {
   expect(cols).toContain("encounter_mode");
   expect(cols).toContain("encounter_timeout_at");
   expect(cols).toContain("encounter_default_resolution");
-  // re-running migrate must not error or re-add
   const ran = migrate(db);
   expect(ran.length).toBe(0);
 });
@@ -38,8 +80,8 @@ test("unblock_dependents cascade fires on merge", () => {
   const db = fresh();
   const ins = (id: string, state: string, blocked_by: string | null) =>
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, blocked_by, kind)
-       VALUES (?, 'p', 't', 'b', 'mvp', ?, ?, 'task')`,
+      `INSERT INTO issues (id, project, title, body_md, class, urgency, state, blocked_by, kind)
+       VALUES (?, 'p', 't', 'b', 'MVP', 'nominal', ?, ?, 'task')`,
       [id, state, blocked_by],
     );
 
@@ -62,66 +104,48 @@ test("008 drops role column", () => {
   expect(cols).not.toContain("role");
 });
 
-test("008 enforces type enum", () => {
+test("class enum enforced", () => {
   const db = fresh();
   expect(() =>
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
-       VALUES ('x','p','t','b','garbage','ready','task')`,
+      `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind)
+       VALUES ('x','p','t','b','garbage','nominal','ready','task')`,
     ),
   ).toThrow();
 });
 
-test("008 enforces kind enum", () => {
+test("kind enum enforced", () => {
   const db = fresh();
   expect(() =>
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
-       VALUES ('x','p','t','b','mvp','ready','--project')`,
+      `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind)
+       VALUES ('x','p','t','b','MVP','nominal','ready','--project')`,
     ),
   ).toThrow();
 });
 
-test("008 enforces blocked_by shape", () => {
+test("blocked_by shape enforced", () => {
   const db = fresh();
   expect(() =>
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind, blocked_by)
-       VALUES ('x','p','t','b','mvp','blocked','task','not-json')`,
+      `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind, blocked_by)
+       VALUES ('x','p','t','b','MVP','nominal','blocked','task','not-json')`,
     ),
   ).toThrow();
-  // NULL still ok
   db.run(
-    `INSERT INTO issues (id, project, title, body_md, type, state, kind, blocked_by)
-     VALUES ('y','p','t','b','mvp','blocked','task',NULL)`,
+    `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind, blocked_by)
+     VALUES ('y','p','t','b','MVP','nominal','blocked','task',NULL)`,
   );
-});
-
-test("008 normalized trigger fires even when no '[]' filter present", () => {
-  const db = fresh();
-  const ins = (id: string, state: string, blocked_by: string | null) =>
-    db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, blocked_by, kind)
-       VALUES (?, 'p', 't', 'b', 'mvp', ?, ?, 'task')`,
-      [id, state, blocked_by],
-    );
-  ins("a", "ready", null);
-  ins("c", "blocked", JSON.stringify(["a"]));
-  db.run("UPDATE issues SET state='merged' WHERE id='a'");
-  const c = db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='c'").get();
-  expect(c?.state).toBe("ready");
 });
 
 test("009 hitl tables exist with check constraints", () => {
   const db = fresh();
-  // class=taste requires recommended
   expect(() =>
     db.run(
       `INSERT INTO hitl_prompts (id, kind, class, payload, timeout_sec)
        VALUES ('p1', 'ask_choice', 'taste', '{}', 60)`,
     ),
   ).toThrow();
-  // class=impact rejects timeout_sec
   expect(() =>
     db.run(
       `INSERT INTO hitl_prompts (id, kind, class, payload, timeout_sec)
@@ -159,7 +183,6 @@ test("011 backfills (class, urgency) for all legacy type values", () => {
       [`row-${c.type}`, c.type],
     );
   }
-  // kind rename rows
   for (const k of ["chat_in", "chat_out", "encounter_reply"]) {
     db.run(
       `INSERT INTO issues (id, project, title, body_md, type, state, kind)
@@ -198,19 +221,18 @@ test("011 backfills (class, urgency) for all legacy type values", () => {
   }
 });
 
-test("011 CHECK enforces source_module when kind ∈ {event, reply}", () => {
-  const db = new Database(":memory:");
-  migrate(db);
+test("source_module required when kind ∈ {event, reply}", () => {
+  const db = fresh();
   expect(() =>
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind)
-       VALUES ('x','p','t','b','mvp','ready','event')`,
+      `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind)
+       VALUES ('x','p','t','b','MVP','nominal','ready','event')`,
     ),
   ).toThrow();
   expect(() =>
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind, source_module)
-       VALUES ('y','p','t','b','mvp','ready','reply','arc-chat')`,
+      `INSERT INTO issues (id, project, title, body_md, class, urgency, state, kind, source_module)
+       VALUES ('y','p','t','b','MVP','nominal','ready','reply','arc-chat')`,
     ),
   ).not.toThrow();
 });
@@ -238,7 +260,7 @@ test("009 retract cascade flips loser deliveries on answer", () => {
     )
     .all();
   const map = Object.fromEntries(states.map((r) => [r.module_name, r.state]));
-  expect(map["arc-webui"]).toBe("delivered"); // winner stays
+  expect(map["arc-webui"]).toBe("delivered");
   expect(map["arc-tui"]).toBe("retracted");
   expect(map["arc-discord"]).toBe("retracted");
 });

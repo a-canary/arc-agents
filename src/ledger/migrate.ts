@@ -515,6 +515,112 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "012_drop_type_column",
+    // ADR 0005 §4 — drop the legacy `type` column. Migration 011 backfilled
+    // (class, urgency) and kept `type` as a one-release backstop. Time's up.
+    //
+    // Table rebuild (safer than ALTER for CHECK constraints). Assert every
+    // live row has non-null class+urgency before destruction. Rebuild
+    // idx_issues_ready as (state, kind, urgency, class) WHERE state='ready'.
+    up: (db) => {
+      // Sanity assertion — abort if 011 backfill missed anything.
+      const missing = db
+        .query<{ n: number }, []>(
+          "SELECT COUNT(*) AS n FROM issues WHERE class IS NULL OR urgency IS NULL",
+        )
+        .get();
+      if (missing && missing.n > 0) {
+        throw new Error(
+          `012_drop_type_column: ${missing.n} row(s) have NULL class or urgency; migration 011 backfill incomplete`,
+        );
+      }
+
+      db.exec("DROP TRIGGER IF EXISTS unblock_dependents");
+      db.exec("DROP INDEX IF EXISTS idx_issues_ready");
+      db.exec("DROP INDEX IF EXISTS idx_issues_thread");
+      db.exec("DROP INDEX IF EXISTS idx_issues_parent");
+      db.exec("DROP INDEX IF EXISTS idx_issues_claimed_at");
+
+      db.exec(`
+        CREATE TABLE issues_new (
+          id            TEXT PRIMARY KEY,
+          project       TEXT NOT NULL,
+          parent_id     TEXT REFERENCES issues_new(id),
+          title         TEXT NOT NULL,
+          body_md       TEXT NOT NULL,
+          acceptance_md TEXT NOT NULL DEFAULT '',
+          state         TEXT NOT NULL DEFAULT 'ready'
+                        CHECK (state IN ('ready','claimed','wip','blocked','review','merged','cancelled','failed')),
+          hitl          INTEGER NOT NULL DEFAULT 0 CHECK (hitl IN (0,1)),
+          kind          TEXT NOT NULL DEFAULT 'task'
+                        CHECK (kind IN ('task','event','reply','prd','prefetch')),
+          class         TEXT NOT NULL DEFAULT 'class_unset'
+                        CHECK (class IN ('BUG','MVP','ops','hygiene','quality','trust','scale','efficiency','class_unset')),
+          urgency       TEXT NOT NULL DEFAULT 'nominal'
+                        CHECK (urgency IN ('interactive','nominal','deferred')),
+          source_module TEXT,
+          blocked_by    TEXT CHECK (blocked_by IS NULL OR blocked_by LIKE '[%]'),
+          worktree_path TEXT,
+          branch        TEXT,
+          pr_url        TEXT,
+          evidence_md   TEXT,
+          thread_id     TEXT,
+          encounter_mode TEXT,
+          encounter_timeout_at INTEGER,
+          encounter_default_resolution TEXT,
+          created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          updated_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          claimed_at    INTEGER,
+          claimed_by    TEXT,
+          CHECK (kind NOT IN ('event','reply') OR source_module IS NOT NULL)
+        );
+      `);
+
+      db.exec(`
+        INSERT INTO issues_new (
+          id, project, parent_id, title, body_md, acceptance_md, state, hitl,
+          kind, class, urgency, source_module,
+          blocked_by, worktree_path, branch, pr_url, evidence_md,
+          thread_id, encounter_mode, encounter_timeout_at, encounter_default_resolution,
+          created_at, updated_at, claimed_at, claimed_by
+        )
+        SELECT
+          id, project, parent_id, title, body_md, acceptance_md, state, hitl,
+          kind, class, urgency, source_module,
+          blocked_by, worktree_path, branch, pr_url, evidence_md,
+          thread_id, encounter_mode, encounter_timeout_at, encounter_default_resolution,
+          created_at, updated_at, claimed_at, claimed_by
+        FROM issues;
+      `);
+
+      db.exec("DROP TABLE issues");
+      db.exec("ALTER TABLE issues_new RENAME TO issues");
+
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_ready ON issues(state, kind, urgency, class) WHERE state='ready'");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_thread ON issues(thread_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_parent ON issues(parent_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_claimed_at ON issues(claimed_at) WHERE state='claimed'");
+
+      db.exec(`
+        CREATE TRIGGER unblock_dependents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state = 'merged' AND OLD.state != 'merged'
+        BEGIN
+          UPDATE issues
+          SET state = 'ready', updated_at = strftime('%s','now')
+          WHERE state = 'blocked'
+            AND blocked_by IS NOT NULL
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state != 'merged'
+            );
+        END;
+      `);
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

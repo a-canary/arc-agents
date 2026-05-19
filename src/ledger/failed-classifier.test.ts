@@ -1,16 +1,18 @@
 import { test, expect } from "bun:test";
 import { classifyFailed } from "./failed-classifier";
 
-const base = { id: "x", type: "mvp", title: "task", body_md: "", evidence_md: null };
+const base = { id: "x", hitl: 0, class: "MVP", title: "task", body_md: "", evidence_md: null };
 
-test("HITL type escalates regardless of evidence", () => {
-  const r = classifyFailed({ ...base, type: "HITL", evidence_md: "test failure only" }, []);
+test("hitl=1 escalates regardless of evidence", () => {
+  const r = classifyFailed({ ...base, hitl: 1, evidence_md: "test failure only" }, []);
   expect(r.verdict).toBe("needs-HITL");
+  expect(r.reasons[0]).toContain("hitl=1");
 });
 
-test("security type escalates", () => {
-  const r = classifyFailed({ ...base, type: "security" }, []);
+test("class=trust escalates", () => {
+  const r = classifyFailed({ ...base, class: "trust" }, []);
   expect(r.verdict).toBe("needs-HITL");
+  expect(r.reasons[0]).toContain("trust");
 });
 
 test("high-risk phrase in body escalates", () => {
