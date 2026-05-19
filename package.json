@@ -9,6 +9,7 @@
     "arc-chat": "./bin/arc-chat.ts",
     "arc-ux": "./bin/arc-ux.ts",
     "arc-tui": "./bin/arc-tui.ts",
+    "arc-replay": "./bin/arc-replay.ts",
     "factory": "./bin/factory.ts"
   },
   "scripts": {
