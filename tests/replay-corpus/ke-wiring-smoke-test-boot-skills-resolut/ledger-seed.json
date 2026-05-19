@@ -1,0 +1,30 @@
+[
+  {
+    "id": "ke-wiring-smoke-test-boot-skills-resolut",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "KE wiring smoke test (boot_skills resolution)",
+    "body_md": "src/worker/templates.ts hardcodes opening_skills including 'ke-recall' / 'to-ledger' / 'triage-failed'. No test verifies these skills actually exist on disk under skills/ at boot. Add src/worker/skills-resolution.test.ts: for each kind/type entry in templates, assert each opening_skill resolves to skills/<name>/SKILL.md.",
+    "acceptance_md": "bun test src/worker/skills-resolution.test.ts; fails clearly when a skill is missing or path drifts.",
+    "type": "quality",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": null,
+    "branch": "worker/ke-wiring-smoke-test",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/32",
+    "evidence_md": "PR #32 open with passing 20/failing 4 drift detection; awaiting human merge on branch worker/ke-wiring-smoke-test",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779172998,
+    "updated_at": 1779173809,
+    "claimed_at": 1779173411,
+    "claimed_by": "arc-worker-a-6c2qiw"
+  }
+]

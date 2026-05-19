@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 928,
+      "ts": 1779174248,
+      "agent": "arc-worker-a-54r48e",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-54r48e",
+      "issue_id": "fix-typecheck-bin-arc-tui-test-ts-missin"
+    }
+  ]
+}

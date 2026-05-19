@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 950,
+      "ts": 1779174641,
+      "agent": "arc-worker-a-886d3c",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-886d3c",
+      "issue_id": "retire-bin-launch-ts-deprecated-single-p"
+    }
+  ]
+}

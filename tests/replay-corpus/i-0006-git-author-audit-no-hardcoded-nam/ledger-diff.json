@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 860,
+      "ts": 1779173163,
+      "agent": "arc-worker-a-8t3oud",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-8t3oud",
+      "issue_id": "i-0006-git-author-audit-no-hardcoded-nam"
+    }
+  ]
+}

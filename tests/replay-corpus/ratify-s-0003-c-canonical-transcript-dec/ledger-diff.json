@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 941,
+      "ts": 1779174403,
+      "agent": "arc-worker-a-pwluuo",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-pwluuo",
+      "issue_id": "ratify-s-0003-c-canonical-transcript-dec"
+    }
+  ]
+}

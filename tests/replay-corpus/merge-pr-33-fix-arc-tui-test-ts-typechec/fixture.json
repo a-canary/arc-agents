@@ -1,0 +1,146 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "merge-pr-33-fix-arc-tui-test-ts-typechec",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "merge-pr-33-fix-arc-tui-test-ts-typechec",
+    "task_kind": "task",
+    "task_type": "HITL",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-k7mjsy",
+    "claimed_at": 1779174196,
+    "terminated_at": 1779174196,
+    "terminal_state": "merged",
+    "parent_id": "fix-typecheck-bin-arc-tui-test-ts-missin",
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 14,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "a4249bf5369dbda192db3731daf4ca8d71ef97e78ec26c04db89c3407a4bacf3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "6d7c5739f53f21e8b80efaebd6228a29f4932e9178642d7a3385aeb71db2eabb",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "8b0d721d45d0326d4c93756f216c8f2b3bd8a7c5de78f8e96a39a3ac68fe814c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "a92cddd0da44a57a36b7988f90df915f0409f863bfc6b38dd09548f9392f7f14",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Agent",
+        "input_sha256": "1bda961dead42510c272a1c704b794ae1009e7754cd1ecc9fbae8aea2d250fc8",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "d27f9b0dbebfedca65cbab070a5b53a1ca081ab482c7c623d1dea1cebce7479b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Agent",
+        "input_sha256": "2293569685fc852041dbcd5e70edb135b8c78655afa816d0d9515aa0cc720107",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 4,
+        "subagent_type": "bookie",
+        "purpose": "Mark task merged"
+      },
+      {
+        "seq": 6,
+        "subagent_type": "bookie",
+        "purpose": "Mark merged - case 1"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "merge-pr-33-fix-arc-tui-test-ts-typechec",
+        "event_kind": "claimed",
+        "payload_md_sha256": "ded35046bb0351e103b1de62615d690c0c4e1ca8b8493e6c6f16690a1e955c59",
+        "payload_md_preview": "claimed by arc-worker-a-k7mjsy"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "merge-pr-33-fix-arc-tui-test-ts-typechec",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/33"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 49,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session bf67cfb3-5a13-4355-a774-18adc219570a.jsonl. evidence: PR #33 squash-merged at 2026-05-19T07:03:43Z, merge commit 5c4a4b7773925007a9fcfd79a1a34389614926d4, branch worker/fix-typecheck-arc-tui-test deleted. Title: fix(test): add options:[] to ask_text payload (arc-tui.test.ts)."
+  }
+}

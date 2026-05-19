@@ -1,0 +1,120 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "g-0007-no-symlinks-migration-lint",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "g-0007-no-symlinks-migration-lint",
+    "task_kind": "task",
+    "task_type": "quality",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-a3yn9q",
+    "claimed_at": 1779172287,
+    "terminated_at": 1779172287,
+    "terminal_state": "merged",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": "worker/g-0007-no-symlinks-lint"
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 8,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "ad9b40d2e77091657879c30b81f61f2b07bf33e8f826250197b7360df3becb43",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "732409884a6459f555f66094c7366e165ab64b00f3992125960e88be3c917e7c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "ed8b5b4f2ec719dc35a7b5c2a40bfacbf2cedb6916afe22a1222026dc78d8c5c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Agent",
+        "input_sha256": "f643ace5d7e49fb1ee4d97bb3af62b0669634914da25444ea5b64d6f7dec9515",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 3,
+        "subagent_type": "bookie",
+        "purpose": "Mark parent merged"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "g-0007-no-symlinks-migration-lint",
+        "event_kind": "claimed",
+        "payload_md_sha256": "8ca6bcff6744ac47402ad592986cefe6568ab8ce3ca105e465b7609d51a82df1",
+        "payload_md_preview": "claimed by arc-worker-a-a3yn9q"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "g-0007-no-symlinks-migration-lint",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/24"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 34,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session c35f82b7-518a-44d2-9782-a0613c2fe754.jsonl. evidence: Merged to main as 589e208 on 2026-05-19; HITL review child merged."
+  }
+}

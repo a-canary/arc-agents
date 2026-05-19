@@ -1,0 +1,106 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "t1",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "t1",
+    "task_kind": "task",
+    "task_type": "mvp",
+    "task_class": "MVP",
+    "worker_id": "arc-worker-a-etlwcm",
+    "claimed_at": 1779056825,
+    "terminated_at": 1779056825,
+    "terminal_state": "failed",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 4,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "31e7d6be91fb071f608109464907945c5702b6afc8dc01e75720972cd66e37c7",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Agent",
+        "input_sha256": "b7608a59aeed10fe244c63c1d9ea3336cdd9f382b37b30849f3e73928fbbf406",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 1,
+        "subagent_type": "bookie",
+        "purpose": "Fail t1 - empty placeholder"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "t1",
+        "event_kind": "claimed",
+        "payload_md_sha256": "49a524ae84de90421d02f8ab1e27cdc8423536473348181f3ec1b47dbce914d8",
+        "payload_md_preview": "claimed by arc-worker-a-etlwcm"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "t1",
+        "from": "claimed",
+        "to": "failed"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": null
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 19,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session fefe5b8c-639d-409a-8671-64c30132a6d1.jsonl. evidence: Empty placeholder issue — no title, body, or acceptance criteria. Claimed twice (arctest-9w2rw9-p24bnh, arc-worker-a-etlwcm), stale-swept both times. No actionable work definable. Failing per AFK terminal-state policy. If this represents real work, recreate with body/acceptance."
+  }
+}

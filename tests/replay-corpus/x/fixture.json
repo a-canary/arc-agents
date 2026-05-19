@@ -1,0 +1,125 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "x",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "x",
+    "task_kind": "task",
+    "task_type": "mvp",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-eh1ebv",
+    "claimed_at": 1779172940,
+    "terminated_at": 1779172940,
+    "terminal_state": "cancelled",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 8,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "31d77f1452d72f004e2eff60f2acd2bed8ec30fce8a1584f0e3586111dd33a9b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Agent",
+        "input_sha256": "7db314a97011d9cc92601bb2d01fa21bf8627a2a45cedd288c03e1669bb02cf5",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "32cc0d3df8dac45ee3048559ec9bd75eb70fd8c67c6e1bd2d75c9fa000773fe3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Agent",
+        "input_sha256": "fd61c9229dec9384f3bf0fc4323d892f2effa7f4141aac36cca005b41ce5c52d",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 1,
+        "subagent_type": "bookie",
+        "purpose": "Fail task x"
+      },
+      {
+        "seq": 3,
+        "subagent_type": "bookie",
+        "purpose": "Fail task x with correct id"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "x",
+        "event_kind": "claimed",
+        "payload_md_sha256": "3abc84dd389c66b3a561273bed5447721322db0f4e6425bcd0f6b41584f83556",
+        "payload_md_preview": "claimed by arc-worker-a-eh1ebv"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "x",
+        "from": "claimed",
+        "to": "cancelled"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": null
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 36,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 6f366578-85c5-407f-b2d5-66c1fd5d9695.jsonl. evidence: "
+  }
+}

@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 681,
+      "ts": 1779056825,
+      "agent": "arc-worker-a-etlwcm",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-etlwcm",
+      "issue_id": "t1"
+    }
+  ]
+}

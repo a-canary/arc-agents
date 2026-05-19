@@ -1,0 +1,186 @@
+{
+  "count": 30,
+  "fixtures": [
+    {
+      "fixture_id": "retire-bin-launch-ts-deprecated-single-p",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-886d3c",
+      "session_jsonl": "d3b08abd-0f99-4f7a-82c1-6328c01dbf4b.jsonl"
+    },
+    {
+      "fixture_id": "rebase-merge-pr-16-retire-bin-launch-ts",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-qzxx8h",
+      "session_jsonl": "9e760a55-9e66-454c-8607-325ec1d191eb.jsonl"
+    },
+    {
+      "fixture_id": "s-0003c-decide-canonical-transcript-sour",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-21sxhf",
+      "session_jsonl": "6e8b8afd-abc3-4610-bb27-eefdefe0d7b7.jsonl"
+    },
+    {
+      "fixture_id": "ratify-s-0003-c-canonical-transcript-dec",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-pwluuo",
+      "session_jsonl": "6e8b8afd-abc3-4610-bb27-eefdefe0d7b7.jsonl"
+    },
+    {
+      "fixture_id": "resolve-grill-with-docs-choose-wisely-sk",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-rvfc41",
+      "session_jsonl": "6e8b8afd-abc3-4610-bb27-eefdefe0d7b7.jsonl"
+    },
+    {
+      "fixture_id": "adr-0006-markdown-doc-deliveries-module-",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-0m7897",
+      "session_jsonl": "6e8b8afd-abc3-4610-bb27-eefdefe0d7b7.jsonl"
+    },
+    {
+      "fixture_id": "review-merge-pr-35-adr-0006-deliveries-m",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-8ppsym",
+      "session_jsonl": "31241016-f9e0-4acb-b171-8ab5cae34493.jsonl"
+    },
+    {
+      "fixture_id": "fix-typecheck-bin-arc-tui-test-ts-missin",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-54r48e",
+      "session_jsonl": "bf67cfb3-5a13-4355-a774-18adc219570a.jsonl"
+    },
+    {
+      "fixture_id": "merge-pr-33-fix-arc-tui-test-ts-typechec",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-k7mjsy",
+      "session_jsonl": "bf67cfb3-5a13-4355-a774-18adc219570a.jsonl"
+    },
+    {
+      "fixture_id": "s-0003b-define-replay-shadow-fixture-jso",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-rga55g",
+      "session_jsonl": "04ec074e-0f75-4054-a9f2-e77b1d6fc689.jsonl"
+    },
+    {
+      "fixture_id": "s-0003a-land-arc-replay-scaffold-pr-befo",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-6ye9w7",
+      "session_jsonl": "6e8b8afd-abc3-4610-bb27-eefdefe0d7b7.jsonl"
+    },
+    {
+      "fixture_id": "ke-wiring-smoke-test-boot-skills-resolut",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-6c2qiw",
+      "session_jsonl": "c314e90a-d0d1-44cc-90e8-5f5eb04b1418.jsonl"
+    },
+    {
+      "fixture_id": "schedule-arc-tui-heartbeat-tick-so-hitl-",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-3ojzed",
+      "session_jsonl": "9b6fee32-0109-44d3-a199-a36dcd3f2fa7.jsonl"
+    },
+    {
+      "fixture_id": "adr-0005-markdown-doc-ledger-schema-prd-",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-9klys4",
+      "session_jsonl": "41bba256-46cd-4d39-bea3-5255a783b092.jsonl"
+    },
+    {
+      "fixture_id": "i-0006-git-author-audit-no-hardcoded-nam",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-8t3oud",
+      "session_jsonl": "e528ddc0-dd55-46a0-b4f1-b206c4c6a4d0.jsonl"
+    },
+    {
+      "fixture_id": "reconcile-fanout-cap-drift-claude-md-vs-",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-6htgu6",
+      "session_jsonl": "57b735da-7484-44bc-90eb-c6c87df09c87.jsonl"
+    },
+    {
+      "fixture_id": "fix-typecheck-regression-in-bin-arc-tui-",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-en68pt",
+      "session_jsonl": "f2bd4420-2336-40ac-8734-1b87b12e52f4.jsonl"
+    },
+    {
+      "fixture_id": "g-0007-no-symlinks-migration-lint",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-a3yn9q",
+      "session_jsonl": "c35f82b7-518a-44d2-9782-a0613c2fe754.jsonl"
+    },
+    {
+      "fixture_id": "review-merge-pr-24-g-0007-no-symlinks-mi",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-psvl61",
+      "session_jsonl": "dd69d10f-c864-45de-b73e-be3f4866517f.jsonl"
+    },
+    {
+      "fixture_id": "i-0005-register-arc-chat-arc-ux-arc-tui-",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-voxtcb",
+      "session_jsonl": "14bdbd6d-7b29-4465-a664-eb512315f67e.jsonl"
+    },
+    {
+      "fixture_id": "adr-0006-thread-merge-column-deferred-ca",
+      "terminal_state": "merged",
+      "worker_id": "arc-worker-a-9x28tq",
+      "session_jsonl": "d3c7111d-1933-4782-ab2f-410660e89f20.jsonl"
+    },
+    {
+      "fixture_id": "review-merge-pr-28-merge-gate-typecheck-",
+      "terminal_state": "failed",
+      "worker_id": "arc-worker-a-w6awzi",
+      "session_jsonl": "e34b3885-e8c0-4b93-a007-742b962242f0.jsonl"
+    },
+    {
+      "fixture_id": "hitl-review-merge-pr-22-g-0006-budget-tr",
+      "terminal_state": "failed",
+      "worker_id": "arc-worker-a-gf6jhd",
+      "session_jsonl": "bc82050b-bf67-4928-8b52-9e2e1062d4eb.jsonl"
+    },
+    {
+      "fixture_id": "bookie-hitl-no-alive-module-fallback-u-0",
+      "terminal_state": "failed",
+      "worker_id": "arc-worker-a-z0zii2",
+      "session_jsonl": "c773d7f0-526b-4df3-90ca-2ef5e04a0a31.jsonl"
+    },
+    {
+      "fixture_id": "t3",
+      "terminal_state": "failed",
+      "worker_id": "arc-worker-a-xi1b3a",
+      "session_jsonl": "3b282025-5a50-4439-9250-94dc640a5b05.jsonl"
+    },
+    {
+      "fixture_id": "t1",
+      "terminal_state": "failed",
+      "worker_id": "arc-worker-a-etlwcm",
+      "session_jsonl": "fefe5b8c-639d-409a-8671-64c30132a6d1.jsonl"
+    },
+    {
+      "fixture_id": "decide-disposition-of-pr-31-scope-drift-",
+      "terminal_state": "blocked",
+      "worker_id": "arc-worker-a-qi6mga",
+      "session_jsonl": "7a611143-d4eb-40a2-a790-1764cbc90109.jsonl"
+    },
+    {
+      "fixture_id": "merge-pr-31-deprecate-bin-arc-tui-loop-s",
+      "terminal_state": "blocked",
+      "worker_id": "arc-worker-a-et56vc",
+      "session_jsonl": "913b3c5f-c36c-4edd-a4f2-a7d22ab7dea9.jsonl"
+    },
+    {
+      "fixture_id": "retire-bin-arc-tui-loop-sh-shim",
+      "terminal_state": "blocked",
+      "worker_id": "arc-worker-a-w071yi",
+      "session_jsonl": "a6f8f498-8404-462c-b148-04e957150e5f.jsonl"
+    },
+    {
+      "fixture_id": "x",
+      "terminal_state": "cancelled",
+      "worker_id": "arc-worker-a-eh1ebv",
+      "session_jsonl": "6f366578-85c5-407f-b2d5-66c1fd5d9695.jsonl"
+    }
+  ],
+  "generated_at": 1779174720
+}

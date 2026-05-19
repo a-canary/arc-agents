@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 845,
+      "ts": 1779172287,
+      "agent": "arc-worker-a-a3yn9q",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-a3yn9q",
+      "issue_id": "g-0007-no-symlinks-migration-lint"
+    }
+  ]
+}

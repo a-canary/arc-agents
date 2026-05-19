@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 763,
+      "ts": 1779167976,
+      "agent": "arc-worker-a-z0zii2",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-z0zii2",
+      "issue_id": "bookie-hitl-no-alive-module-fallback-u-0"
+    }
+  ]
+}

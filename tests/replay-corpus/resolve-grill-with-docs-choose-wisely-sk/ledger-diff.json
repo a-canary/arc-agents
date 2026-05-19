@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 926,
+      "ts": 1779174232,
+      "agent": "arc-worker-a-rvfc41",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-rvfc41",
+      "issue_id": "resolve-grill-with-docs-choose-wisely-sk"
+    }
+  ]
+}

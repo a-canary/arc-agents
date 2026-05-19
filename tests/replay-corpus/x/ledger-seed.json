@@ -1,0 +1,30 @@
+[
+  {
+    "id": "x",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "x",
+    "body_md": "",
+    "acceptance_md": "",
+    "type": "mvp",
+    "state": "cancelled",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": null,
+    "branch": null,
+    "pr_url": null,
+    "evidence_md": null,
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779172936,
+    "updated_at": 1779172976,
+    "claimed_at": 1779172940,
+    "claimed_by": "arc-worker-a-eh1ebv"
+  }
+]

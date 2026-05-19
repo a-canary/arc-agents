@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 922,
+      "ts": 1779174196,
+      "agent": "arc-worker-a-k7mjsy",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-k7mjsy",
+      "issue_id": "merge-pr-33-fix-arc-tui-test-ts-typechec"
+    }
+  ]
+}

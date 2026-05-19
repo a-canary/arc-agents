@@ -1,0 +1,211 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "bookie-hitl-no-alive-module-fallback-u-0",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "bookie-hitl-no-alive-module-fallback-u-0",
+    "task_kind": "task",
+    "task_type": "mvp",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-z0zii2",
+    "claimed_at": 1779167976,
+    "terminated_at": 1779167976,
+    "terminal_state": "failed",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 25,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "18bebd0f985ffde84b48fe2e403219682fbe86ed8746ef8126f414b50a0a2667",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "e814652ab77b2b578bc877eff7d13c418c4de8e33406476444ce0160eac7197f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "2dfb812f5e8f8aca877dad7f610d1cd2f69e17794dba5ab1a92bc1cdbc9eb1bf",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Read",
+        "input_sha256": "bf8d067fdb11a808eac98c46e34ea331d87883c1d7a36a605541d0e12651aa76",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Read",
+        "input_sha256": "c402ee327b823f5dc3ad5b77300629d3c9b09770181871bda55ee83efec274a2",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Read",
+        "input_sha256": "b2bfc6602a583dd2789d61dbce1a9ca4be2ec112eb6efe09a61d19ff9c91fc90",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Read",
+        "input_sha256": "5a941a1c013f50991d742adb2cb9307a419218827d3036a08046c4f571d8916c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Bash",
+        "input_sha256": "9f125222f5a538350fa0a5c582e5b2164e8f4e23ef39a13343686cce5fac879f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Bash",
+        "input_sha256": "96826db773db6e0c094bbc0490a11898cfb6a80e7e5e757f3e96ac76dd2af84e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Bash",
+        "input_sha256": "9c29e0e1fbf0d0779ab4a4995533c88919a458293a968f764e9beba16d85e655",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Bash",
+        "input_sha256": "19bf862282a451bcc2d573293228ad09d1e89ef45fd1d2df8f6e16e08d22c960",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Bash",
+        "input_sha256": "a5257088d38194e880621a2d2b3275e86ab6396af6e5c988b3d36cf9c818fc64",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Bash",
+        "input_sha256": "b84876940164393164520176fc4437b0155a8d673af8ec15717819805920ca0e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Bash",
+        "input_sha256": "80ae306dd55a93a626114a185aa0027994e8b1377a7d4dd2868450d88b49c48f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Bash",
+        "input_sha256": "e57b4d31b79d8c174d4a7aa8e09f95a58783bff2f3aa11d2f64146d0173d44c5",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "6863e24a9d2714d4697918c0a1fafd3af81c531ab15ad3270d7bd843f44d17be",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Agent",
+        "input_sha256": "852ebec5ddbab6637b4513084e6b075920ae116c16441c9fac52622abecdaca0",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 16,
+        "subagent_type": "bookie",
+        "purpose": "Mark task failed via bookie"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "bookie-hitl-no-alive-module-fallback-u-0",
+        "event_kind": "claimed",
+        "payload_md_sha256": "8f47af3efc42a3da3b03e1d84946e6d484882afe9f627635cf513f72d823d66f",
+        "payload_md_preview": "claimed by arc-worker-a-z0zii2"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "bookie-hitl-no-alive-module-fallback-u-0",
+        "from": "claimed",
+        "to": "failed"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": null
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 97,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session c773d7f0-526b-4df3-90ca-2ef5e04a0a31.jsonl. evidence: Cannot implement: prerequisites absent from main. (1) thread_subscriptions table not in src/ledger/migrate.ts on main (only hitl_deliveries, ux_heartbeats); ADR 0006 tables in worktree arc-agents-adr-0006-tables commit a545cc0 unmerged to origin/main (latest ce1d73a). (2) src/arc-ux/threads.ts does not exist on main; worktree arc-agents-adr-0006-threads removed. Blocker row adr-0006-arc-ux-threads"
+  }
+}

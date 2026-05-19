@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 913,
+      "ts": 1779174010,
+      "agent": "arc-worker-a-rga55g",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-rga55g",
+      "issue_id": "s-0003b-define-replay-shadow-fixture-jso"
+    }
+  ]
+}

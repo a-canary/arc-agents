@@ -1,0 +1,309 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "review-merge-pr-24-g-0007-no-symlinks-mi",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "review-merge-pr-24-g-0007-no-symlinks-mi",
+    "task_kind": "task",
+    "task_type": "HITL",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-psvl61",
+    "claimed_at": 1779171879,
+    "terminated_at": 1779171879,
+    "terminal_state": "merged",
+    "parent_id": "g-0007-no-symlinks-migration-lint",
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 49,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "887ceb441446b75c8b1fe2ab169276e41301a0c61ef49adf2a04783ccc11b6ba",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "e4959c985e03c6735e59ad11f87ce36be88c498f0c4b23542e0d046b6d7a1d88",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "20dfbf79ee6262d4023df5b4f3387145fc12885f0c246394029e287934097162",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "6b59d921bf99667f29a209ea58b22ca0f27a8ac1f4be8d68850207b07d9af6cf",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "3c844480a825d67b7a1f54d06866d72eaef525247e52c414809d31e2b98e2670",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "36127ee170053c6f51630ee2f69ec359a0e499bfeb6b60de476b1c38299c2a03",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Bash",
+        "input_sha256": "a6f5e129ed070fc373d482403bcfd79f6c40c5ad09c8c9a24264b14ee2d9bb21",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Bash",
+        "input_sha256": "9cd59ca16cfd45331fa2b8991fed544aabf9b5e825d4c9cefa41b73e666fa1e6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Bash",
+        "input_sha256": "70b51b80d96d44ed463d8a7b6cb461f56e9b08dab5312b50361ec4dafba1fc8d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Bash",
+        "input_sha256": "fa624dea7a82b07b05edda82e85808101755a9f54397713055dffe8d4849610f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Bash",
+        "input_sha256": "383348c97b550b5a8e0c0e46476747aa7d5f1f047f8f36d15b127b309985410c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Bash",
+        "input_sha256": "ed4dda3c306d4af9df045dda059da1f65f9909bc7e994ec2e77a79afa82e682a",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Bash",
+        "input_sha256": "a9fe2a6ffe024cf935208b1b64c8acb2856d34cabc7f32cc445ba70fc802f311",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Bash",
+        "input_sha256": "2a4993d283a31be0858584d599885a434fbd4c90af5d1c4028890179e1906a3b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Bash",
+        "input_sha256": "bad290105f16fb0754ac729fad49b00001629df2fafd5933aee0129bd7e209ef",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "7a53b1b9e5d41ac33bd3c3871cb4bb268d46f8569b93b119703de97a48c72f63",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Bash",
+        "input_sha256": "893459406d62f4ff799023f37870c88a41008d6e3368bb144ff560e2eaf1a176",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "a42bd9ee286f249a4052afcafc4ed018462053891d0a8a5e9b572d4b0aa4939e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Bash",
+        "input_sha256": "485f59812c9ab889865250a3a67c38977fd79b589b1c39d46c2632bf86b0f1e6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Bash",
+        "input_sha256": "980baac948e3f5ae8d762266a10d682ee0777cb3302f64b0a293c942483dbcd4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 20,
+        "tool": "Bash",
+        "input_sha256": "2d546907c93547dadf26fad484375fcdf39b7731b5051b2f484a4b6391718667",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 21,
+        "tool": "Bash",
+        "input_sha256": "a4a6166d677a2bf0de429f2eaa44c55e979bb60dd8bf193b0e75eb66a536b343",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 22,
+        "tool": "Bash",
+        "input_sha256": "156a967e83ee5fb9de9ceba92a8514f6f719c337b8ef2e2f9afd4fd67fc733dd",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 23,
+        "tool": "Bash",
+        "input_sha256": "9d68524012de0270ddbbf301230fb0b1fef885419b2f1816740664a0bd32a524",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 24,
+        "tool": "Bash",
+        "input_sha256": "b924b263cacf11a770813a359d8f9f5246807bbf4d2488e4fd2b910797c3ba07",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 25,
+        "tool": "Bash",
+        "input_sha256": "a6ee65886a66a3d26fb07d388f9c9b890a0463c7501386a681185ad20914d7c7",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 26,
+        "tool": "Bash",
+        "input_sha256": "49afe982431f289607cd50be5f4e9b986bb36d7f23230f2791c8e05e43589635",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 27,
+        "tool": "Bash",
+        "input_sha256": "f26fc2de6288db2ffd3f23f450e7154a7ec768ede1dd9e6d0b37de287cf0a84b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 28,
+        "tool": "Bash",
+        "input_sha256": "c410546bb53a44af2d4ae441e6cc5219dfb64bab6a6c4243a865249831c294ac",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 29,
+        "tool": "Bash",
+        "input_sha256": "1e9dfeaa8b7c53266d262295f89c21bf058ab6a6bf3f7855ac7f29a64febd7db",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 30,
+        "tool": "Agent",
+        "input_sha256": "d48c6f80459098927e0a417d79c5c0a649d918b9b56efc1ade5b0633d2067f84",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 30,
+        "subagent_type": "bookie",
+        "purpose": "Mark review-merge task merged"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "review-merge-pr-24-g-0007-no-symlinks-mi",
+        "event_kind": "claimed",
+        "payload_md_sha256": "70e59519f87896b05267b204b8f0344168f702ba214d4a2d8ad645ccfe7e0474",
+        "payload_md_preview": "claimed by arc-worker-a-psvl61"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "review-merge-pr-24-g-0007-no-symlinks-mi",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/24"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 406,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session dd69d10f-c864-45de-b73e-be3f4866517f.jsonl. evidence: PR #24 squash-merged to main 2026-05-19T06:30:50Z (merge commit 589e208); resolved stale-fork conflicts by merging origin/main with --theirs on bin/ledger.ts+test (SORT_KEY_SQL rename per adr-0005); post-merge bin/lint-migrations.test.ts 5/5 pass, merge-gate Gate 2b PASS:migration-lint; Gate 2/3 failures pre-exist on origin/main baseline"
+  }
+}

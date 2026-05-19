@@ -1,0 +1,242 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "retire-bin-arc-tui-loop-sh-shim",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "retire-bin-arc-tui-loop-sh-shim",
+    "task_kind": "task",
+    "task_type": "quality",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-w071yi",
+    "claimed_at": 1779173369,
+    "terminated_at": 1779173369,
+    "terminal_state": "blocked",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": "worker/retire-arc-tui-loop"
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 31,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "6fd732fc807aaee642439ab9eb7011322e3cc3815c5c04006a7691a2cee331b3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "27c8e2230c6ea45f85534911fa69fe1d7793d26ac53503e3989751a5409099f4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Read",
+        "input_sha256": "548cd9bccc0c06e55f50727819d75098331c0a7e1b2dd59c47e3f725374cdc0b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "92d0db97b8e96db0a8ff9cc194b117db1ae5850e61811cf612a1d10807c1b98d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "1d931c6d72249cfb6a3e0add28d0bb5618752a42f4fd1153fe79ebebb7a17934",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "aef78ddabf072dde724f2dc400aa4c509db1abd3265d3e5118c7bfb2d84eab5f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Bash",
+        "input_sha256": "7fa9f254ac13776e05f3e49f94dcfb6ccf488fd2144d28bb82ebdce82c6a7b87",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Edit",
+        "input_sha256": "40ca951c50d44872f634af8030784146f73e2f37716585578c40aa00d326ed63",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Read",
+        "input_sha256": "7f1bfae5370b7d92cdce6701f2a33eb1b9bdfce649378f171ee976659351242e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Edit",
+        "input_sha256": "808808841b224054ad61a9fea66d27915febb84c2ab0a864fbcbcaec657e49e5",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Bash",
+        "input_sha256": "461bd4118f149f3cbfd8094fe038d76813a680a3761d50777e7a80384c68ed27",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Bash",
+        "input_sha256": "9f11213daf21c5c78c026223223ba92e5401ebd3587c04422eb8a9782398de82",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Bash",
+        "input_sha256": "176576495af0c7448e07932ce04cc84ae14d992e540e55bcbb4b00b496558ed3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Bash",
+        "input_sha256": "dd08cd1a20095e25a46a5ef1617463315e3de1fefc1bf6e9a2fbb5aba2ff8f4f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Bash",
+        "input_sha256": "fcd8a8f88ebcc54de9808e8b16d25578c5643c1e121e81d689087a152837a668",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "03f27bdffa2f806f296d4da2324142ef0a49362c0d5284508ef1712035c7fcc7",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Agent",
+        "input_sha256": "214581a69b76069698a0d19d5f60bc991f2e14e23fd5e5e39b3c77114ff89ac2",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "806b9066978c46baa65a94a086ce41fba1b22b8575fb97a07e477e54a3a6bf54",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Agent",
+        "input_sha256": "94221d8b346b7e9c609b5cb271d8e01995a855acd635f703dea606dce63077f9",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Agent",
+        "input_sha256": "393fc28b17f0c66a1450ca1cd4db5fbbc9dd1e064aecb276a589f6fe2ad1c243",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 16,
+        "subagent_type": "bookie",
+        "purpose": "Update ledger to review"
+      },
+      {
+        "seq": 18,
+        "subagent_type": "bookie",
+        "purpose": "Decompose into HITL merge child"
+      },
+      {
+        "seq": 19,
+        "subagent_type": "bookie",
+        "purpose": "Create+block via two writes"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "retire-bin-arc-tui-loop-sh-shim",
+        "event_kind": "claimed",
+        "payload_md_sha256": "8516ab31a4fcd6f128b69ca0a324da907ea24ab7cf4cd312a82845a8a05e8f14",
+        "payload_md_preview": "claimed by arc-worker-a-w071yi"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "retire-bin-arc-tui-loop-sh-shim",
+        "from": "claimed",
+        "to": "blocked"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/31"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 183,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session a6f8f498-8404-462c-b148-04e957150e5f.jsonl. evidence: Added deprecation banner to bin/arc-tui-loop.sh; bash -n clean; commit a5d5025; PR #31 open for human merge (auto-merge denied); --no-verify used due to missing hooks/pre-commit-slice-guard.sh on main (see note event)"
+  }
+}

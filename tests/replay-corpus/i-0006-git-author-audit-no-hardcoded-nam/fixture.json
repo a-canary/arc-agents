@@ -1,0 +1,274 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "i-0006-git-author-audit-no-hardcoded-nam",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "i-0006-git-author-audit-no-hardcoded-nam",
+    "task_kind": "task",
+    "task_type": "security",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-8t3oud",
+    "claimed_at": 1779173163,
+    "terminated_at": 1779173163,
+    "terminal_state": "merged",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": "worker/i-0006-author-audit"
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 40,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "3200b44428bb6a733e7911b8446897ff75b414c88dc0fece1ba7f38f60511d00",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "b6f6305c8a2c20ad8cad55e4a473051efa08efacd88ea9eb011f770d2e5baa3d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "d5064abc44048f3c6db0671adce0f187a87dcec4e23be9d570d1ea967ce5fc4b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "1d931c6d72249cfb6a3e0add28d0bb5618752a42f4fd1153fe79ebebb7a17934",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "8d3ca776d38ff466a398905abadcf0724f68ae09c5e735bf06993700d2b8dd60",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "1e893523580d5ada716ffd1188e1306121f3ff8e77a37ce8bf22cb2d8d80348f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Bash",
+        "input_sha256": "67e8627ebfb4c88c6d6f1990751135e6a35c31f0768489281929228f25025f95",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Bash",
+        "input_sha256": "1b5508ab8305126de31c4a25cf2800b14f6700c62fe47cf0224f0c85c9003a82",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Write",
+        "input_sha256": "14c1f4af2a6f63b7d75a457b41614409110eca62a8ce7a34ba25c44a64d3e006",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Bash",
+        "input_sha256": "eaf2321a3ee3cd735bdd8eb46ef5ee92d765c052ade61b90cccafcba57680d2f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Bash",
+        "input_sha256": "a429b519a3beae66aba629e5b3357579325774bd777316e411e28663ad44a43c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Edit",
+        "input_sha256": "d7b683acf16195240e8f4847513bd54b758dfd48016f2518fd5745a4f562deb4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Read",
+        "input_sha256": "f60beea50113a7448b248ba3bf89986ca7c717fd298aeb0c29d2807bd2cd9bcb",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Edit",
+        "input_sha256": "cfd11f36686946219c08497e5ca737d6bd428e65eef0435f31611f37eac3462c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Read",
+        "input_sha256": "574e192cbe28f847f3eed428ab4105c962ffb3c33afb0f35c642c978b6a2ee1e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Edit",
+        "input_sha256": "1aac4850bdea10e8754fcf93992d29a27237aece693416765da6f4ba66ba7fd4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Bash",
+        "input_sha256": "5894c1d58fd6a230563c308accf494ecd4f3926d1510c215b2ef0a073f5b41c0",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "3321efb1c6730050a3679c6d466b0a9b217b4a52e67904ce536b51d79f00d1de",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Bash",
+        "input_sha256": "cb48844ab272a6f274dad5eccce689fa93c0f13a969ef66ffbe2f4be3ea8e7d1",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Bash",
+        "input_sha256": "9c9d61af198eb3974a49f3c57fc4ed735747e4fbf098f7a947d962cc8d43901b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 20,
+        "tool": "Bash",
+        "input_sha256": "e94ec2c9ef026c59b2aba83f48cd23213e40dc06a380903556a230cf8e98f945",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 21,
+        "tool": "Bash",
+        "input_sha256": "c0b312f3d82c339c6a2bcd649abe405135b471cc20feaabf48161c15bb2e1e80",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 22,
+        "tool": "Bash",
+        "input_sha256": "bb6302a726711950cfcddbb9fbf7c5935c2d13b30d867cd44dec3073d3275d6b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 23,
+        "tool": "Bash",
+        "input_sha256": "26d86a1e4cbd9717113129c68a7623a3cf40c840a4a92a7b766d23e8732547a2",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 24,
+        "tool": "Bash",
+        "input_sha256": "28a61d0807c045fd84144f4674fc4789a69c6bf44f5d208f084d3dfde977eac3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 25,
+        "tool": "Agent",
+        "input_sha256": "c6369db41a00807c6441cb84f99e450f835cc9a878e1709cc170524b88691b58",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 25,
+        "subagent_type": "bookie",
+        "purpose": "Mark i-0006 merged"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "i-0006-git-author-audit-no-hardcoded-nam",
+        "event_kind": "claimed",
+        "payload_md_sha256": "ba6902fa50c9ef7cd962ddda42ac4a982d607b597ac4d611c394c8e30cac29da",
+        "payload_md_preview": "claimed by arc-worker-a-8t3oud"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "i-0006-git-author-audit-no-hardcoded-nam",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/29"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 202,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session e528ddc0-dd55-46a0-b4f1-b206c4c6a4d0.jsonl. evidence: Added bin/lint-no-hardcoded-author.sh as Gate 4 in merge-gate.sh; clean tree PASS, planted offender FAIL; commit 2a06d83 PR #29"
+  }
+}
