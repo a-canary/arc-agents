@@ -23,13 +23,13 @@ Bun + TypeScript. SQLite via `bun:sqlite`. zod for schemas. yaml for config.
 bun install
 bun test
 bun bin/ledger.ts init
-bun bin/launch.ts
+bun bin/factory.ts
 ```
 
 Install bins on PATH (after merge to main):
 
 ```
-bun link && bun link arc-agents     # registers ledger, arc-launch, wait-for-ledger
+bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 ```
 
 ## Shipped
@@ -75,7 +75,7 @@ bun link && bun link arc-agents     # registers ledger, arc-launch, wait-for-led
 ## Layout
 
 ```
-bin/         executable entrypoints (ledger, launch, factory, arc-ux, arc-tui, hygiene-tick, …)
+bin/         executable entrypoints (ledger, factory, arc-chat, arc-ux, arc-tui, hygiene-tick, …)
 src/        library code (ledger/, profiles/)
 profiles/   role JSON (developer, director, admin)
 skills/     skill definitions
