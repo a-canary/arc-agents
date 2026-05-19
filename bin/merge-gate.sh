@@ -79,6 +79,23 @@ gate_typecheck() {
   fi
 }
 
+# ── Gate 2b: Migration lint — G-0007 no symlinks ────────────────────────────
+
+gate_migration_lint() {
+  log "Gate 2b: Migration lint (G-0007)"
+  local script="$PROJECT/bin/lint-migrations.sh"
+  if ! [ -x "$script" ]; then
+    skip "migration-lint" "bin/lint-migrations.sh missing"
+    return 0
+  fi
+  if "$script" --project "$PROJECT" >/dev/null 2>&1; then
+    pass "migration-lint" "no symlink usage in migrations"
+  else
+    fail "migration-lint" "G-0007 violation: symlink usage in migrations"
+    return 1
+  fi
+}
+
 # ── Gate 3: Test — bun test ─────────────────────────────────────────────────
 
 gate_test() {
@@ -100,9 +117,10 @@ gate_test() {
 main() {
   log "Starting merge gate project=$PROJECT branch=$BRANCH HEAD=$HEAD_HASH"
 
-  gate_fixture   || true
-  gate_typecheck || true
-  gate_test      || true
+  gate_fixture        || true
+  gate_typecheck      || true
+  gate_migration_lint || true
+  gate_test           || true
 
   local failed
   failed=$(printf '%s\n' "${RESULTS[@]}" | grep -c "^FAIL" || true)
