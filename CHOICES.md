@@ -69,6 +69,9 @@ Move files; subagents fix refs.
 ### G-0008: TypeScript Default
 TS over Python where reasonable. Bun runtime.
 
+### G-0010: Consolidated PR-Backlog HITL
+Bookie collapses merger HITL emissions across PRs into one open prompt per category (`pr_merge_backlog`, `pr_rebase_backlog`, `pr_conflict_backlog`, `pr_ci_red_backlog`). Before emitting a merger-originated `hitl_prompts` row, bookie looks for an existing `state=open` prompt in the same category and updates its `payload.pr_refs[]` instead of inserting a sibling. The prompt auto-cancels (state=cancelled) when `pr_refs[]` drains to zero (merger emits a `pr_resolved` event per PR). Rationale: with 9+ open PRs, per-PR emission floods every UX module on each merger pass. Category, not per-PR, matches the action the user takes ("merge the ready ones", "rebase the stale ones"). Scope: merger-emitted prompts only (gate-failure HITLs and `class=impact` conflict notices remain per-PR — they encode PR-specific detail the user must read). Implementation lives at the bookie `hitl emit` validation path; merger code is unchanged.
+
 ---
 
 ## Skills
