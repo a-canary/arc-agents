@@ -109,7 +109,7 @@ Replay-shadow fixtures use the claude session JSONL at `~/.claude/projects/<proj
 `ledger` binary (TS, bun). Verbs: init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum.
 
 ### I-0002: Launcher + Factory
-`bin/arc-chat.ts` — user-facing chat surface (`post`/`tail`/`threads`). `bin/factory.ts` — supervisor daemon spawning ephemeral worker AND interviewer sessions (M-0004 + ADR 0003); fast-pass pool serves `type=interactive`. `bin/worker-shell.sh` — bootstrap: atomic claim → `ledger render-prompt` (with thread replay) → exec interactive `claude`. `bin/launch.ts` — deprecated single-pane interviewer; retire after one release.
+`bin/arc-chat.ts` — user-facing chat surface (`post`/`tail`/`threads`). `bin/factory.ts` — supervisor daemon spawning ephemeral worker AND interviewer sessions (M-0004 + ADR 0003); fast-pass pool serves `type=interactive`. `bin/worker-shell.sh` — bootstrap: atomic claim → `ledger render-prompt` (with thread replay) → exec interactive `claude`.
 
 ### I-0003: Bookie Subagent
 Writes ledger rows on behalf of agents. Single point of validation.

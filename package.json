@@ -5,7 +5,6 @@
   "private": true,
   "bin": {
     "ledger": "./bin/ledger.ts",
-    "arc-launch": "./bin/launch.ts",
     "wait-for-ledger": "./bin/wait-for-ledger.ts",
     "arc-chat": "./bin/arc-chat.ts",
     "arc-ux": "./bin/arc-ux.ts",

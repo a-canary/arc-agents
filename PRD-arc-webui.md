@@ -166,7 +166,6 @@ External behavior only — no implementation details. A test should survive a re
 - Pause does not affect blocked children (they stay blocked on parent state, not paused state).
 
 ### Prior art
-- `bin/launch.test.ts` — buildScript snapshot pattern (pure function in/out).
 - `bin/ledger.test.ts` — fixture-driven sqlite mutation tests.
 - `bin/wait-for-ledger.test.ts` — adapter test with synthetic db.
 
@@ -179,7 +178,7 @@ These three are the model: pure functions get fixture-driven assertions, adapter
 - **Public deployment** — never. Tailscale-only.
 - **Editing the DAG from the UI** — DAG is read-only navigation; mutations only through pause/defer buttons or thread chat.
 - **Replacing the ledger schema or message bus model** — `issues` + `issue_events` stays canon per CHOICES G-0001.
-- **Replacing tmux launcher** — `bin/launch.ts` and the 4-pane arc session remain unchanged.
+- **Replacing tmux factory** — `bin/factory.ts` and ephemeral worker sessions remain unchanged.
 - **Adding new agent roles** — three roles (Director, Developer, Admin) per CHOICES A-0002 unchanged.
 - **Cloud sync, exports, or third-party integrations** — local-only.
 - **Backwards compatibility with old webui URLs** — direct trash + remove, no redirects.
