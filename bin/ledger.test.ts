@@ -301,3 +301,67 @@ test("claim + spawn-ready skip non-allowlisted kinds (prd, reply, prefetch)", as
     cleanup();
   }
 });
+
+test("render-prompt thread replay includes prior chat turns in order", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const T = "thr-abc";
+    const t1 = (await run(
+      db,
+      "create",
+      "--kind", "event",
+      "--type", "interactive",
+      "--title", "first user msg",
+      "--body", "hello there",
+      "--thread", T,
+      "--source-module", "arc-chat",
+    )) as { id: string };
+    const t2 = (await run(
+      db,
+      "create",
+      "--kind", "reply",
+      "--type", "interactive",
+      "--title", "assistant reply",
+      "--body", "hi back",
+      "--thread", T,
+      "--source-module", "arc-chat",
+    )) as { id: string };
+    const cur = (await run(
+      db,
+      "create",
+      "--kind", "event",
+      "--type", "interactive",
+      "--title", "current user msg",
+      "--body", "follow up",
+      "--thread", T,
+      "--source-module", "arc-chat",
+    )) as { id: string };
+    await run(
+      db,
+      "create",
+      "--kind", "event",
+      "--type", "interactive",
+      "--title", "other thread",
+      "--body", "noise",
+      "--thread", "thr-other",
+      "--source-module", "arc-chat",
+    );
+
+    const r = await $`bun ${cli} render-prompt ${cur.id} --worker w1 --db ${db}`.quiet();
+    const prompt = r.stdout.toString();
+
+    expect(prompt).toContain("Prior turns in this thread");
+    expect(prompt).toContain("[user] hello there");
+    expect(prompt).toContain("[you] hi back");
+    expect(prompt).not.toContain("noise");
+    const i1 = prompt.indexOf("hello there");
+    const i2 = prompt.indexOf("hi back");
+    expect(i1).toBeGreaterThan(-1);
+    expect(i2).toBeGreaterThan(i1);
+    expect(t1.id).not.toBe(t2.id);
+    expect(t2.id).not.toBe(cur.id);
+  } finally {
+    cleanup();
+  }
+});

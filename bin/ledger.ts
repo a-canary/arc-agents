@@ -439,7 +439,8 @@ switch (cmd) {
       .get(id);
     if (!row) die(`no issue ${id}`);
     // Thread replay: for chat_in tasks, include prior chat turns so the cold
-    // interviewer has conversational continuity. Order = id (mintId is time-monotonic).
+    // interviewer has conversational continuity. Order by created_at (id is
+    // slug-derived, not time-monotonic).
     let thread_history: { id: string; kind: string; title: string; body: string }[] | undefined;
     if (row.thread_id) {
       thread_history = db
@@ -447,7 +448,7 @@ switch (cmd) {
           `SELECT id, kind, title, COALESCE(body_md, '') AS body
            FROM issues
            WHERE thread_id=? AND id != ? AND kind IN ('event','reply') AND source_module='arc-chat'
-           ORDER BY id`,
+           ORDER BY created_at, rowid`,
         )
         .all(row.thread_id, id);
     }
