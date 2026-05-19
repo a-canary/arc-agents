@@ -207,7 +207,11 @@ function commonAsk(kind: HitlKind, payload: unknown): { ok: boolean; out?: { id:
     die(4, `class=impact requires ARC_ROLE=interviewer (got '${process.env.ARC_ROLE}'). Workers must decompose, not block.`);
   }
 
-  const recommended = flag("recommended") ?? null;
+  // Ack-only kinds (show_artifact) have no answer to recommend, but the schema
+  // CHECK constraint requires class='taste' rows to have a non-null `recommended`
+  // (see src/ledger/migrate.ts:254). Mirror the notify path's sentinel.
+  const isAckOnly = kind === "show_artifact";
+  const recommended = flag("recommended") ?? (isAckOnly ? "(show_artifact)" : null);
   if (cls === "taste" && !recommended) die(2, `class=taste requires --recommended`);
 
   const strategyRaw = flag("strategy") ?? "forward_fix";

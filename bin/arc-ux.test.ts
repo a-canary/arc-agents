@@ -184,6 +184,20 @@ test("notify broadcasts to all alive modules, exits 0 without waiting", async ()
   expect(dels.length).toBe(2);
 });
 
+test("show-artifact succeeds without --recommended (ack-only, no answer to recommend)", async () => {
+  heartbeat("arc-tui");
+  const r = await runUx([
+    "show-artifact", "--caption", "look", "--artifact", "text/markdown:hi",
+  ]);
+  expect(r.exitCode).toBe(0);
+  const got = rows<{ kind: string; recommended: string | null; state: string }>(
+    "SELECT kind, recommended, state FROM hitl_prompts",
+  );
+  expect(got.length).toBe(1);
+  expect(got[0]!.kind).toBe("show_artifact");
+  expect(got[0]!.state).toBe("open");
+});
+
 test("ask-choice requires >=2 options", async () => {
   heartbeat("arc-tui");
   const r = await runUx([
