@@ -476,9 +476,99 @@ switch (cmd) {
   }
 
   case "vacuum": {
+    // Three-pass GC (ADR 0006 §4 — file pending):
+    //   (1) --deliveries: prune hitl_deliveries on terminal prompts older than --older-than days
+    //   (2) --artifacts:  unlink ~/vault/artifacts/ blobs unreferenced by any live delivery's prompt payload
+    //   (3) default (no sub-flag): run both passes + SQLite VACUUM
+    // Terminal prompt states per actual schema (009_hitl_prompts): answered,
+    // user_confirmed, user_diverged, timeout_locked, cancelled.
+    // Live delivery = state IN ('pending','delivered'). Artifact reachability
+    // is by payload path field; sha-keyed dedup not yet a schema feature.
     const db = openWithMigrate(getFlag("db"));
-    db.exec("VACUUM");
-    out({ vacuumed: true });
+    const olderDays = Number(getFlag("older-than") ?? "30");
+    if (!Number.isFinite(olderDays) || olderDays < 0) die("--older-than must be a non-negative number");
+    const onlyDeliveries = args.includes("--deliveries");
+    const onlyArtifacts = args.includes("--artifacts");
+    const runDeliveries = onlyDeliveries || (!onlyDeliveries && !onlyArtifacts);
+    const runArtifacts = onlyArtifacts || (!onlyDeliveries && !onlyArtifacts);
+    const runVacuum = !onlyDeliveries && !onlyArtifacts;
+
+    const TERMINAL = "('answered','user_confirmed','user_diverged','timeout_locked','cancelled')";
+    const cutoff = Math.floor(Date.now() / 1000) - olderDays * 24 * 3600;
+
+    const result: Record<string, unknown> = {};
+
+    if (runDeliveries) {
+      const r = db.run(
+        `DELETE FROM hitl_deliveries
+         WHERE prompt_id IN (
+           SELECT id FROM hitl_prompts
+           WHERE state IN ${TERMINAL} AND created_at < ?
+         )`,
+        [cutoff],
+      );
+      result.deliveries_deleted = r.changes;
+    }
+
+    if (runArtifacts) {
+      const { readdirSync, statSync, unlinkSync, existsSync } = require("node:fs") as typeof import("node:fs");
+      const { join: pjoin } = require("node:path") as typeof import("node:path");
+      const dir = (process.env.HOME ?? "") + "/vault/artifacts";
+      const reachable = new Set<string>();
+      if (existsSync(dir)) {
+        // Collect payload paths from prompts that still have a live delivery.
+        const prompts = db
+          .query<{ payload: string }, []>(
+            `SELECT DISTINCT p.payload AS payload
+             FROM hitl_prompts p
+             JOIN hitl_deliveries d ON d.prompt_id = p.id
+             WHERE d.state IN ('pending','delivered')`,
+          )
+          .all();
+        for (const row of prompts) {
+          try {
+            const parsed = JSON.parse(row.payload) as { artifacts?: { path?: string }[] };
+            for (const a of parsed.artifacts ?? []) {
+              if (a.path) reachable.add(a.path);
+            }
+          } catch {
+            // Skip malformed payload — log path for operator review.
+          }
+        }
+        let unlinked = 0;
+        let bytes = 0;
+        for (const name of readdirSync(dir)) {
+          const full = pjoin(dir, name);
+          let st;
+          try {
+            st = statSync(full);
+          } catch {
+            continue;
+          }
+          if (!st.isFile()) continue;
+          if (reachable.has(full)) continue;
+          bytes += st.size;
+          try {
+            unlinkSync(full);
+            unlinked += 1;
+          } catch {
+            // Best-effort; continue.
+          }
+        }
+        result.artifacts_unlinked = unlinked;
+        result.artifacts_bytes_freed = bytes;
+      } else {
+        result.artifacts_unlinked = 0;
+        result.artifacts_bytes_freed = 0;
+      }
+    }
+
+    if (runVacuum) {
+      db.exec("VACUUM");
+      result.vacuumed = true;
+    }
+
+    out(result);
     break;
   }
 
@@ -505,7 +595,10 @@ switch (cmd) {
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
-  vacuum
+  vacuum [--deliveries] [--artifacts] [--older-than N]
+                                       GC HITL deliveries on terminal prompts,
+                                       unlink unreachable ~/vault/artifacts/ blobs,
+                                       then SQLite VACUUM (default: all passes)
 
   global flags: --db <path>
 
