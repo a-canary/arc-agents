@@ -166,6 +166,27 @@ test("factory --metrics prints snapshot with all 5 fields", () => {
   expect(id1).toBeTruthy();
 });
 
+test("factory --metrics counts reaps_per_hr from kind='reclaimed' sweeper events", async () => {
+  // Drive a real sweeper event via factory --once on a stale claim.
+  const id = createTask("zombie");
+  const twoHrsAgo = Math.floor(Date.now() / 1000) - 2 * 3600 - 60;
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(dbPath);
+  db.run("UPDATE issues SET state='claimed', claimed_by='ghost', claimed_at=? WHERE id=?", [twoHrsAgo, id]);
+  db.close();
+
+  const sweep = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "0" });
+  expect(sweep.status).toBe(0);
+  expect(JSON.parse(sweep.stdout).swept).toEqual([id]);
+
+  const r = bun([FACTORY, "--metrics"]);
+  expect(r.status).toBe(0);
+  const m = JSON.parse(r.stdout);
+  // Regression guard: the metric query was scanning kind='note' but the sweeper
+  // writes kind='reclaimed', so this used to be silently always 0.
+  expect(m.reaps_per_hr).toBeGreaterThanOrEqual(1);
+});
+
 test("worker-shell.sh refuses arctest-* claim against canon ledger (no ARC_LEDGER_DB)", () => {
   const shell = join(REPO, "bin", "worker-shell.sh");
   // No ARC_LEDGER_DB → script computes EFFECTIVE_DB = $HOME/vault/ledger.db
