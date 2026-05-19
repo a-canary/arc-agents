@@ -13,6 +13,8 @@ const POLL_MS = Number(process.env.ARC_WEBUI_POLL_MS ?? 1000);
 const COMPLETED_LIMIT = 10;
 
 export function resolveIfaceAddr(iface: string): string {
+  // Bun.serve accepts these literals directly — bypass interface lookup.
+  if (iface === "0.0.0.0" || iface === "::") return iface;
   const nets = networkInterfaces();
   const addrs = nets[iface];
   if (!addrs || addrs.length === 0) {

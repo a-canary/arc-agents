@@ -33,6 +33,11 @@ test("resolveIfaceAddr throws on missing iface", () => {
   expect(() => resolveIfaceAddr("definitely-no-such-iface-xyz")).toThrow(/not found/);
 });
 
+test("resolveIfaceAddr short-circuits all-interfaces literals", () => {
+  expect(resolveIfaceAddr("0.0.0.0")).toBe("0.0.0.0");
+  expect(resolveIfaceAddr("::")).toBe("::");
+});
+
 test("resolveIfaceAddr returns address for loopback", () => {
   // lo always exists on linux. Skip if absent (mac calls it lo0).
   const ifaces = ["lo", "lo0"];
