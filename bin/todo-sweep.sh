@@ -33,12 +33,15 @@ cd "$PROJECT"
 RESULTS=()
 log() { echo "[todo-sweep $(date +%H%M)] $*" >&2; }
 
-# Added lines only (start with '+', not '+++').
-# Match TODO/FIXME/XXX anywhere on the line.
+# todo-sweep: scan added lines for TODO/FIXME/XXX markers.
+# Exclude lines that are clearly documenting the gate itself rather than
+# adding a real marker: the slash-separated phrase TODO/FIXME/XXX, the
+# regex-alternation form (TODO|FIXME|XXX), and any reference to the
+# gate name 'todo-sweep'.
 added=$(git diff "$BASE...$HEAD" -U0 -- '*.ts' '*.sh' '*.svelte' '*.md' \
   | grep -E '^\+[^+]' \
   | grep -iE '(TODO|FIXME|XXX)' \
-  | grep -ivE 'TODO.*FIXME.*XXX|TODO.*XXX.*FIXME|FIXME.*TODO.*XXX|FIXME.*XXX.*TODO|XXX.*TODO.*FIXME|XXX.*FIXME.*TODO|todo-sweep' || true)
+  | grep -ivE 'TODO/FIXME/XXX|TODO/FIXME|\(TODO\|FIXME\|XXX\)|todo-sweep' || true)
 
 if [ -z "$added" ]; then
   echo '{"gate":"todo-sweep","status":"SKIP","detail":"no TODO/FIXME/XXX added"}'
