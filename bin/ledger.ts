@@ -8,7 +8,7 @@ import { validateCreate, validateDecompose, validateStateTransition, type Create
 import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
-import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
+import { loadConfig, pickModulesForHitl, aliveModulesDetail, HEARTBEAT_DEFAULTS } from "../src/ledger/ux-config";
 import type { HitlKind } from "../src/ledger/hitl-schemas";
 
 const args = process.argv.slice(2);
@@ -595,6 +595,22 @@ switch (cmd) {
     break;
   }
 
+  case "list-alive-modules": {
+    // Per CHOICES U-0009: surface the SQL-joined alive set so callers stop
+    // reinventing the staleness threshold. --stale-after-sec overrides the
+    // default; --include-dead returns the full join (alive=false too).
+    const db = openWithMigrate(getFlag("db"));
+    const raw = getFlag("stale-after-sec");
+    const staleSec = raw === undefined ? HEARTBEAT_DEFAULTS.stale_after_sec : Number(raw);
+    if (!Number.isFinite(staleSec) || staleSec < 1) {
+      die("--stale-after-sec must be a positive integer");
+    }
+    const rows = aliveModulesDetail(db, staleSec);
+    const includeDead = args.includes("--include-dead");
+    out(includeDead ? rows : rows.filter((r) => r.alive));
+    break;
+  }
+
   case "scratch-gc": {
     // List ~/vault/scratch/<slug>/ dirs with no mtime activity in >14d.
     // --root <path>     override scratch root (default ~/vault/scratch)
@@ -685,6 +701,9 @@ switch (cmd) {
                                        --events: GC issue_events on merged/cancelled
                                        rows older than N days (default 30); retains
                                        row + last merged event as audit anchor.
+  list-alive-modules [--stale-after-sec N] [--include-dead]
+                                       JSON {module_name,last_beat,alive} array;
+                                       default stale_after_sec=300 (CHOICES U-0009)
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
 
