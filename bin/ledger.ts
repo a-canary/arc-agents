@@ -247,7 +247,7 @@ switch (cmd) {
     if (state) {
       db.run(
         `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
-        [id, state === "merged" ? "merged" : state === "failed" ? "failed" : "progress", getFlag("agent") ?? "cli", `→ ${state}`],
+        [id, state === "merged" ? "merged" : state === "failed" ? "failed" : "progress", getFlag("agent") ?? "cli", evidence ? `→ ${state}\n\n${evidence}` : `→ ${state}`],
       );
     }
     out({ id, updated: true });
