@@ -658,3 +658,57 @@ test("hitl emit with --timeout-sec persists expires_at = created_at + timeoutSec
     rmSync(cfgDir, { recursive: true, force: true });
   }
 });
+
+// ledger tick is the backstop reconciler. With no reconciler for expired hitl
+// prompts they linger in state='open' forever and consumers (arc-tui list /
+// answer) carry their own expires_at filter as a workaround. Tick should flip
+// them to 'timeout_locked', which fires hitl_retract_losers to scrub deliveries.
+test("tick flips expired open hitl_prompts to timeout_locked", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const d = new Database(db);
+    // Seed two prompts: one expired (past), one live (future), one with NULL expires_at (must NOT be touched).
+    const past = Math.floor(Date.now() / 1000) - 30;
+    const future = Math.floor(Date.now() / 1000) + 3600;
+    d.run(
+      `INSERT INTO hitl_prompts (id, kind, class, payload, recommended, expires_at, timeout_sec)
+       VALUES (?, 'ask_choice', 'taste', '{}', 'a', ?, 60),
+              (?, 'ask_choice', 'taste', '{}', 'a', ?, 3600),
+              (?, 'ask_choice', 'taste', '{}', 'a', NULL, NULL)`,
+      ["p-expired", past, "p-live", future, "p-nullexp"],
+    );
+    // Delivery on expired prompt to verify retract trigger fires.
+    d.run(
+      `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-expired', 'arc-tui', 'delivered')`,
+    );
+    d.close();
+
+    const r = (await run(db, "tick")) as { expired?: number; expired_ids?: string[] };
+    expect(r.expired).toBe(1);
+    expect(r.expired_ids).toEqual(["p-expired"]);
+
+    const d2 = new Database(db);
+    const expired = d2
+      .query<{ state: string }, [string]>("SELECT state FROM hitl_prompts WHERE id=?")
+      .get("p-expired");
+    const live = d2
+      .query<{ state: string }, [string]>("SELECT state FROM hitl_prompts WHERE id=?")
+      .get("p-live");
+    const nullexp = d2
+      .query<{ state: string }, [string]>("SELECT state FROM hitl_prompts WHERE id=?")
+      .get("p-nullexp");
+    const delivery = d2
+      .query<{ state: string }, [string]>(
+        "SELECT state FROM hitl_deliveries WHERE prompt_id=? AND module_name='arc-tui'",
+      )
+      .get("p-expired");
+    d2.close();
+    expect(expired!.state).toBe("timeout_locked");
+    expect(live!.state).toBe("open");
+    expect(nullexp!.state).toBe("open");
+    expect(delivery!.state).toBe("retracted");
+  } finally {
+    cleanup();
+  }
+});

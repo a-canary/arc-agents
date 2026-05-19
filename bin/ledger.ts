@@ -407,7 +407,8 @@ switch (cmd) {
   }
 
   case "tick": {
-    // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr).
+    // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr)
+    // + reap expired hitl_prompts (open → timeout_locked).
     const db = openWithMigrate(getFlag("db"));
     const u = db.run(`
       UPDATE issues SET state='ready', updated_at=strftime('%s','now')
@@ -419,7 +420,31 @@ switch (cmd) {
         )
     `);
     const s = sweepStaleClaims(db);
-    out({ unblocked: u.changes, reclaimed: s.reset, reclaimed_ids: s.ids });
+    // Collect ids first so we can return them; the UPDATE itself fires
+    // hitl_retract_losers (migrate.ts:284) which retracts pending/delivered
+    // sibling deliveries — that's exactly the cascade we want.
+    const expiredRows = db
+      .query<{ id: string }, []>(
+        `SELECT id FROM hitl_prompts
+         WHERE state='open' AND expires_at IS NOT NULL
+           AND expires_at <= strftime('%s','now')`,
+      )
+      .all();
+    const expiredIds = expiredRows.map((r) => r.id);
+    if (expiredIds.length > 0) {
+      db.run(
+        `UPDATE hitl_prompts SET state='timeout_locked'
+         WHERE state='open' AND expires_at IS NOT NULL
+           AND expires_at <= strftime('%s','now')`,
+      );
+    }
+    out({
+      unblocked: u.changes,
+      reclaimed: s.reset,
+      reclaimed_ids: s.ids,
+      expired: expiredIds.length,
+      expired_ids: expiredIds,
+    });
     break;
   }
 
