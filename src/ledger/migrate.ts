@@ -594,6 +594,17 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "013_deliveries_unique_idx",
+    // ADR 0006 — arc-ux deliveries module. Unique key for idempotent fanout:
+    // re-fanning the same target to the same (module, external_ref) is a no-op.
+    up: (db) => {
+      db.exec(
+        `CREATE UNIQUE INDEX IF NOT EXISTS idx_deliveries_unique
+         ON deliveries(target_kind, target_id, module, external_ref)`,
+      );
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
