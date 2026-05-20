@@ -183,14 +183,15 @@ export function countReady(): number {
   return listReady().length;
 }
 
-// Ready rows the factory can never claim (kind ∉ {task,event}) — e.g. `prd`
-// stubs, `reply` placeholders. Operators looking at `--metrics` saw no work
-// while `ledger list --state ready` showed rows; this exposes the gap.
+// Ready rows the factory can never claim — surfaces transient artifacts the
+// factory ignores (`reply`, `prefetch`) so operators can spot stuck queues.
+// `prd` is excluded: PRDs are product specs parked indefinitely by design, not
+// stuck work, so counting them produced daily warn-spam with no signal.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function countUnclaimableReady(db: any): number {
   const row = db
     .query(
-      `SELECT COUNT(*) AS n FROM issues WHERE state='ready' AND kind NOT IN ('task','event')`,
+      `SELECT COUNT(*) AS n FROM issues WHERE state='ready' AND kind NOT IN ('task','event','prd')`,
     )
     .get() as { n: number } | undefined;
   return row?.n ?? 0;
