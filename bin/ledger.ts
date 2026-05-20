@@ -819,6 +819,10 @@ switch (cmd) {
     //   --stale-hours N      claim age cutoff (default 4)
     //   --worktree-root P    scan root (default ~/worktrees)
     //   --repo-prefix S      dir prefix to consider (default "arc-agents-")
+    //   --strict             exit 1 if any anomaly present (phantom/stale
+    //                        claims, untracked worktree dirs, scan error).
+    //                        mergeable_worktrees is informational and never
+    //                        triggers a non-zero exit on its own.
     const { readdirSync, existsSync, statSync } = require("node:fs") as typeof import("node:fs");
     const { join: pjoin } = require("node:path") as typeof import("node:path");
     const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
@@ -940,8 +944,16 @@ switch (cmd) {
       worktree_scan_error: worktreeScanError,
     };
 
+    const strict = args.includes("--strict");
+    const anomalyCount =
+      phantomClaims.length +
+      staleClaims.length +
+      untrackedWorktreeDirs.length +
+      (worktreeScanError ? 1 : 0);
+
     if (args.includes("--json")) {
       console.log(JSON.stringify(report, null, 2));
+      if (strict && anomalyCount > 0) process.exit(1);
       break;
     }
 
@@ -985,6 +997,7 @@ switch (cmd) {
       lines.push(`worktree_scan_error: ${worktreeScanError}`);
     }
     console.log(lines.join("\n"));
+    if (strict && anomalyCount > 0) process.exit(1);
     break;
   }
 
@@ -1074,12 +1087,15 @@ switch (cmd) {
                                        row + last merged event as audit anchor.
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
-  doctor [--stale-hours N --worktree-root P --repo-prefix S --json]
+  doctor [--stale-hours N --worktree-root P --repo-prefix S --json --strict]
                                        pure-read health probe: phantom_claims,
                                        stale_claims (>N hr, default 4),
                                        state_counts, untracked_worktree_dirs,
                                        mergeable_worktrees. Default output is a
                                        human table; --json emits the raw report.
+                                       --strict exits 1 on any anomaly
+                                       (phantom/stale/untracked/scan_error);
+                                       mergeable_worktrees alone does not.
   backfill-phantom-claims [--apply --json]
                                        one-shot: NULL claimed_by/claimed_at on
                                        rows whose state is terminal or non-claim
