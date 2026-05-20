@@ -340,6 +340,7 @@ switch (cmd) {
     break;
   }
 
+  case "ls":
   case "list": {
     const state = getFlag("state");
     const kind = getFlag("kind");
@@ -1071,7 +1072,7 @@ switch (cmd) {
                                        skills: clarify-docs, improve-architecture,
                                                trash-retired-files, analyse-recent-sessions
                                        dedups against ready/blocked/wip/claimed hygiene rows
-  list [--state --kind --type --limit --all]
+  list [--state --kind --type --limit --all]   (alias: ls)
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them
   show <id>
