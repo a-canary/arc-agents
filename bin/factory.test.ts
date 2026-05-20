@@ -63,6 +63,21 @@ function createTask(title: string, type = "mvp") {
   return JSON.parse(r.stdout).id;
 }
 
+function createPrd(title: string) {
+  // factory ignores kind ∉ {task,event}; prd rows surface via unclaimable_ready.
+  const r = bun([
+    LEDGER, "create",
+    "--kind", "prd",
+    "--type", "mvp",
+    "--title", title,
+    "--class", "MVP",
+    "--urgency", "nominal",
+    "--class-rationale", "test fixture",
+  ]);
+  if (r.status !== 0) throw new Error(`create prd failed: ${r.stderr}`);
+  return JSON.parse(r.stdout).id;
+}
+
 test("factory --once spawns no workers when ledger is empty", () => {
   const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
   expect(r.status).toBe(0);
@@ -139,6 +154,29 @@ test("factory does not reap sessions younger than MAX_AGE", () => {
   const result = JSON.parse(r.stdout);
   expect(result.reaped).not.toContain(sessName);
   expect(listWorkers()).toContain(sessName);
+});
+
+test("factory --once exposes unclaimable_ready when ready rows have kind ∉ {task,event}", () => {
+  // 2 prd stubs (unclaimable) + 1 real task (claimable) — operator visibility
+  // gap addressed: --metrics used to show no work when only prd/reply rows existed.
+  createPrd("prd-a");
+  createPrd("prd-b");
+  createTask("real-1");
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+  expect(result.unclaimable_ready).toBe(2);
+  expect(result.ready).toBe(1); // listReady excludes prd via spawn-ready kind filter
+  expect(result.spawned.length).toBe(1);
+});
+
+test("factory --metrics surfaces unclaimable_ready alongside other counters", () => {
+  createPrd("prd-stuck");
+  const r = bun([FACTORY, "--metrics"]);
+  expect(r.status).toBe(0);
+  const m = JSON.parse(r.stdout);
+  expect(m).toHaveProperty("unclaimable_ready");
+  expect(m.unclaimable_ready).toBe(1);
 });
 
 test("factory --metrics prints snapshot with all 5 fields", () => {
