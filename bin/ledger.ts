@@ -734,6 +734,159 @@ switch (cmd) {
     break;
   }
 
+  case "vacuum-trash": {
+    // Slice C TTL sweep for the trash-retired-files skill.
+    // Scans ~/trash/<unix-ts>_<name>-<YYYYMMDD>/ batch dirs for *.ttl sidecars
+    // (schema in skills/trash-retired-files/SKILL.md). When today (UTC) is past
+    // a sidecar's `sweep_after: YYYYMMDD`, deletes the paired file and the
+    // sidecar. Empty batch dirs are rmdir'd at the end.
+    //
+    // --root <path>   override trash root (default ~/trash)
+    // --now <YYYYMMDD>  override today's date (UTC) for tests
+    // --apply         actually delete (default: dry-run, prints due entries)
+    //
+    // Safety: every path acted on must resolve under the trash root after
+    // realpath; symlinks escaping the root are skipped. Files lacking a paired
+    // .ttl sidecar are never touched.
+    const { readdirSync, statSync, unlinkSync, rmdirSync, readFileSync, realpathSync } =
+      require("node:fs") as typeof import("node:fs");
+    const { join: pjoin, resolve: presolve } = require("node:path") as typeof import("node:path");
+    const root = presolve(getFlag("root") ?? `${process.env.HOME}/trash`);
+    const apply = args.includes("--apply");
+
+    // Today as YYYYMMDD (UTC). --now lets tests fast-forward.
+    const nowFlag = getFlag("now");
+    const today =
+      nowFlag ??
+      new Date()
+        .toISOString()
+        .slice(0, 10)
+        .replace(/-/g, "");
+    if (!/^\d{8}$/.test(today)) die("--now must be YYYYMMDD");
+
+    let rootReal: string;
+    try {
+      rootReal = realpathSync(root);
+    } catch {
+      out({ root, today, apply, due: [], deleted: [], note: "root not found" });
+      break;
+    }
+
+    function underRoot(p: string): boolean {
+      try {
+        const real = realpathSync(p);
+        return real === rootReal || real.startsWith(rootReal + "/");
+      } catch {
+        return false;
+      }
+    }
+
+    // Parse the SKILL.md sidecar format: plain `key: value` lines, no YAML fence.
+    function parseTtl(text: string): Record<string, string> {
+      const out: Record<string, string> = {};
+      for (const raw of text.split("\n")) {
+        const line = raw.trim();
+        if (!line || line.startsWith("#")) continue;
+        const idx = line.indexOf(":");
+        if (idx === -1) continue;
+        const k = line.slice(0, idx).trim();
+        const v = line.slice(idx + 1).trim();
+        if (k) out[k] = v;
+      }
+      return out;
+    }
+
+    type Due = {
+      sidecar: string;
+      payload: string;
+      sweep_after: string;
+      origin_path: string;
+    };
+    const due: Due[] = [];
+    const skipped: { path: string; reason: string }[] = [];
+
+    let batches: string[] = [];
+    try {
+      batches = readdirSync(rootReal);
+    } catch {
+      out({ root: rootReal, today, apply, due: [], deleted: [], note: "root unreadable" });
+      break;
+    }
+
+    for (const batch of batches) {
+      const batchPath = pjoin(rootReal, batch);
+      let bs;
+      try { bs = statSync(batchPath); } catch { continue; }
+      if (!bs.isDirectory()) continue;
+      if (!underRoot(batchPath)) {
+        skipped.push({ path: batchPath, reason: "escapes trash root" });
+        continue;
+      }
+
+      let entries: string[] = [];
+      try { entries = readdirSync(batchPath); } catch { continue; }
+      for (const name of entries) {
+        if (!name.endsWith(".ttl")) continue;
+        const sidecar = pjoin(batchPath, name);
+        if (!underRoot(sidecar)) {
+          skipped.push({ path: sidecar, reason: "escapes trash root" });
+          continue;
+        }
+        let text: string;
+        try { text = readFileSync(sidecar, "utf8"); } catch { continue; }
+        const meta = parseTtl(text);
+        const sweepAfter = meta.sweep_after;
+        if (!sweepAfter || !/^\d{8}$/.test(sweepAfter)) {
+          skipped.push({ path: sidecar, reason: "missing/invalid sweep_after" });
+          continue;
+        }
+        if (today <= sweepAfter) continue; // still within window
+
+        // Paired payload file = sidecar minus the trailing .ttl
+        const payload = sidecar.slice(0, -4);
+        try { statSync(payload); } catch {
+          skipped.push({ path: sidecar, reason: "paired payload missing" });
+          continue;
+        }
+        if (!underRoot(payload)) {
+          skipped.push({ path: sidecar, reason: "payload escapes trash root" });
+          continue;
+        }
+        due.push({
+          sidecar,
+          payload,
+          sweep_after: sweepAfter,
+          origin_path: meta.origin_path ?? "",
+        });
+      }
+    }
+
+    const deleted: string[] = [];
+    const emptied: string[] = [];
+    if (apply) {
+      for (const d of due) {
+        try { unlinkSync(d.payload); deleted.push(d.payload); } catch { /* best-effort */ }
+        try { unlinkSync(d.sidecar); deleted.push(d.sidecar); } catch { /* best-effort */ }
+      }
+      // Rmdir batch dirs that are now empty.
+      for (const batch of batches) {
+        const batchPath = pjoin(rootReal, batch);
+        let bs;
+        try { bs = statSync(batchPath); } catch { continue; }
+        if (!bs.isDirectory()) continue;
+        if (!underRoot(batchPath)) continue;
+        let remaining: string[] = [];
+        try { remaining = readdirSync(batchPath); } catch { continue; }
+        if (remaining.length === 0) {
+          try { rmdirSync(batchPath); emptied.push(batchPath); } catch { /* best-effort */ }
+        }
+      }
+    }
+
+    out({ root: rootReal, today, apply, due, deleted, emptied, skipped });
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -771,6 +924,12 @@ switch (cmd) {
                                        row + last merged event as audit anchor.
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
+  vacuum-trash [--root P --now YYYYMMDD --apply]
+                                       sweep ~/trash/<batch>/*.ttl sidecars whose
+                                       sweep_after date has passed; deletes paired
+                                       payload + sidecar and rmdirs empty batches.
+                                       Dry-run unless --apply; only touches paths
+                                       under --root (default ~/trash).
 
   global flags: --db <path>
 
