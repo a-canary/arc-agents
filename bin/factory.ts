@@ -300,13 +300,13 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
   };
 }
 
-// Boot-time check for orphaned wait-for-ledger.ts procs older than 24hr.
+// Detect orphaned wait-for-ledger.ts procs older than 24hr.
 // Context: wait-for-ledger.ts used to accept --role; it was renamed to --kind,
 // but stale launch sites kept spawning the old flag — the binary printed usage
 // to stderr in a tight loop while the parent held the pid. Three such procs
-// ran for 5+ days unnoticed (2026-05-15 → 2026-05-20). This warns; it never
-// kills (operator decides), and never blocks the daemon if `ps` is unavailable.
-export function auditOrphans(now: number = Math.floor(Date.now() / 1000)): { pids: number[]; ages: number[] } {
+// ran for 5+ days unnoticed (2026-05-15 → 2026-05-20).
+// Pure: returns findings; never logs, never kills.
+export function auditOrphans(): { pids: number[]; ages: number[] } {
   const r = spawnSync("ps", ["-eo", "pid=,etimes=,cmd="], { encoding: "utf8" });
   if (r.status !== 0) return { pids: [], ages: [] };
   const pids: number[] = [];
@@ -325,19 +325,30 @@ export function auditOrphans(now: number = Math.floor(Date.now() / 1000)): { pid
     pids.push(pid);
     ages.push(etimes);
   }
-  if (pids.length > 0) {
-    console.error(
-      JSON.stringify({
-        ts: new Date(now * 1000).toISOString(),
-        warn: "orphaned_wait_for_ledger",
-        count: pids.length,
-        pids,
-        ages_hr: ages.map((a) => +(a / 3600).toFixed(1)),
-        hint: "ps -fp <pid> to inspect; kill <pid> if confirmed stale",
-      }),
-    );
-  }
   return { pids, ages };
+}
+
+export function printOrphanWarn(found: { pids: number[]; ages: number[] }, now: number = Math.floor(Date.now() / 1000)): void {
+  console.error(
+    JSON.stringify({
+      ts: new Date(now * 1000).toISOString(),
+      warn: "orphaned_wait_for_ledger",
+      count: found.pids.length,
+      pids: found.pids,
+      ages_hr: found.ages.map((a) => +(a / 3600).toFixed(1)),
+      hint: "ps -fp <pid> to inspect; kill <pid> if confirmed stale",
+    }),
+  );
+}
+
+export function printOrphansCleared(priorCount: number, now: number = Math.floor(Date.now() / 1000)): void {
+  console.log(
+    JSON.stringify({
+      ts: new Date(now * 1000).toISOString(),
+      info: "orphans_cleared",
+      prior_count: priorCount,
+    }),
+  );
 }
 
 async function sleep(s: number): Promise<void> {
@@ -347,9 +358,11 @@ async function sleep(s: number): Promise<void> {
 async function loop(): Promise<void> {
   // Throttle "unclaimable_ready > 0" stuck-queue warnings: emit on the 0→N edge
   // and re-emit every 5 min while stuck, so operators see the gap without spam
-  // on every quiet tick.
+  // on every quiet tick. Same shape applies to orphan-wait-for-ledger detection.
   let lastUnclaimable = 0;
   let lastUnclaimableLog = 0;
+  let lastOrphans = 0;
+  let lastOrphansLog = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -370,6 +383,18 @@ async function loop(): Promise<void> {
         lastUnclaimableLog = now;
       }
       lastUnclaimable = r.unclaimable_ready;
+
+      const orph = auditOrphans();
+      const orphEdge = orph.pids.length > 0 && lastOrphans === 0;
+      const orphHeartbeat = orph.pids.length > 0 && now - lastOrphansLog >= 300;
+      if (orphEdge || orphHeartbeat) {
+        printOrphanWarn(orph, now);
+        lastOrphansLog = now;
+      }
+      if (orph.pids.length === 0 && lastOrphans > 0) {
+        printOrphansCleared(lastOrphans, now);
+      }
+      lastOrphans = orph.pids.length;
     } catch (err) {
       // Don't let a single bad tick (silent tmux/ledger error) kill the daemon
       // and freeze the queue. Log + continue. See bug: factory went silent on
@@ -395,7 +420,6 @@ async function run(): Promise<void> {
     console.log(JSON.stringify({ ts: new Date().toISOString(), ...tick() }));
     return;
   }
-  auditOrphans();
   await loop();
 }
 
