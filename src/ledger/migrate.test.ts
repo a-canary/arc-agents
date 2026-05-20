@@ -309,3 +309,60 @@ test("012 backfill assigns priority to rows existing before the migration", () =
   expect(m["old_mvp"]).toBe(30);
   expect(m["old_def"]).toBe(80);
 });
+
+test("015 backfills NULL claim fields on non-claimed rows", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, claimed_by, claimed_at)
+     VALUES ('b1','p','t','b','mvp','blocked','task','ghost-worker',1700000000),
+            ('r1','p','t','b','mvp','ready','task','ghost-worker',1700000000),
+            ('f1','p','t','b','mvp','failed','task','ghost-worker',1700000000),
+            ('x1','p','t','b','mvp','cancelled','task','ghost-worker',1700000000),
+            ('c1','p','t','b','mvp','claimed','task','live-worker',1700000000)`,
+  );
+  // Re-run the 015 step in isolation by replaying the migration logic — fresh()
+  // already applied 015 to an empty table, so we need to insert dirty rows and
+  // trigger the backfill UPDATE manually here. The migration runs once per db.
+  db.run(`
+    UPDATE issues
+    SET claimed_by = NULL, claimed_at = NULL
+    WHERE state IN ('blocked','ready','failed','cancelled')
+      AND (claimed_by IS NOT NULL OR claimed_at IS NOT NULL);
+  `);
+  const rows = db
+    .query<{ id: string; claimed_by: string | null; claimed_at: number | null }, []>(
+      "SELECT id, claimed_by, claimed_at FROM issues ORDER BY id",
+    )
+    .all();
+  const m = Object.fromEntries(rows.map((r) => [r.id, r]));
+  for (const id of ["b1", "r1", "f1", "x1"]) {
+    expect(m[id]?.claimed_by).toBeNull();
+    expect(m[id]?.claimed_at).toBeNull();
+  }
+  // claimed row untouched
+  expect(m["c1"]?.claimed_by).toBe("live-worker");
+  expect(m["c1"]?.claimed_at).toBe(1700000000);
+});
+
+test("015 fires from-scratch when legacy rows pre-exist", () => {
+  // Simulate the real upgrade path: stop at 014, insert dirty rows, run migrate
+  // — the 015 step's UPDATE should null the claim fields on non-claimed rows.
+  const db = new Database(":memory:");
+  migrateUpTo(db, "014_event_kind_diff_review");
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, claimed_by, claimed_at)
+     VALUES ('legacy_blocked','p','t','b','mvp','blocked','task','old-w',1600000000),
+            ('legacy_claimed','p','t','b','mvp','claimed','task','live-w',1600000000)`,
+  );
+  migrate(db);
+  const rows = db
+    .query<{ id: string; claimed_by: string | null; claimed_at: number | null }, []>(
+      "SELECT id, claimed_by, claimed_at FROM issues ORDER BY id",
+    )
+    .all();
+  const m = Object.fromEntries(rows.map((r) => [r.id, r]));
+  expect(m["legacy_blocked"]?.claimed_by).toBeNull();
+  expect(m["legacy_blocked"]?.claimed_at).toBeNull();
+  expect(m["legacy_claimed"]?.claimed_by).toBe("live-w");
+  expect(m["legacy_claimed"]?.claimed_at).toBe(1600000000);
+});
