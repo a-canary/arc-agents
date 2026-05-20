@@ -221,6 +221,25 @@ test("list default excludes terminal rows; --all includes them", async () => {
   }
 }, 15000);
 
+test("ls is an alias for list", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const raw = new Database(db);
+    const stmt = raw.prepare(
+      `INSERT INTO issues (id, project, kind, type, title, body_md, state) VALUES (?, 'p', 'task', 'mvp', ?, '', ?)`,
+    );
+    for (let i = 0; i < 3; i++) stmt.run(`r-${i}`, `row ${i}`, "ready");
+    raw.close();
+
+    const fromList = (await run(db, "list")) as { id: string }[];
+    const fromLs = (await run(db, "ls")) as { id: string }[];
+    expect(fromLs.map((r) => r.id).sort()).toEqual(fromList.map((r) => r.id).sort());
+  } finally {
+    cleanup();
+  }
+}, 10000);
+
 test("positional create is rejected", async () => {
   const { db, cleanup } = freshDb();
   try {
