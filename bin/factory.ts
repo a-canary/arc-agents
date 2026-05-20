@@ -436,6 +436,94 @@ export function printMergeableCleared(priorCount: number, now: number = Math.flo
   );
 }
 
+// Opt-in auto-prune for mergeable worktrees. Closes the loop between detect
+// (auditMergeableWorktrees) and act, so the standing warn becomes a self-
+// healing reap. Gated behind ARC_AUTO_PRUNE=1 because the worktrees this
+// targets are user-owned scratch (no claude-agent lock) — different blast
+// radius from the ledger-row worktree-reaper which only touches rows with
+// state='merged'.
+//
+// SAFETY:
+//   - Only proceeds if `git status --porcelain` is empty per worktree.
+//     Uncommitted changes => skip (warn still fires next tick).
+//   - Uses plain `git worktree remove` (no `-f -f`). If git refuses for any
+//     reason, we skip and log.
+//   - Branch delete is best-effort after worktree removal.
+//   - Scope is limited to whatever auditMergeableWorktrees() already returned
+//     (which comes from `ledger doctor`, which only surfaces HEAD-is-ancestor-
+//     of-main worktrees). No new discovery surface added here.
+export type PruneResult = {
+  pruned: { path: string; branch: string | null }[];
+  skipped: { path: string; branch: string | null; reason: string }[];
+};
+
+export function reapMergeableWorktrees(
+  found: { paths: string[]; branches: (string | null)[] } = auditMergeableWorktrees(),
+): PruneResult {
+  const result: PruneResult = { pruned: [], skipped: [] };
+  if (process.env.ARC_AUTO_PRUNE !== "1") return result;
+  for (let i = 0; i < found.paths.length; i++) {
+    const path = found.paths[i]!;
+    const branch = found.branches[i] ?? null;
+
+    // Safety: must be a clean working tree.
+    const dirty = spawnSync("git", ["-C", path, "status", "--porcelain"], { encoding: "utf8" });
+    if (dirty.status !== 0) {
+      result.skipped.push({ path, branch, reason: "git-status-failed" });
+      continue;
+    }
+    if ((dirty.stdout ?? "").trim() !== "") {
+      result.skipped.push({ path, branch, reason: "dirty-worktree" });
+      continue;
+    }
+
+    // Resolve parent repo (the dir that owns the worktree registry).
+    const common = spawnSync("git", ["-C", path, "rev-parse", "--git-common-dir"], { encoding: "utf8" });
+    if (common.status !== 0) {
+      result.skipped.push({ path, branch, reason: "no-common-dir" });
+      continue;
+    }
+    const real = spawnSync("realpath", [(common.stdout ?? "").trim()], { encoding: "utf8", cwd: path });
+    if (real.status !== 0) {
+      result.skipped.push({ path, branch, reason: "realpath-failed" });
+      continue;
+    }
+    const absCommon = (real.stdout ?? "").trim();
+    const parent = absCommon.endsWith("/.git") ? absCommon.slice(0, -5) : absCommon;
+
+    const rm = spawnSync("git", ["-C", parent, "worktree", "remove", path], { encoding: "utf8" });
+    if (rm.status !== 0) {
+      result.skipped.push({ path, branch, reason: `remove-failed: ${(rm.stderr ?? "").trim().slice(0, 200)}` });
+      continue;
+    }
+
+    // Best-effort branch delete. -d (not -D) so we still refuse to nuke a
+    // branch that isn't actually merged. mergeable-worktrees already filtered
+    // for HEAD-is-ancestor-of-main, so this should normally succeed.
+    if (branch) spawnSync("git", ["-C", parent, "branch", "-d", branch], { encoding: "utf8" });
+
+    result.pruned.push({ path, branch });
+  }
+  return result;
+}
+
+export function printMergeablePruned(
+  result: PruneResult,
+  now: number = Math.floor(Date.now() / 1000),
+): void {
+  if (result.pruned.length === 0 && result.skipped.length === 0) return;
+  console.log(
+    JSON.stringify({
+      ts: new Date(now * 1000).toISOString(),
+      info: "mergeable_pruned",
+      pruned_count: result.pruned.length,
+      skipped_count: result.skipped.length,
+      pruned: result.pruned,
+      skipped: result.skipped,
+    }),
+  );
+}
+
 async function sleep(s: number): Promise<void> {
   return new Promise((r) => setTimeout(r, s * 1000));
 }
@@ -483,7 +571,15 @@ async function loop(): Promise<void> {
       }
       lastOrphans = orph.pids.length;
 
-      const merge = auditMergeableWorktrees();
+      let merge = auditMergeableWorktrees();
+      // If auto-prune enabled, act before warning — successful prunes shouldn't
+      // also produce a stuck-state warn. Re-audit only if anything was pruned
+      // (so the warn reflects post-prune leftovers, not pre-prune state).
+      const prune = reapMergeableWorktrees(merge);
+      if (prune.pruned.length > 0 || prune.skipped.length > 0) {
+        printMergeablePruned(prune, now);
+      }
+      if (prune.pruned.length > 0) merge = auditMergeableWorktrees();
       const mergeEdge = merge.paths.length > 0 && lastMergeable === 0;
       const mergeHeartbeat = merge.paths.length > 0 && now - lastMergeableLog >= 300;
       if (mergeEdge || mergeHeartbeat) {
