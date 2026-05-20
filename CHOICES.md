@@ -156,11 +156,11 @@ Taste prompts capture `(repo, branch, HEAD sha)` at create. Divergent user repli
 ### U-0005: Config Declares, Ledger Tracks
 `~/.config/arc/config.yaml` is the declarative contract (verbs implemented, artifact render capabilities, can_retract, cli, pusher). Ledger holds liveness via heartbeats. No transport, auth, or endpoint fields in config — those are the module's internal business. Schema: [system/config-schema.json](system/config-schema.json); canonical example: [system/config.example.yaml](system/config.example.yaml).
 
+### U-0006: Canonical Artifact Types
+Interviewer produces medium-agnostic artifacts (`text/markdown`, `text/diff`, `chart/vega-lite`, `diagram/mermaid`, `image/png`, `table/rows`). Modules declare per-type render strategy (`native`, `rasterize-png`, `ascii-degrade`, …, `unsupported`). Conversion is the module's job; agents never produce per-medium variants.
+
 ### U-0007: Interviewer Owns Intake (UX_1) and HITL Prompts (UX_2)
 The two user-facing flows are both interviewer-mediated. **Intake (UX_1)**: on a new chat thread (idea, feature, pivot, bug, one-off, artifact request) the interviewer runs `grill-with-docs` to align scope/intent against `CONTEXT.md` + ADRs, then `choose-wisely` to cascade through `CHOICES.md` and resolve up/downstream design choices, then decomposes into ledger rows via bookie. **HITL Prompt (UX_2)**: in-flight tasks needing impact decisions or taste judgements emit `hitl_prompts` rows; the UX Module Contract handles fanout/first-reply-wins/retract. See [CONTEXT.md → Intake](CONTEXT.md#intake-ux_1) and [HITL Prompt Flow](CONTEXT.md#hitl-prompt-flow-ux_2).
 
 ### U-0008: CHOICES vs ADRs
 `CHOICES.md` is the working ledger of scoped decisions (one line each, M/A/G/S/D/I tiered, cheap to add/revise) — `choose-wisely` operates here. `docs/adr/` is the long-form record of hard-to-reverse architectural trade-offs (context, alternatives, consequences). A CHOICES entry graduates to an ADR when the trade-off warrants the narrative. Not redundant: CHOICES is the cascade surface, ADRs are anchor reading.
-
-### U-0006: Canonical Artifact Types
-Interviewer produces medium-agnostic artifacts (`text/markdown`, `text/diff`, `chart/vega-lite`, `diagram/mermaid`, `image/png`, `table/rows`). Modules declare per-type render strategy (`native`, `rasterize-png`, `ascii-degrade`, …, `unsupported`). Conversion is the module's job; agents never produce per-medium variants.
