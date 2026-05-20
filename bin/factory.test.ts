@@ -225,6 +225,29 @@ test("worker-shell.sh allows arctest-* claim against a non-canon (test) ledger",
   expect(r.stdout).toContain("race-lost-or-empty");
 });
 
+test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
+  // Regression: systemd --user services inherit PATH without ~/.bun/bin, so
+  // factory-spawned tmux subshells could not resolve `bun` and died exit 127
+  // before the claim ran. Shell must restore the bun dir itself.
+  const id = createTask("path-strip");
+  const shell = join(REPO, "bin", "worker-shell.sh");
+  const strippedPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  const env: Record<string, string> = {
+    HOME: process.env.HOME ?? "",
+    USER: process.env.USER ?? "",
+    PATH: strippedPath,
+    ARC_LEDGER_DB: dbPath,
+    CLAUDE_BIN: fakeClaude,
+  };
+  const r = spawnSync("bash", [shell, "w-stripped"], { encoding: "utf8", env });
+  expect(r.status).toBe(0);
+  expect(r.stderr).not.toContain("bun: command not found");
+  const show = bun([LEDGER, "show", id]);
+  const issue = JSON.parse(show.stdout).issue;
+  expect(issue.state).toBe("claimed");
+  expect(issue.claimed_by).toBe("w-stripped");
+});
+
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
