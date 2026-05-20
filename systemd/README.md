@@ -26,3 +26,16 @@ and ready tasks went unspawned. `Restart=always` + `StartLimitBurst=0`
 eliminates that failure mode.
 
 Logs: `~/.cache/arc-factory.log`.
+
+## arc-factory.logrotate
+
+Daily rotation for the factory log (7 generations, 10M size cap, gzip with
+1-day delay). The systemd unit opens the log with `StandardOutput=append:`,
+so `copytruncate` is used — no SIGHUP path exists to make it reopen the
+file. Install once as root:
+
+```
+sudo cp systemd/arc-factory.logrotate /etc/logrotate.d/arc-factory
+```
+
+The system `/etc/cron.daily/logrotate` job picks it up automatically.

@@ -1,0 +1,26 @@
+# logrotate config for arc-factory.service (~/.cache/arc-factory.log).
+#
+# The factory daemon appends JSON status lines on every loop tick (default
+# every 5s), plus warns and event records. Left unbounded the file grows
+# indefinitely — observed ~76KB after a couple weeks of normal operation,
+# but stale-claim storms or warn loops can push that much higher.
+#
+# Install (run as root):
+#   sudo cp systemd/arc-factory.logrotate /etc/logrotate.d/arc-factory
+#
+# The system logrotate cron (/etc/cron.daily/logrotate) will then rotate
+# this file. `su aaron aaron` lets root touch the user-owned file.
+# `copytruncate` is used because the systemd unit opens the log with
+# `StandardOutput=append:` — there is no SIGHUP path to make it reopen.
+
+/home/aaron/.cache/arc-factory.log {
+    su aaron aaron
+    daily
+    rotate 7
+    maxsize 10M
+    missingok
+    notifempty
+    compress
+    delaycompress
+    copytruncate
+}
