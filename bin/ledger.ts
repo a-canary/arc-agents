@@ -926,7 +926,7 @@ switch (cmd) {
       worktreeScanError = `worktree root not found: ${worktreeRoot}`;
     }
 
-    out({
+    const report = {
       stale_hours: staleHours,
       worktree_root: worktreeRoot,
       repo_prefix: repoPrefix,
@@ -936,7 +936,53 @@ switch (cmd) {
       untracked_worktree_dirs: untrackedWorktreeDirs,
       mergeable_worktrees: mergeableWorktrees,
       worktree_scan_error: worktreeScanError,
-    });
+    };
+
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(report, null, 2));
+      break;
+    }
+
+    // Human-readable table. Mirrors the JSON shape so a reader can grep without
+    // remembering field names: same labels, just laid out for a tmux pane.
+    const lines: string[] = [];
+    lines.push(`ledger doctor  (stale_hours=${staleHours}, worktree_root=${worktreeRoot})`);
+    lines.push("");
+    lines.push("state_counts:");
+    if (stateCounts.length === 0) lines.push("  (empty)");
+    else for (const { state, n } of stateCounts) lines.push(`  ${state.padEnd(10)} ${n}`);
+    lines.push("");
+    lines.push(`phantom_claims:   ${phantomClaims.length}`);
+    if (phantomClaims.length > 0) {
+      for (const r of phantomClaims.slice(0, 5)) {
+        lines.push(`  - ${r.id}  state=${r.state}  by=${r.claimed_by}`);
+      }
+      if (phantomClaims.length > 5) lines.push(`  ... +${phantomClaims.length - 5} more`);
+    }
+    lines.push(`stale_claims:     ${staleClaims.length}`);
+    if (staleClaims.length > 0) {
+      for (const r of staleClaims.slice(0, 5)) {
+        lines.push(`  - ${r.id}  state=${r.state}  by=${r.claimed_by}  age=${r.age_hours}h`);
+      }
+      if (staleClaims.length > 5) lines.push(`  ... +${staleClaims.length - 5} more`);
+    }
+    lines.push(`untracked_worktree_dirs: ${untrackedWorktreeDirs.length}`);
+    for (const p of untrackedWorktreeDirs.slice(0, 5)) lines.push(`  - ${p}`);
+    if (untrackedWorktreeDirs.length > 5) {
+      lines.push(`  ... +${untrackedWorktreeDirs.length - 5} more`);
+    }
+    lines.push(`mergeable_worktrees:     ${mergeableWorktrees.length}`);
+    for (const w of mergeableWorktrees.slice(0, 5)) {
+      lines.push(`  - ${w.path}  ${w.branch ?? "(detached)"}`);
+    }
+    if (mergeableWorktrees.length > 5) {
+      lines.push(`  ... +${mergeableWorktrees.length - 5} more`);
+    }
+    if (worktreeScanError) {
+      lines.push("");
+      lines.push(`worktree_scan_error: ${worktreeScanError}`);
+    }
+    console.log(lines.join("\n"));
     break;
   }
 
@@ -982,11 +1028,12 @@ switch (cmd) {
                                        row + last merged event as audit anchor.
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
-  doctor [--stale-hours N --worktree-root P --repo-prefix S]
+  doctor [--stale-hours N --worktree-root P --repo-prefix S --json]
                                        pure-read health probe: phantom_claims,
                                        stale_claims (>N hr, default 4),
                                        state_counts, untracked_worktree_dirs,
-                                       mergeable_worktrees
+                                       mergeable_worktrees. Default output is a
+                                       human table; --json emits the raw report.
 
   global flags: --db <path>
 
