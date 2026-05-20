@@ -623,6 +623,23 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
     },
   },
+  {
+    id: "015_null_claim_on_nonclaim_state",
+    // Backfill: prior decompose/update paths flipped state to blocked/failed
+    // without clearing claimed_by/claimed_at, leaving phantom claims that
+    // confuse dashboards and the wait-for-ledger counter (which checks
+    // claimed_by IS NULL on ready rows only — but blocked rows still bleed
+    // through to /list views and orphan audits). Fix the write paths in
+    // bin/ledger.ts, then backfill historical rows here.
+    up: (db) => {
+      db.exec(`
+        UPDATE issues
+        SET claimed_by = NULL, claimed_at = NULL
+        WHERE state IN ('blocked','ready','failed','cancelled')
+          AND (claimed_by IS NOT NULL OR claimed_at IS NOT NULL);
+      `);
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
