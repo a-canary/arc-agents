@@ -9,6 +9,11 @@
 # subagent. Reads stay direct. See .claude/agents/bookie.md.
 set -euo pipefail
 
+# systemd --user services inherit a stripped PATH (no ~/.bun/bin), so the
+# factory's spawned tmux subshell can't resolve `bun` and dies with exit 127
+# before the claim runs. Restore the user's bun install dir if missing.
+command -v bun >/dev/null 2>&1 || export PATH="${HOME}/.bun/bin:${PATH}"
+
 WORKER="${1:?worker name required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LEDGER_BIN="${REPO}/bin/ledger.ts"
