@@ -102,6 +102,42 @@ export function reapExited(): string[] {
   return reaped;
 }
 
+// Tier-0.5 reap: reclaim orphan claims whose worker tmux session no longer exists.
+// Gap this fills: a worker holds a fresh claim, then its tmux session disappears
+// outside the reap path (OOM kill, manual kill -9, host reboot). pane_dead never
+// fires (session is fully gone), age sweep won't catch it (claim < 2hr old), and
+// reapFinished only matches terminal states. Without this, the row sits orphaned
+// for up to 2hr, blocking dependents.
+//
+// Guarded by PREFIX so we never touch claims from other factories sharing the
+// ledger (e.g. arc-worker vs arctest-* runs).
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function reapOrphanClaims(db: any): string[] {
+  const live = new Set(listWorkers().map((s) => s.name));
+  const rows = db
+    .query(
+      `SELECT id, claimed_by FROM issues WHERE state='claimed' AND claimed_by LIKE ?`,
+    )
+    .all(`${PREFIX}-%`) as { id: string; claimed_by: string }[];
+  const orphaned = rows.filter((r) => !live.has(r.claimed_by));
+  if (orphaned.length === 0) return [];
+  const ids: string[] = [];
+  db.transaction(() => {
+    for (const r of orphaned) {
+      db.run(
+        `UPDATE issues SET state='ready', claimed_by=NULL, claimed_at=NULL, updated_at=strftime('%s','now') WHERE id=?`,
+        [r.id],
+      );
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'reclaimed', 'claim-stale-sweeper', ?)`,
+        [r.id, `orphan claim reset (claimed_by=${r.claimed_by}, tmux session gone)`],
+      );
+      ids.push(r.id);
+    }
+  })();
+  return ids;
+}
+
 // Tier-1 reap: a worker whose claimed task has reached a terminal/blocked state
 // is done — claude often lingers at its interactive prompt after writing the
 // final turn (M-0002 mandates interactive panes, so we can't use --print). Kill
@@ -179,6 +215,7 @@ export function tick(): TickResult {
   const reapedExited = reapExited();
   const reapedAge = reapStale();
   const db = openWithMigrate(process.env.ARC_LEDGER_DB);
+  const orphans = reapOrphanClaims(db);
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
   const worktrees = reapWorktrees(db);
@@ -225,7 +262,7 @@ export function tick(): TickResult {
 
   return {
     reaped,
-    swept: sweep.ids,
+    swept: [...orphans, ...sweep.ids],
     worktrees,
     live: curAny + curInteractive,
     ready: allReady.length,
