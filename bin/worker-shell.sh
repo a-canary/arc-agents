@@ -175,10 +175,11 @@ if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
   return 0
 fi
 
-# systemd --user services inherit a stripped PATH (no ~/.bun/bin), so the
-# factory's spawned tmux subshell can't resolve `bun` and dies with exit 127
-# before the claim runs. Restore the user's bun install dir if missing.
+# systemd --user services inherit a stripped PATH (no ~/.bun/bin or ~/.local/bin),
+# so the spawned tmux subshell cannot resolve `bun` or `claude` and dies before
+# exec. Restore both install dirs if missing.
 command -v bun >/dev/null 2>&1 || export PATH="${HOME}/.bun/bin:${PATH}"
+command -v claude >/dev/null 2>&1 || export PATH="${HOME}/.local/bin:${PATH}"
 
 # Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
 # has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.
