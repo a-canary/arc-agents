@@ -113,6 +113,40 @@ test("factory --once sweeps stale claims back to ready before counting work", as
   expect(result.spawned.length).toBe(1);
 });
 
+test("factory --once reclaims orphan claims whose tmux session vanished externally", async () => {
+  // Race: a worker claims a task, then its tmux session is killed -9 from outside
+  // the reap path (OOM, manual kill, host reboot). The claim is younger than
+  // 2hr, so sweepStaleClaims won't touch it. pane_dead never fires because the
+  // session is fully gone. reapFinished only fires on terminal states. Result
+  // (before fix): the claim sits orphaned for up to 2hr, blocking the task.
+  const id = createTask("orphan-race");
+  const sessName = `${prefix}-a-orph01`;
+  // Simulate the real spawn: tmux session exists, ledger row is claimed by it,
+  // claim is fresh (5 sec ago, well under the 2hr stale threshold).
+  tmux(["new-session", "-d", "-s", sessName, "sleep", "300"]);
+  const fiveSecAgo = Math.floor(Date.now() / 1000) - 5;
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(dbPath);
+  db.run("UPDATE issues SET state='claimed', claimed_by=?, claimed_at=? WHERE id=?", [
+    sessName,
+    fiveSecAgo,
+    id,
+  ]);
+  db.close();
+  // External kill — not via factory reap path. Session disappears completely
+  // (not a pane_dead lingering session, which reapExited already handles).
+  tmux(["kill-session", "-t", sessName]);
+  expect(listWorkers()).not.toContain(sessName);
+
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+  // Expectation: the orphan claim is reset to ready so the slot frees up.
+  expect(result.swept).toContain(id);
+  // And the now-ready task should spawn a fresh worker.
+  expect(result.ready).toBeGreaterThanOrEqual(1);
+});
+
 test("factory --reap kills sessions older than MAX_AGE", () => {
   // Spawn a session manually that will look stale (MAX_AGE=0 makes everything stale)
   const sessName = `${prefix}-stale1`;
