@@ -7,6 +7,7 @@ import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
 import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
+import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadThreadContext } from "../src/worker/thread-context";
@@ -581,7 +582,7 @@ switch (cmd) {
   case "spawn-ready": {
     const type = getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
+    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
       type ? "AND type=?" : ""
     } ORDER BY ${SORT_KEY_SQL}`;
     out(type ? db.query(sql).all(type) : db.query(sql).all());
