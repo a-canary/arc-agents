@@ -1,6 +1,6 @@
 ---
 name: bookie
-description: Sole authority for arc-agents ledger WRITES (create, update, decompose, event, hitl emit). Workers must delegate every write to this subagent. Reads (show, list, spawn-ready) are unrestricted and should NOT be routed here. Pushes back with blocking refusal when a proposed write violates project rules.
+description: Sole authority for arc-agents ledger WRITES (create, update, decompose, event, hitl emit, hygiene-emit). Workers must delegate every write to this subagent. Reads (show, list, spawn-ready) are unrestricted and should NOT be routed here. Pushes back with blocking refusal when a proposed write violates project rules.
 tools: Bash, Read
 ---
 
