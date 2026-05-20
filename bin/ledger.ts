@@ -986,6 +986,50 @@ switch (cmd) {
     break;
   }
 
+  case "backfill-phantom-claims": {
+    // One-shot maintenance: NULL claimed_by + claimed_at on rows whose state is
+    // not 'claimed' or 'wip'. Migration 015's trigger prevents new phantoms, so
+    // this only matters for the pre-trigger backlog (the rows doctor surfaces
+    // under phantom_claims). Pure data change, no state-machine impact.
+    //
+    //   --apply   write changes (default: dry-run)
+    //   --json    machine-readable output (default: human line)
+    const db = openWithMigrate(getFlag("db"));
+    const apply = args.includes("--apply");
+
+    const targets = db
+      .query<{ id: string; state: string; claimed_by: string }, []>(
+        `SELECT id, state, claimed_by FROM issues
+         WHERE claimed_by IS NOT NULL AND state NOT IN ('claimed','wip')
+         ORDER BY updated_at DESC`,
+      )
+      .all();
+
+    let updated = 0;
+    if (apply && targets.length > 0) {
+      const r = db.run(
+        `UPDATE issues SET claimed_by = NULL, claimed_at = NULL
+         WHERE claimed_by IS NOT NULL AND state NOT IN ('claimed','wip')`,
+      );
+      updated = r.changes;
+    }
+
+    const report = { found: targets.length, applied: apply, updated, sample: targets.slice(0, 5) };
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(report, null, 2));
+      break;
+    }
+    const verb = apply ? `cleared ${updated}` : `would clear ${targets.length} (dry-run; pass --apply to write)`;
+    console.log(`backfill-phantom-claims: ${verb}`);
+    if (targets.length > 0) {
+      for (const r of targets.slice(0, 5)) {
+        console.log(`  - ${r.id}  state=${r.state}  by=${r.claimed_by}`);
+      }
+      if (targets.length > 5) console.log(`  ... +${targets.length - 5} more`);
+    }
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -1034,6 +1078,11 @@ switch (cmd) {
                                        state_counts, untracked_worktree_dirs,
                                        mergeable_worktrees. Default output is a
                                        human table; --json emits the raw report.
+  backfill-phantom-claims [--apply --json]
+                                       one-shot: NULL claimed_by/claimed_at on
+                                       rows whose state is terminal or non-claim
+                                       (the doctor phantom_claims backlog).
+                                       Default dry-run; --apply writes.
 
   global flags: --db <path>
 
