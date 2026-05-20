@@ -45,6 +45,9 @@ The atomic transition `state=ready → state=claimed` performed by a single SQL 
 ## Bookie
 A claude subagent (`.claude/agents/bookie.md`) that is the sole authority for ledger **writes** (create, update, decompose, event) inside an agent session. Workers and the interviewer delegate every write to the bookie via the Agent tool. The bookie validates against project rules and refuses non-compliant writes. Reads (show, list) bypass the bookie and run directly.
 
+## Diff Review
+A pre-commit phase in the worker loop: the worker spawns an independent subagent (via the `/diff-review` skill, no shared reasoning trace) that reviews the finalized diff against the task brief + touched ADRs and returns a structured JSON report `{consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts}`. The worker logs the report as a `kind=diff_review` event. `bin/ledger.ts update --state merged` refuses without a prior `diff_review` event for the issue id; bookie rule #7 mirrors the refusal. Surprises/gaps must be reconciled in the diff or addressed in `evidence_md`. See [I-0008](CHOICES.md#i-0008-pre-commit-diff-review-gate).
+
 ## Decomposition
 The act of breaking a parent task into N HITL children atomically: insert N child issues + set `parent.blocked_by=[childIds]` + flip `parent.state='blocked'`. Used when an AFK worker discovers a blocker only a human can resolve. Fanout cap = 5; recursion allowed.
 
