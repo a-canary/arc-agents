@@ -64,7 +64,8 @@ function createTask(title: string, type = "mvp") {
 }
 
 function createPrd(title: string) {
-  // factory ignores kind ∉ {task,event}; prd rows surface via unclaimable_ready.
+  // PRDs are non-claimable by design (parked product specs); they are
+  // intentionally excluded from unclaimable_ready to silence warn-spam.
   const r = bun([
     LEDGER, "create",
     "--kind", "prd",
@@ -75,6 +76,21 @@ function createPrd(title: string) {
     "--class-rationale", "test fixture",
   ]);
   if (r.status !== 0) throw new Error(`create prd failed: ${r.stderr}`);
+  return JSON.parse(r.stdout).id;
+}
+
+function createReply(title: string, threadId: string) {
+  // `reply` is a transient artifact; if it ends up ready, it's stuck — the
+  // unclaimable_ready warn surfaces this.
+  const r = bun([
+    LEDGER, "create",
+    "--kind", "reply",
+    "--type", "mvp",
+    "--title", title,
+    "--source-module", "arc-chat",
+    "--thread", threadId,
+  ]);
+  if (r.status !== 0) throw new Error(`create reply failed: ${r.stderr}`);
   return JSON.parse(r.stdout).id;
 }
 
@@ -190,27 +206,30 @@ test("factory does not reap sessions younger than MAX_AGE", () => {
   expect(listWorkers()).toContain(sessName);
 });
 
-test("factory --once exposes unclaimable_ready when ready rows have kind ∉ {task,event}", () => {
-  // 2 prd stubs (unclaimable) + 1 real task (claimable) — operator visibility
-  // gap addressed: --metrics used to show no work when only prd/reply rows existed.
+test("factory --once excludes prd from unclaimable_ready but counts transient kinds", () => {
+  // PRDs are intentionally non-claimable (parked specs) — must NOT count as
+  // unclaimable_ready or operators get daily warn-spam. Transient artifacts
+  // like `reply` rows that end up ready ARE genuinely stuck — must count.
   createPrd("prd-a");
   createPrd("prd-b");
+  createReply("stuck-reply", "t-iter6-test");
   createTask("real-1");
   const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
   expect(r.status).toBe(0);
   const result = JSON.parse(r.stdout);
-  expect(result.unclaimable_ready).toBe(2);
-  expect(result.ready).toBe(1); // listReady excludes prd via spawn-ready kind filter
+  expect(result.unclaimable_ready).toBe(1); // reply only; prds excluded
+  expect(result.ready).toBe(1); // listReady excludes prd+reply via spawn-ready kind filter
   expect(result.spawned.length).toBe(1);
 });
 
-test("factory --metrics surfaces unclaimable_ready alongside other counters", () => {
+test("factory --metrics excludes prd from unclaimable_ready", () => {
+  // PRDs alone should produce a zero unclaimable count — warn must stay silent.
   createPrd("prd-stuck");
   const r = bun([FACTORY, "--metrics"]);
   expect(r.status).toBe(0);
   const m = JSON.parse(r.stdout);
   expect(m).toHaveProperty("unclaimable_ready");
-  expect(m.unclaimable_ready).toBe(1);
+  expect(m.unclaimable_ready).toBe(0);
 });
 
 test("factory --metrics prints snapshot with all 5 fields", () => {
