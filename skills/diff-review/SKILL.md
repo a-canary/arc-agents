@@ -54,7 +54,7 @@ Empty arrays are valid (and expected for clean, in-scope diffs).
 6. Address every `surprises_vs_brief`, `gaps_vs_brief`, and `adr_conflicts` entry by **either**:
    - editing the diff to reconcile, then re-running this skill, **or**
    - including an explicit justification in the row's `evidence_md` at merge time, naming each unresolved item.
-7. Ask bookie to log the report: `bun bin/ledger.ts event <task-id> diff_review '<json-report>' --agent <worker-name>`.
+7. Ask the bookie subagent (via the Agent tool) to log the report as `kind=diff_review` with the JSON object as the payload. Bookie writes via `bin/ledger.ts event`; the worker does not invoke the CLI directly (all-writes-through-bookie rule).
 8. Proceed to `git add` / `git commit` / push / PR.
 
 ## Reviewer prompt template
