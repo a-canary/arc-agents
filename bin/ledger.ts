@@ -901,11 +901,13 @@ switch (cmd) {
             });
           untrackedWorktreeDirs = fullDirs.filter((p) => !registered.has(p));
 
-          // Mergeable: registered worktree whose HEAD is an ancestor of main.
+          // Mergeable: registered worktree under worktreeRoot whose HEAD is an
+          // ancestor of main. Scoping to worktreeRoot keeps results aligned with
+          // untrackedWorktreeDirs (same scan window) and skips the main checkout
+          // + sibling worktrees outside the operator's chosen root.
+          const rootPrefix = worktreeRoot.replace(/\/+$/, "") + "/";
           for (const [path, branch] of registered) {
-            if (path === sample.replace(/\/+$/, "")) {
-              // Skip the anchor itself only if it isn't relevant; still check it.
-            }
+            if (!path.startsWith(rootPrefix)) continue;
             const head = spawnSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" });
             if (head.status !== 0) continue;
             const headSha = head.stdout.trim();
