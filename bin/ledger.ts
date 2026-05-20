@@ -7,6 +7,7 @@ import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
 import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
+import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadThreadContext } from "../src/worker/thread-context";
@@ -233,7 +234,7 @@ switch (cmd) {
       }
       const blockedBy = JSON.stringify(created.map((c) => c.id));
       db.run(
-        `UPDATE issues SET state='blocked', blocked_by=?, updated_at=strftime('%s','now') WHERE id=?`,
+        `UPDATE issues SET state='blocked', blocked_by=?, claimed_by=NULL, claimed_at=NULL, updated_at=strftime('%s','now') WHERE id=?`,
         [blockedBy, parent],
       );
       db.run(
@@ -283,6 +284,13 @@ switch (cmd) {
     if (state) {
       sets.push("state=?");
       vals.push(state);
+      // Symmetric with claim-stale-sweeper: any transition to a non-claimed
+      // state must clear claim fields so dashboards/queries don't see stale
+      // claimed_by on a blocked or failed row.
+      if (state === "blocked" || state === "ready" || state === "failed" || state === "cancelled") {
+        sets.push("claimed_by=NULL");
+        sets.push("claimed_at=NULL");
+      }
     }
     if (evidence) {
       sets.push("evidence_md=?");
@@ -332,6 +340,7 @@ switch (cmd) {
     break;
   }
 
+  case "ls":
   case "list": {
     const state = getFlag("state");
     const kind = getFlag("kind");
@@ -574,7 +583,7 @@ switch (cmd) {
   case "spawn-ready": {
     const type = getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
+    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
       type ? "AND type=?" : ""
     } ORDER BY ${SORT_KEY_SQL}`;
     out(type ? db.query(sql).all(type) : db.query(sql).all());
@@ -796,6 +805,248 @@ switch (cmd) {
     break;
   }
 
+  case "doctor": {
+    // Pure-read health probe. Surfaces lifecycle anomalies a /loop iteration
+    // would otherwise have to assemble by hand:
+    //   - phantom_claims: rows with claimed_by set while state is non-claim
+    //     (should be 0 after migration 015's trigger)
+    //   - stale_claims: claimed/wip rows whose claim has aged past --stale-hours
+    //     (default 4hr; matches factory.ts reap threshold)
+    //   - state_counts: tally of issues by state
+    //   - untracked_worktree_dirs: <repo>-* dirs under --worktree-root that
+    //     git doesn't know about (orphan scratch leaks)
+    //   - mergeable_worktrees: registered worktrees whose HEAD is an ancestor
+    //     of main — safe to reap manually
+    // Flags:
+    //   --stale-hours N      claim age cutoff (default 4)
+    //   --worktree-root P    scan root (default ~/worktrees)
+    //   --repo-prefix S      dir prefix to consider (default "arc-agents-")
+    //   --strict             exit 1 if any anomaly present (phantom/stale
+    //                        claims, untracked worktree dirs, scan error).
+    //                        mergeable_worktrees is informational and never
+    //                        triggers a non-zero exit on its own.
+    const { readdirSync, existsSync, statSync } = require("node:fs") as typeof import("node:fs");
+    const { join: pjoin } = require("node:path") as typeof import("node:path");
+    const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+
+    const db = openWithMigrate(getFlag("db"));
+    const staleHours = parseInt(getFlag("stale-hours") ?? "4", 10);
+    const worktreeRoot = getFlag("worktree-root") ?? `${process.env.HOME}/worktrees`;
+    const repoPrefix = getFlag("repo-prefix") ?? "arc-agents-";
+    const staleCutoff = Math.floor(Date.now() / 1000) - staleHours * 3600;
+
+    const phantomClaims = db
+      .query<{ id: string; state: string; claimed_by: string; claimed_at: number | null }, []>(
+        `SELECT id, state, claimed_by, claimed_at FROM issues
+         WHERE claimed_by IS NOT NULL AND state NOT IN ('claimed','wip')
+         ORDER BY updated_at DESC`,
+      )
+      .all();
+
+    const staleClaims = db
+      .query<{ id: string; state: string; claimed_by: string; claimed_at: number; age_hours: number }, [number]>(
+        `SELECT id, state, claimed_by, claimed_at,
+                ROUND((strftime('%s','now') - claimed_at) / 3600.0, 1) AS age_hours
+         FROM issues
+         WHERE state IN ('claimed','wip')
+           AND claimed_at IS NOT NULL
+           AND claimed_at < ?
+         ORDER BY claimed_at ASC`,
+      )
+      .all(staleCutoff);
+
+    const stateCounts = db
+      .query<{ state: string; n: number }, []>(
+        `SELECT state, COUNT(*) AS n FROM issues GROUP BY state ORDER BY n DESC`,
+      )
+      .all();
+
+    let untrackedWorktreeDirs: string[] = [];
+    let mergeableWorktrees: { path: string; branch: string | null }[] = [];
+    let worktreeScanError: string | null = null;
+
+    if (existsSync(worktreeRoot)) {
+      const dirs = readdirSync(worktreeRoot).filter((n) => n.startsWith(repoPrefix));
+      // Pick any one matching dir to anchor `git worktree list`; if none exist,
+      // we have nothing to compare against.
+      const sampleDir = dirs.find((n) => {
+        try { return statSync(pjoin(worktreeRoot, n)).isDirectory(); }
+        catch { return false; }
+      });
+
+      if (sampleDir) {
+        const sample = pjoin(worktreeRoot, sampleDir);
+        const wt = spawnSync("git", ["-C", sample, "worktree", "list", "--porcelain"], {
+          encoding: "utf8",
+        });
+        if (wt.status === 0) {
+          // Parse porcelain: blocks separated by blank lines, each starts with `worktree <path>`.
+          const registered = new Map<string, string | null>();
+          let curPath: string | null = null;
+          let curBranch: string | null = null;
+          for (const line of wt.stdout.split("\n")) {
+            if (line.startsWith("worktree ")) {
+              if (curPath) registered.set(curPath, curBranch);
+              curPath = line.slice("worktree ".length).trim();
+              curBranch = null;
+            } else if (line.startsWith("branch ")) {
+              curBranch = line.slice("branch ".length).trim();
+            } else if (line === "" && curPath) {
+              registered.set(curPath, curBranch);
+              curPath = null;
+              curBranch = null;
+            }
+          }
+          if (curPath) registered.set(curPath, curBranch);
+
+          // Untracked: present on disk but not in `git worktree list`.
+          const fullDirs = dirs
+            .map((n) => pjoin(worktreeRoot, n))
+            .filter((p) => {
+              try { return statSync(p).isDirectory(); } catch { return false; }
+            });
+          untrackedWorktreeDirs = fullDirs.filter((p) => !registered.has(p));
+
+          // Mergeable: registered worktree under worktreeRoot whose HEAD is an
+          // ancestor of main. Scoping to worktreeRoot keeps results aligned with
+          // untrackedWorktreeDirs (same scan window) and skips the main checkout
+          // + sibling worktrees outside the operator's chosen root.
+          const rootPrefix = worktreeRoot.replace(/\/+$/, "") + "/";
+          for (const [path, branch] of registered) {
+            if (!path.startsWith(rootPrefix)) continue;
+            const head = spawnSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" });
+            if (head.status !== 0) continue;
+            const headSha = head.stdout.trim();
+            const ancestor = spawnSync(
+              "git",
+              ["-C", path, "merge-base", "--is-ancestor", headSha, "main"],
+              { encoding: "utf8" },
+            );
+            if (ancestor.status === 0) {
+              mergeableWorktrees.push({ path, branch });
+            }
+          }
+        } else {
+          worktreeScanError = wt.stderr.trim() || "git worktree list failed";
+        }
+      }
+    } else {
+      worktreeScanError = `worktree root not found: ${worktreeRoot}`;
+    }
+
+    const report = {
+      stale_hours: staleHours,
+      worktree_root: worktreeRoot,
+      repo_prefix: repoPrefix,
+      phantom_claims: phantomClaims,
+      stale_claims: staleClaims,
+      state_counts: stateCounts,
+      untracked_worktree_dirs: untrackedWorktreeDirs,
+      mergeable_worktrees: mergeableWorktrees,
+      worktree_scan_error: worktreeScanError,
+    };
+
+    const strict = args.includes("--strict");
+    const anomalyCount =
+      phantomClaims.length +
+      staleClaims.length +
+      untrackedWorktreeDirs.length +
+      (worktreeScanError ? 1 : 0);
+
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(report, null, 2));
+      if (strict && anomalyCount > 0) process.exit(1);
+      break;
+    }
+
+    // Human-readable table. Mirrors the JSON shape so a reader can grep without
+    // remembering field names: same labels, just laid out for a tmux pane.
+    const lines: string[] = [];
+    lines.push(`ledger doctor  (stale_hours=${staleHours}, worktree_root=${worktreeRoot})`);
+    lines.push("");
+    lines.push("state_counts:");
+    if (stateCounts.length === 0) lines.push("  (empty)");
+    else for (const { state, n } of stateCounts) lines.push(`  ${state.padEnd(10)} ${n}`);
+    lines.push("");
+    lines.push(`phantom_claims:   ${phantomClaims.length}`);
+    if (phantomClaims.length > 0) {
+      for (const r of phantomClaims.slice(0, 5)) {
+        lines.push(`  - ${r.id}  state=${r.state}  by=${r.claimed_by}`);
+      }
+      if (phantomClaims.length > 5) lines.push(`  ... +${phantomClaims.length - 5} more`);
+    }
+    lines.push(`stale_claims:     ${staleClaims.length}`);
+    if (staleClaims.length > 0) {
+      for (const r of staleClaims.slice(0, 5)) {
+        lines.push(`  - ${r.id}  state=${r.state}  by=${r.claimed_by}  age=${r.age_hours}h`);
+      }
+      if (staleClaims.length > 5) lines.push(`  ... +${staleClaims.length - 5} more`);
+    }
+    lines.push(`untracked_worktree_dirs: ${untrackedWorktreeDirs.length}`);
+    for (const p of untrackedWorktreeDirs.slice(0, 5)) lines.push(`  - ${p}`);
+    if (untrackedWorktreeDirs.length > 5) {
+      lines.push(`  ... +${untrackedWorktreeDirs.length - 5} more`);
+    }
+    lines.push(`mergeable_worktrees:     ${mergeableWorktrees.length}`);
+    for (const w of mergeableWorktrees.slice(0, 5)) {
+      lines.push(`  - ${w.path}  ${w.branch ?? "(detached)"}`);
+    }
+    if (mergeableWorktrees.length > 5) {
+      lines.push(`  ... +${mergeableWorktrees.length - 5} more`);
+    }
+    if (worktreeScanError) {
+      lines.push("");
+      lines.push(`worktree_scan_error: ${worktreeScanError}`);
+    }
+    console.log(lines.join("\n"));
+    if (strict && anomalyCount > 0) process.exit(1);
+    break;
+  }
+
+  case "backfill-phantom-claims": {
+    // One-shot maintenance: NULL claimed_by + claimed_at on rows whose state is
+    // not 'claimed' or 'wip'. Migration 015's trigger prevents new phantoms, so
+    // this only matters for the pre-trigger backlog (the rows doctor surfaces
+    // under phantom_claims). Pure data change, no state-machine impact.
+    //
+    //   --apply   write changes (default: dry-run)
+    //   --json    machine-readable output (default: human line)
+    const db = openWithMigrate(getFlag("db"));
+    const apply = args.includes("--apply");
+
+    const targets = db
+      .query<{ id: string; state: string; claimed_by: string }, []>(
+        `SELECT id, state, claimed_by FROM issues
+         WHERE claimed_by IS NOT NULL AND state NOT IN ('claimed','wip')
+         ORDER BY updated_at DESC`,
+      )
+      .all();
+
+    let updated = 0;
+    if (apply && targets.length > 0) {
+      const r = db.run(
+        `UPDATE issues SET claimed_by = NULL, claimed_at = NULL
+         WHERE claimed_by IS NOT NULL AND state NOT IN ('claimed','wip')`,
+      );
+      updated = r.changes;
+    }
+
+    const report = { found: targets.length, applied: apply, updated, sample: targets.slice(0, 5) };
+    if (args.includes("--json")) {
+      console.log(JSON.stringify(report, null, 2));
+      break;
+    }
+    const verb = apply ? `cleared ${updated}` : `would clear ${targets.length} (dry-run; pass --apply to write)`;
+    console.log(`backfill-phantom-claims: ${verb}`);
+    if (targets.length > 0) {
+      for (const r of targets.slice(0, 5)) {
+        console.log(`  - ${r.id}  state=${r.state}  by=${r.claimed_by}`);
+      }
+      if (targets.length > 5) console.log(`  ... +${targets.length - 5} more`);
+    }
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -821,7 +1072,7 @@ switch (cmd) {
                                        skills: clarify-docs, improve-architecture,
                                                trash-retired-files, analyse-recent-sessions
                                        dedups against ready/blocked/wip/claimed hygiene rows
-  list [--state --kind --type --limit --all]
+  list [--state --kind --type --limit --all]   (alias: ls)
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them
   show <id>
@@ -838,6 +1089,20 @@ switch (cmd) {
                                        row + last merged event as audit anchor.
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
+  doctor [--stale-hours N --worktree-root P --repo-prefix S --json --strict]
+                                       pure-read health probe: phantom_claims,
+                                       stale_claims (>N hr, default 4),
+                                       state_counts, untracked_worktree_dirs,
+                                       mergeable_worktrees. Default output is a
+                                       human table; --json emits the raw report.
+                                       --strict exits 1 on any anomaly
+                                       (phantom/stale/untracked/scan_error);
+                                       mergeable_worktrees alone does not.
+  backfill-phantom-claims [--apply --json]
+                                       one-shot: NULL claimed_by/claimed_at on
+                                       rows whose state is terminal or non-claim
+                                       (the doctor phantom_claims backlog).
+                                       Default dry-run; --apply writes.
 
   global flags: --db <path>
 
