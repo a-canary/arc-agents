@@ -147,6 +147,19 @@ export function countReady(): number {
   return listReady().length;
 }
 
+// Ready rows the factory can never claim (kind ∉ {task,event}) — e.g. `prd`
+// stubs, `reply` placeholders. Operators looking at `--metrics` saw no work
+// while `ledger list --state ready` showed rows; this exposes the gap.
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function countUnclaimableReady(db: any): number {
+  const row = db
+    .query(
+      `SELECT COUNT(*) AS n FROM issues WHERE state='ready' AND kind NOT IN ('task','event')`,
+    )
+    .get() as { n: number } | undefined;
+  return row?.n ?? 0;
+}
+
 function shortId(): string {
   return Math.random().toString(36).slice(2, 8);
 }
@@ -171,6 +184,7 @@ export type TickResult = {
   worktrees: ReapedWorktree[];
   live: number;
   ready: number;
+  unclaimable_ready: number;
   spawned: string[];
   pools: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
 };
@@ -182,6 +196,7 @@ export function tick(): TickResult {
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
   const worktrees = reapWorktrees(db);
+  const unclaimable = countUnclaimableReady(db);
   db.close();
   const reaped = [...reapedExited, ...reapedAge, ...reapedDone];
 
@@ -229,6 +244,7 @@ export function tick(): TickResult {
     worktrees,
     live: curAny + curInteractive,
     ready: allReady.length,
+    unclaimable_ready: unclaimable,
     spawned,
     pools: {
       any: { live: curAny, cap: SLOTS_ANY },
@@ -242,6 +258,7 @@ export type Metrics = {
   claims_per_hr: number;
   reaps_per_hr: number;
   seconds_since_last_spawn: number | null;
+  unclaimable_ready: number;
   slots: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
 };
 
@@ -267,6 +284,7 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
       `SELECT COUNT(*) AS n FROM issue_events WHERE kind='reclaimed' AND agent='claim-stale-sweeper' AND ts >= ?`,
     )
     .get(hourAgo);
+  const unclaimable = countUnclaimableReady(db);
   db.close();
 
   return {
@@ -274,6 +292,7 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
     claims_per_hr: claims?.n ?? 0,
     reaps_per_hr: reaps?.n ?? 0,
     seconds_since_last_spawn: since,
+    unclaimable_ready: unclaimable,
     slots: {
       any: { live: liveAny, cap: SLOTS_ANY },
       interactive: { live: liveInteractive, cap: SLOTS_INTERACTIVE },
@@ -326,6 +345,11 @@ async function sleep(s: number): Promise<void> {
 }
 
 async function loop(): Promise<void> {
+  // Throttle "unclaimable_ready > 0" stuck-queue warnings: emit on the 0→N edge
+  // and re-emit every 5 min while stuck, so operators see the gap without spam
+  // on every quiet tick.
+  let lastUnclaimable = 0;
+  let lastUnclaimableLog = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -333,6 +357,19 @@ async function loop(): Promise<void> {
       if (r.reaped.length || r.spawned.length || r.swept.length) {
         console.log(JSON.stringify({ ts: new Date().toISOString(), ...r }));
       }
+      const now = Math.floor(Date.now() / 1000);
+      const edge = r.unclaimable_ready > 0 && lastUnclaimable === 0;
+      const heartbeat = r.unclaimable_ready > 0 && now - lastUnclaimableLog >= 300;
+      if (edge || heartbeat) {
+        console.log(JSON.stringify({
+          ts: new Date().toISOString(),
+          warn: "unclaimable_ready",
+          count: r.unclaimable_ready,
+          hint: "kind ∉ {task,event} — factory cannot claim; check `ledger list --state ready`",
+        }));
+        lastUnclaimableLog = now;
+      }
+      lastUnclaimable = r.unclaimable_ready;
     } catch (err) {
       // Don't let a single bad tick (silent tmux/ledger error) kill the daemon
       // and freeze the queue. Log + continue. See bug: factory went silent on
