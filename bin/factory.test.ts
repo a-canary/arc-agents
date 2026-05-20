@@ -554,6 +554,38 @@ test("reapMergeableWorktrees: skips dirty worktree with reason=dirty-worktree", 
   }
 });
 
+test("printFactoryStarted emits expected JSON shape on stdout", async () => {
+  const { printFactoryStarted } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printFactoryStarted(
+      {
+        slots_any: 4,
+        slots_interactive: 2,
+        max_age_sec: 14400,
+        interval_sec: 5,
+        prefix: "arc-worker",
+        db: "/tmp/t.db",
+      },
+      1716192000,
+    );
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("factory_started");
+  expect(j.pid).toBe(process.pid);
+  expect(j.slots_any).toBe(4);
+  expect(j.slots_interactive).toBe(2);
+  expect(j.max_age_sec).toBe(14400);
+  expect(j.interval_sec).toBe(5);
+  expect(j.prefix).toBe("arc-worker");
+  expect(j.db).toBe("/tmp/t.db");
+  expect(typeof j.ts).toBe("string");
+});
+
 test("printMergeablePruned emits expected JSON shape on stdout", async () => {
   const { printMergeablePruned } = await import(join(REPO, "bin", "factory.ts"));
   const orig = console.log;

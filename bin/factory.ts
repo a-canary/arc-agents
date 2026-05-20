@@ -530,7 +530,39 @@ async function sleep(s: number): Promise<void> {
   return new Promise((r) => setTimeout(r, s * 1000));
 }
 
+// One-shot startup line. Lets operators correlate post-restart silence with an
+// actual fresh daemon (vs. a hung old one). Emitted only by `loop()` — short
+// modes (--once / --reap / --metrics) stay quiet so they remain pipe-friendly.
+export function printFactoryStarted(
+  cfg: {
+    slots_any: number;
+    slots_interactive: number;
+    max_age_sec: number;
+    interval_sec: number;
+    prefix: string;
+    db: string | null;
+  },
+  now: number = Math.floor(Date.now() / 1000),
+): void {
+  console.log(
+    JSON.stringify({
+      ts: new Date(now * 1000).toISOString(),
+      info: "factory_started",
+      pid: process.pid,
+      ...cfg,
+    }),
+  );
+}
+
 async function loop(): Promise<void> {
+  printFactoryStarted({
+    slots_any: SLOTS_ANY,
+    slots_interactive: SLOTS_INTERACTIVE,
+    max_age_sec: MAX_AGE,
+    interval_sec: INTERVAL,
+    prefix: PREFIX,
+    db: process.env.ARC_LEDGER_DB ?? null,
+  });
   // Throttle "unclaimable_ready > 0" stuck-queue warnings: emit on the 0→N edge
   // and re-emit every 5 min while stuck, so operators see the gap without spam
   // on every quiet tick. Same shape applies to orphan-wait-for-ledger detection.
