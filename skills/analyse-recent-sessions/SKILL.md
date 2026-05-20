@@ -5,50 +5,38 @@ description: "Read N recent worker tmux scrollbacks / handoff events, identify r
 
 # analyse-recent-sessions — Mine Recent Worker Traces for Patterns
 
-Use when a hygiene worker has scrollback and event-log access to a window of recent worker sessions and wants to convert recurring friction into a durable skill update (per the "Pattern Detection & Root-Cause Discipline" rule in `roles/AGENTS.md` / the doctrine loaded by every role).
-
-This skill is the explicit, on-demand counterpart to the stop-hook's `ke-learn`: instead of one session's takeaways, it spans N sessions and looks for shape.
-
-Wiring this skill into the stop-hook reminder (and any bookie hygiene-emit verb) is Slice D's responsibility — until that lands, workers reach this skill by directory listing or by an explicit pointer from the director.
+Use when a hygiene worker has scrollback + event-log access across N recent worker sessions and wants to convert recurring friction into a durable skill update (per "Pattern Detection & Root-Cause Discipline" in `roles/AGENTS.md`). On-demand counterpart to the stop-hook's `ke-learn`: spans N sessions, looks for shape. Slice D wires this into the stop-hook reminder + bookie hygiene-emit; until then workers reach it by directory listing or director pointer.
 
 ## When to use
 
-- ≥3 recent worker rows showed the same failure mode, the same wasted exploration, or the same hand-holding question.
-- A new skill landed recently and you want to check whether workers are actually invoking it correctly.
-- The director suspects a class of work is consistently over-budget and wants evidence before re-shaping the workflow.
+- ≥3 recent worker rows showed the same failure mode, wasted exploration, or hand-holding question.
+- A new skill landed recently and you want to verify workers invoke it correctly.
+- Director suspects a class of work is consistently over-budget and wants evidence before re-shaping.
 
-Do **not** use this skill to debug a single failed row — use `triage-failed` for that. The minimum signal here is N≥3 rows showing the same shape.
+Do **not** use this to debug a single failed row — that's `triage-failed`. Minimum signal here is N≥3 rows showing the same shape.
 
 ## Inputs expected
 
-- A time window or a row-id list (e.g. "last 24h of `class=hygiene` workers" or `["row-a", "row-b", "row-c"]`).
-- Access to the ledger event log and (where available) tmux scrollback under `~/vault/agents/<role>/journal/`.
-- A hypothesis to test, or "open-ended" if scanning for any pattern.
+A time window or row-id list (e.g. "last 24h of `class=hygiene` workers" or `["row-a","row-b","row-c"]`); access to the ledger event log and tmux scrollback under `~/vault/agents/<role>/journal/`; a hypothesis to test, or "open-ended".
 
 ## Deliverable shape
 
-1. A short markdown report under `~/vault/agents/director/inbox/analysis-<unix-ts>.md` containing:
-   - **Window:** time range + row count examined.
-   - **Pattern(s) found:** each pattern named, with ≥3 row-ids as evidence.
-   - **Root cause hypothesis:** one paragraph per pattern.
-   - **Recommended action:** either (a) a new skill (name + one-paragraph charter), (b) an edit to an existing skill (path + one-line diff intent), or (c) a CHOICES / ADR proposal.
-2. If recommendation is (a) or (b) **and** the change is slice-bounded (≤30 lines), the slice may include the SKILL.md edit. Otherwise file a follow-up ledger row and link the analysis report from it.
-3. A ledger `event` of `kind=note` on each of the N evidence rows pointing to the analysis report path (delegate the write to the bookie subagent — workers do not write to the ledger directly).
+1. Markdown report at `~/vault/agents/director/inbox/analysis-<unix-ts>.md` with **Window** (time range + row count), **Pattern(s) found** (each named, with ≥3 row-ids as evidence), **Root cause hypothesis** (one paragraph per pattern), **Recommended action** — (a) a new skill (name + one-paragraph charter), (b) edit to existing skill (path + one-line diff intent), or (c) CHOICES/ADR proposal.
+2. If (a)/(b) is slice-bounded (≤30 lines), the slice may include the SKILL.md edit; otherwise file a follow-up ledger row and link the analysis report from it.
+3. A ledger `event` of `kind=note` on each evidence row pointing to the analysis report path (delegate the write to bookie — workers do not write the ledger directly).
 
 ## Slice budget
 
 - Time: ≤90 min (reading scrollback is slow).
-- Rows examined: ≥3, ≤20 (above 20, the signal is no longer slice-shaped — file an umbrella row).
-- Diff: ≤30 lines of code/skill changes within this slice (recommendations beyond that become follow-up rows).
+- Rows examined: ≥3, ≤20 (above 20 signal is no longer slice-shaped — file an umbrella row).
+- Diff: ≤30 lines of code/skill changes (recommendations beyond that become follow-up rows).
 
 ## Verification
 
-- The pattern names ≥3 distinct rows that exhibit it.
-- The recommended action is concrete enough that a future worker could execute it without further interpretation.
-- If a SKILL.md was edited inline, `bun run typecheck` is still green and the edit is small enough to fit the slice budget.
+Pattern names ≥3 distinct rows; recommended action is concrete enough that a future worker could execute it without further interpretation; if a SKILL.md was edited inline, `bun run typecheck` is green and the edit fits the slice budget.
 
 ## Termination
 
 - **merged** — analysis report committed (or staged in vault), evidence rows annotated, PR (if any) merged.
-- **failed** — couldn't find a pattern with N≥3 evidence; record the negative result in evidence (still useful — it rules out a hypothesis) and exit failed.
-- **blocked** — pattern points at a decision only the human can make (e.g. "switch model tier for class=hygiene"); decompose into a HITL child carrying the analysis report and the proposed action.
+- **failed** — couldn't find a pattern with N≥3 evidence; record the negative result (still useful — rules out a hypothesis) and exit failed.
+- **blocked** — pattern points at a decision only the human can make (e.g. "switch model tier for class=hygiene"); decompose into a HITL child carrying the analysis report + proposed action.
