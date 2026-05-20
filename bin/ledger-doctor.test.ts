@@ -150,6 +150,44 @@ test("doctor: surfaces orphan worktree dirs not in git worktree list", async () 
   }
 });
 
+test("doctor: mergeable_worktrees scoped to --worktree-root", async () => {
+  const { db, root, cleanup } = fresh();
+  try {
+    await $`bun ${cli} init --db ${db}`.quiet();
+
+    const repo = mkdtempSync(join(tmpdir(), "doctor-scope-"));
+    const outsideRoot = mkdtempSync(join(tmpdir(), "doctor-outside-"));
+    try {
+      await $`git -C ${repo} init -q -b main`.quiet();
+      await $`git -C ${repo} config user.email t@t`.quiet();
+      await $`git -C ${repo} config user.name t`.quiet();
+      writeFileSync(join(repo, "f"), "x");
+      await $`git -C ${repo} add f`.quiet();
+      await $`git -C ${repo} commit -q -m init`.quiet();
+
+      // Registered worktree INSIDE scan root, HEAD == main → mergeable.
+      const inside = join(root, "arc-agents-inside");
+      await $`git -C ${repo} worktree add -q ${inside} -b feat-inside`.quiet();
+
+      // Registered worktree OUTSIDE scan root, also HEAD == main. Must be
+      // excluded from mergeable_worktrees because it's not under --worktree-root.
+      const outside = join(outsideRoot, "arc-agents-outside");
+      await $`git -C ${repo} worktree add -q ${outside} -b feat-outside`.quiet();
+
+      const out = await doctor(db, root);
+      expect(out.worktree_scan_error).toBeNull();
+      const paths = out.mergeable_worktrees.map((w) => w.path);
+      expect(paths).toContain(inside);
+      expect(paths).not.toContain(outside);
+    } finally {
+      rmSync(repo, { recursive: true, force: true });
+      rmSync(outsideRoot, { recursive: true, force: true });
+    }
+  } finally {
+    cleanup();
+  }
+});
+
 test("doctor: missing worktree root reports scan error", async () => {
   const { db, cleanup } = fresh();
   try {
