@@ -10,9 +10,17 @@ import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
 import { loadThreadContext } from "../src/worker/thread-context";
-import { loadConfig } from "../src/ledger/ux-config";
+import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
+import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
+
+const KNOWN_HYGIENE_SKILLS = [
+  "clarify-docs",
+  "improve-architecture",
+  "trash-retired-files",
+  "analyse-recent-sessions",
+] as const;
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -467,6 +475,60 @@ switch (cmd) {
     break;
   }
 
+  case "hygiene-emit": {
+    // hygiene-emit --skill <s> --title <t> [--body <b>] [--observed-in-task <id>] [--agent bookie]
+    // Inserts class=hygiene kind=task type=quality state=ready row with title
+    // prefixed "<skill>: <title>". Dedups against ready/blocked/wip/claimed
+    // hygiene rows with same skill + similar title (Levenshtein / substring).
+    // Hard CLI guarantee — workers can fire without re-implementing dedup.
+    const skill = getFlag("skill");
+    const title = getFlag("title");
+    const body = getFlag("body") ?? "";
+    const observed = getFlag("observed-in-task") ?? null;
+    const project = getFlag("project") ?? "arc-agents";
+    const agent = getFlag("agent") ?? "cli";
+    if (!skill) die("--skill required (one of: " + KNOWN_HYGIENE_SKILLS.join(", ") + ")");
+    if (!KNOWN_HYGIENE_SKILLS.includes(skill as (typeof KNOWN_HYGIENE_SKILLS)[number])) {
+      die(`--skill must be one of: ${KNOWN_HYGIENE_SKILLS.join(", ")}`);
+    }
+    if (!title || title.startsWith("--")) die("--title required");
+
+    const db = openWithMigrate(getFlag("db"));
+    const existing = db
+      .query<ExistingRow, []>(
+        `SELECT id, title, COALESCE(class, '') AS class, state, NULL AS skill
+         FROM issues
+         WHERE class='hygiene'
+           AND state IN ('ready','blocked','wip','claimed')`,
+      )
+      .all();
+    const verdict = checkDuplicate(skill, title, existing);
+    if (verdict.duplicate) {
+      out({
+        emitted: false,
+        duplicate_of: verdict.existingId,
+        reason: verdict.reason,
+      });
+      break;
+    }
+
+    const prefixedTitle = title.startsWith(`${skill}:`) ? title : `${skill}: ${title}`;
+    const observedNote = observed ? `\n\nObserved in task: ${observed}` : "";
+    const finalBody = body + observedNote;
+    const id = mintId(db, prefixedTitle);
+    db.run(
+      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, class)
+       VALUES (?, ?, NULL, ?, ?, '', 'quality', 'ready', 'task', 'hygiene')`,
+      [id, project, prefixedTitle, finalBody],
+    );
+    db.run(
+      `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
+      [id, agent, `hygiene-emit skill=${skill}${observed ? ` observed_in=${observed}` : ""}`],
+    );
+    out({ id, emitted: true, skill, state: "ready", class: "hygiene" });
+    break;
+  }
+
   case "tick": {
     // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr)
     // + reap expired hitl_prompts (open → timeout_locked).
@@ -754,6 +816,11 @@ switch (cmd) {
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
                                        emit HITL prompt + fanout to alive UX modules
+  hygiene-emit --skill <s> --title <t> [--body <b>] [--observed-in-task <id>]
+                                       emit hygiene followup row (class=hygiene type=quality)
+                                       skills: clarify-docs, improve-architecture,
+                                               trash-retired-files, analyse-recent-sessions
+                                       dedups against ready/blocked/wip/claimed hygiene rows
   list [--state --kind --type --limit --all]
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them

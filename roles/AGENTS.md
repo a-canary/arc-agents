@@ -68,7 +68,8 @@ Default shape of a worker session:
 3. **Read in-scope docs** — CONTEXT.md and the CHOICES sections referenced by the row's `repo`.
 4. **Decompose if blocked, else execute** — see §2.
 5. **Drive to terminal** — `merged` (with evidence + PR) or `failed` (with evidence), or `blocked` via decomposition. See `claude-afk` skill and `hooks/stop.sh`.
-6. **ke-learn** (auto, via stop hook).
+6. **Hygiene phase** — through the bookie, emit 0..N hygiene followups for observations made during this slice; use the appropriate hygiene skill (`clarify-docs`, `improve-architecture`, `trash-retired-files`, `analyse-recent-sessions`). Fires after the primary task reaches terminal or blocked state, before exit. Use `bin/ledger.ts hygiene-emit --skill <s> --title <t> [--body <b>] [--observed-in-task <id>]` (routed through bookie); dedup is automatic against ready/blocked/wip/claimed hygiene rows with the same skill and a similar title.
+7. **ke-learn** (auto, via stop hook).
 
 ## 6. When Confused
 
