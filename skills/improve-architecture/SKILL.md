@@ -34,7 +34,7 @@ Do **not** use this skill to redesign a subsystem, change a contract, or rename 
    - Before: <2-line description of structure>
    - After: <2-line description>
    - Behavior delta: **none** (or list it, in which case re-scope).
-4. No `// TODO` left behind. If something is out of scope, file a follow-up ledger row and link it in the PR.
+4. No bare todo markers left behind. If something is out of scope, file a follow-up ledger row and link it in the PR.
 
 ## Slice budget
 
