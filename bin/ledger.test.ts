@@ -434,6 +434,51 @@ test("decompose: parent → blocked, N children created with HITL/ready", async 
   }
 });
 
+test("decompose: claimed parent has claim fields nulled when flipped to blocked", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "claimed work")) as { id: string };
+    await run(db, "claim", "w-decomp");
+    const claimed = (await run(db, "show", parent.id)) as { issue: { state: string; claimed_by: string | null; claimed_at: number | null } };
+    expect(claimed.issue.state).toBe("claimed");
+    expect(claimed.issue.claimed_by).toBe("w-decomp");
+    expect(claimed.issue.claimed_at).not.toBeNull();
+
+    await run(db, "decompose", parent.id, "--child", "sub one");
+
+    const shown = (await run(db, "show", parent.id)) as { issue: { state: string; claimed_by: string | null; claimed_at: number | null } };
+    expect(shown.issue.state).toBe("blocked");
+    expect(shown.issue.claimed_by).toBeNull();
+    expect(shown.issue.claimed_at).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state blocked|failed|cancelled nulls claim fields", async () => {
+  for (const terminalish of ["blocked", "failed", "cancelled"] as const) {
+    const { db, cleanup } = freshDb();
+    try {
+      await run(db, "init");
+      const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", `t-${terminalish}`)) as { id: string };
+      await run(db, "claim", `w-${terminalish}`);
+      const claimed = (await run(db, "show", c.id)) as { issue: { claimed_by: string | null; claimed_at: number | null } };
+      expect(claimed.issue.claimed_by).toBe(`w-${terminalish}`);
+      expect(claimed.issue.claimed_at).not.toBeNull();
+
+      await run(db, "update", c.id, "--state", terminalish);
+
+      const shown = (await run(db, "show", c.id)) as { issue: { state: string; claimed_by: string | null; claimed_at: number | null } };
+      expect(shown.issue.state).toBe(terminalish);
+      expect(shown.issue.claimed_by).toBeNull();
+      expect(shown.issue.claimed_at).toBeNull();
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 test("decompose: fanout cap of 5 enforced", async () => {
   const { db, cleanup } = freshDb();
   try {

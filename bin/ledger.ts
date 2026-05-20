@@ -233,7 +233,7 @@ switch (cmd) {
       }
       const blockedBy = JSON.stringify(created.map((c) => c.id));
       db.run(
-        `UPDATE issues SET state='blocked', blocked_by=?, updated_at=strftime('%s','now') WHERE id=?`,
+        `UPDATE issues SET state='blocked', blocked_by=?, claimed_by=NULL, claimed_at=NULL, updated_at=strftime('%s','now') WHERE id=?`,
         [blockedBy, parent],
       );
       db.run(
@@ -283,6 +283,13 @@ switch (cmd) {
     if (state) {
       sets.push("state=?");
       vals.push(state);
+      // Symmetric with claim-stale-sweeper: any transition to a non-claimed
+      // state must clear claim fields so dashboards/queries don't see stale
+      // claimed_by on a blocked or failed row.
+      if (state === "blocked" || state === "ready" || state === "failed" || state === "cancelled") {
+        sets.push("claimed_by=NULL");
+        sets.push("claimed_at=NULL");
+      }
     }
     if (evidence) {
       sets.push("evidence_md=?");
