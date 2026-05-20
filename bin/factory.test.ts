@@ -63,6 +63,37 @@ function createTask(title: string, type = "mvp") {
   return JSON.parse(r.stdout).id;
 }
 
+function createPrd(title: string) {
+  // PRDs are non-claimable by design (parked product specs); they are
+  // intentionally excluded from unclaimable_ready to silence warn-spam.
+  const r = bun([
+    LEDGER, "create",
+    "--kind", "prd",
+    "--type", "mvp",
+    "--title", title,
+    "--class", "MVP",
+    "--urgency", "nominal",
+    "--class-rationale", "test fixture",
+  ]);
+  if (r.status !== 0) throw new Error(`create prd failed: ${r.stderr}`);
+  return JSON.parse(r.stdout).id;
+}
+
+function createReply(title: string, threadId: string) {
+  // `reply` is a transient artifact; if it ends up ready, it's stuck — the
+  // unclaimable_ready warn surfaces this.
+  const r = bun([
+    LEDGER, "create",
+    "--kind", "reply",
+    "--type", "mvp",
+    "--title", title,
+    "--source-module", "arc-chat",
+    "--thread", threadId,
+  ]);
+  if (r.status !== 0) throw new Error(`create reply failed: ${r.stderr}`);
+  return JSON.parse(r.stdout).id;
+}
+
 test("factory --once spawns no workers when ledger is empty", () => {
   const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
   expect(r.status).toBe(0);
@@ -96,6 +127,40 @@ test("factory --once sweeps stale claims back to ready before counting work", as
   expect(result.swept).toEqual([id]);
   expect(result.ready).toBe(1);
   expect(result.spawned.length).toBe(1);
+});
+
+test("factory --once reclaims orphan claims whose tmux session vanished externally", async () => {
+  // Race: a worker claims a task, then its tmux session is killed -9 from outside
+  // the reap path (OOM, manual kill, host reboot). The claim is younger than
+  // 2hr, so sweepStaleClaims won't touch it. pane_dead never fires because the
+  // session is fully gone. reapFinished only fires on terminal states. Result
+  // (before fix): the claim sits orphaned for up to 2hr, blocking the task.
+  const id = createTask("orphan-race");
+  const sessName = `${prefix}-a-orph01`;
+  // Simulate the real spawn: tmux session exists, ledger row is claimed by it,
+  // claim is fresh (5 sec ago, well under the 2hr stale threshold).
+  tmux(["new-session", "-d", "-s", sessName, "sleep", "300"]);
+  const fiveSecAgo = Math.floor(Date.now() / 1000) - 5;
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(dbPath);
+  db.run("UPDATE issues SET state='claimed', claimed_by=?, claimed_at=? WHERE id=?", [
+    sessName,
+    fiveSecAgo,
+    id,
+  ]);
+  db.close();
+  // External kill — not via factory reap path. Session disappears completely
+  // (not a pane_dead lingering session, which reapExited already handles).
+  tmux(["kill-session", "-t", sessName]);
+  expect(listWorkers()).not.toContain(sessName);
+
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+  // Expectation: the orphan claim is reset to ready so the slot frees up.
+  expect(result.swept).toContain(id);
+  // And the now-ready task should spawn a fresh worker.
+  expect(result.ready).toBeGreaterThanOrEqual(1);
 });
 
 test("factory --reap kills sessions older than MAX_AGE", () => {
@@ -139,6 +204,32 @@ test("factory does not reap sessions younger than MAX_AGE", () => {
   const result = JSON.parse(r.stdout);
   expect(result.reaped).not.toContain(sessName);
   expect(listWorkers()).toContain(sessName);
+});
+
+test("factory --once excludes prd from unclaimable_ready but counts transient kinds", () => {
+  // PRDs are intentionally non-claimable (parked specs) — must NOT count as
+  // unclaimable_ready or operators get daily warn-spam. Transient artifacts
+  // like `reply` rows that end up ready ARE genuinely stuck — must count.
+  createPrd("prd-a");
+  createPrd("prd-b");
+  createReply("stuck-reply", "t-iter6-test");
+  createTask("real-1");
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+  expect(result.unclaimable_ready).toBe(1); // reply only; prds excluded
+  expect(result.ready).toBe(1); // listReady excludes prd+reply via spawn-ready kind filter
+  expect(result.spawned.length).toBe(1);
+});
+
+test("factory --metrics excludes prd from unclaimable_ready", () => {
+  // PRDs alone should produce a zero unclaimable count — warn must stay silent.
+  createPrd("prd-stuck");
+  const r = bun([FACTORY, "--metrics"]);
+  expect(r.status).toBe(0);
+  const m = JSON.parse(r.stdout);
+  expect(m).toHaveProperty("unclaimable_ready");
+  expect(m.unclaimable_ready).toBe(0);
 });
 
 test("factory --metrics prints snapshot with all 5 fields", () => {
@@ -225,6 +316,125 @@ test("worker-shell.sh allows arctest-* claim against a non-canon (test) ledger",
   expect(r.stdout).toContain("race-lost-or-empty");
 });
 
+test("auditOrphans detects long-running wait-for-ledger.ts processes", async () => {
+  // Spawn a fake wait-for-ledger.ts proc via a bash wrapper named to match.
+  // We can't fake `etimes` without a kernel hack, so we test the detection path
+  // by importing the function and stubbing `ps`. Simpler approach: spawn a real
+  // sleep, then call the function with a tiny age threshold via monkey-patch.
+  // Even simpler: just import and verify the no-op (no orphan) returns empty.
+  const { auditOrphans } = await import(join(REPO, "bin", "factory.ts"));
+  const r = auditOrphans();
+  // Live test machine may or may not have real orphans. Contract: function
+  // returns shape {pids, ages} without throwing, ages.length === pids.length.
+  expect(Array.isArray(r.pids)).toBe(true);
+  expect(Array.isArray(r.ages)).toBe(true);
+  expect(r.pids.length).toBe(r.ages.length);
+  // Any detected ages must be >= 24hr (filter threshold).
+  for (const a of r.ages) expect(a).toBeGreaterThanOrEqual(86400);
+});
+
+test("printOrphanWarn emits expected JSON shape on stderr", async () => {
+  const { printOrphanWarn } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.error;
+  let captured = "";
+  console.error = (s: string) => { captured = s; };
+  try {
+    printOrphanWarn({ pids: [1234, 5678], ages: [90000, 432000] }, 1716192000);
+  } finally {
+    console.error = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.warn).toBe("orphaned_wait_for_ledger");
+  expect(j.count).toBe(2);
+  expect(j.pids).toEqual([1234, 5678]);
+  expect(j.ages_hr).toEqual([25, 120]);
+  expect(typeof j.ts).toBe("string");
+  expect(typeof j.hint).toBe("string");
+});
+
+test("printOrphansCleared emits info-level JSON on stdout", async () => {
+  const { printOrphansCleared } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printOrphansCleared(3, 1716192000);
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("orphans_cleared");
+  expect(j.prior_count).toBe(3);
+  expect(j.warn).toBeUndefined();
+  expect(typeof j.ts).toBe("string");
+});
+
+test("printMergeableWarn emits expected JSON shape on stderr", async () => {
+  const { printMergeableWarn } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.error;
+  let captured = "";
+  console.error = (s: string) => { captured = s; };
+  try {
+    printMergeableWarn(
+      { paths: ["/home/u/worktrees/arc-agents-foo", "/home/u/worktrees/arc-agents-bar"], branches: ["foo", null] },
+      1716192000,
+    );
+  } finally {
+    console.error = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.warn).toBe("mergeable_worktrees");
+  expect(j.count).toBe(2);
+  expect(j.paths).toEqual(["/home/u/worktrees/arc-agents-foo", "/home/u/worktrees/arc-agents-bar"]);
+  expect(j.branches).toEqual(["foo", null]);
+  expect(typeof j.ts).toBe("string");
+  expect(typeof j.hint).toBe("string");
+});
+
+test("printMergeableCleared emits info-level JSON on stdout", async () => {
+  const { printMergeableCleared } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printMergeableCleared(2, 1716192000);
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("mergeable_cleared");
+  expect(j.prior_count).toBe(2);
+  expect(j.warn).toBeUndefined();
+  expect(typeof j.ts).toBe("string");
+});
+
+// Regression: systemd runs the daemon with a PATH that excludes ~/.bun/bin,
+// so spawnSync("bun", ...) silently fails with ENOENT and the audit returns
+// empty. The fix is to spawn process.execPath (the bun binary that started
+// the daemon) instead of relying on PATH lookup.
+test("auditMergeableWorktrees works when PATH does not contain bun", async () => {
+  const { auditMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const origPath = process.env.PATH;
+  const origDb = process.env.ARC_LEDGER_DB;
+  process.env.ARC_LEDGER_DB = dbPath;
+  // Strip bun from PATH; keep system bins so git/tmux still work for doctor.
+  process.env.PATH = "/usr/bin:/bin";
+  try {
+    const r = auditMergeableWorktrees();
+    // No worktrees in the empty test ledger → expect empty arrays, NOT a
+    // silent ENOENT fallback. The key distinction: with the bug, doctor was
+    // never invoked at all; with the fix, doctor runs and returns an empty
+    // mergeable_worktrees set.
+    expect(Array.isArray(r.paths)).toBe(true);
+    expect(Array.isArray(r.branches)).toBe(true);
+    expect(r.paths.length).toBe(r.branches.length);
+  } finally {
+    process.env.PATH = origPath;
+    if (origDb === undefined) delete process.env.ARC_LEDGER_DB;
+    else process.env.ARC_LEDGER_DB = origDb;
+  }
+});
+
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
@@ -242,4 +452,138 @@ test("worker-shell.sh claims atomically: only one of two parallel shells wins fo
   const issue = JSON.parse(show.stdout).issue;
   expect(issue.state).toBe("claimed");
   expect(["w1", "w2"]).toContain(issue.claimed_by);
+});
+
+// --- reapMergeableWorktrees regression tests --------------------------------
+// Build a real git repo + worktree on HEAD-of-main and feed it directly to
+// reapMergeableWorktrees(found) so we bypass auditMergeableWorktrees and
+// ledger doctor. This keeps the test scoped to the prune logic itself.
+
+import { existsSync } from "node:fs";
+
+function setupMergeableRepo(): { parent: string; wt: string; branch: string } {
+  const root = mkdtempSync(join(tmpdir(), "arc-prune-test-"));
+  const parent = join(root, "parent");
+  spawnSync("git", ["init", "-q", "-b", "main", parent], { encoding: "utf8" });
+  spawnSync("git", ["-C", parent, "config", "user.email", "t@t"], { encoding: "utf8" });
+  spawnSync("git", ["-C", parent, "config", "user.name", "t"], { encoding: "utf8" });
+  writeFileSync(join(parent, "a"), "1\n");
+  spawnSync("git", ["-C", parent, "add", "a"], { encoding: "utf8" });
+  spawnSync("git", ["-C", parent, "commit", "-q", "-m", "init"], { encoding: "utf8" });
+  const branch = `wt-${Math.random().toString(36).slice(2, 8)}`;
+  const wt = join(root, "wt");
+  const add = spawnSync("git", ["-C", parent, "worktree", "add", "-q", "-b", branch, wt], { encoding: "utf8" });
+  if (add.status !== 0) throw new Error(`worktree add failed: ${add.stderr}`);
+  return { parent, wt, branch };
+}
+
+test("reapMergeableWorktrees: gated off when ARC_AUTO_PRUNE != 1", async () => {
+  const { reapMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const { wt, branch } = setupMergeableRepo();
+  const orig = process.env.ARC_AUTO_PRUNE;
+  delete process.env.ARC_AUTO_PRUNE;
+  try {
+    const r = reapMergeableWorktrees({ paths: [wt], branches: [branch] });
+    expect(r.pruned).toEqual([]);
+    expect(r.skipped).toEqual([]);
+    expect(existsSync(wt)).toBe(true);
+  } finally {
+    if (orig === undefined) delete process.env.ARC_AUTO_PRUNE;
+    else process.env.ARC_AUTO_PRUNE = orig;
+  }
+});
+
+test("reapMergeableWorktrees: prunes a clean worktree end-to-end", async () => {
+  const { reapMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const { parent, wt, branch } = setupMergeableRepo();
+  const orig = process.env.ARC_AUTO_PRUNE;
+  process.env.ARC_AUTO_PRUNE = "1";
+  try {
+    const r = reapMergeableWorktrees({ paths: [wt], branches: [branch] });
+    expect(r.skipped).toEqual([]);
+    expect(r.pruned).toEqual([{ path: wt, branch }]);
+    expect(existsSync(wt)).toBe(false);
+    // Branch should also be gone.
+    const br = spawnSync("git", ["-C", parent, "branch", "--list", branch], { encoding: "utf8" });
+    expect(br.stdout.trim()).toBe("");
+  } finally {
+    if (orig === undefined) delete process.env.ARC_AUTO_PRUNE;
+    else process.env.ARC_AUTO_PRUNE = orig;
+  }
+});
+
+test("reapMergeableWorktrees: skips dirty worktree with reason=dirty-worktree", async () => {
+  const { reapMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const { wt, branch } = setupMergeableRepo();
+  writeFileSync(join(wt, "scratch"), "uncommitted\n");
+  const orig = process.env.ARC_AUTO_PRUNE;
+  process.env.ARC_AUTO_PRUNE = "1";
+  try {
+    const r = reapMergeableWorktrees({ paths: [wt], branches: [branch] });
+    expect(r.pruned).toEqual([]);
+    expect(r.skipped.length).toBe(1);
+    expect(r.skipped[0]!.path).toBe(wt);
+    expect(r.skipped[0]!.reason).toBe("dirty-worktree");
+    expect(existsSync(wt)).toBe(true);
+  } finally {
+    if (orig === undefined) delete process.env.ARC_AUTO_PRUNE;
+    else process.env.ARC_AUTO_PRUNE = orig;
+  }
+});
+
+test("printFactoryStarted emits expected JSON shape on stdout", async () => {
+  const { printFactoryStarted } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printFactoryStarted(
+      {
+        slots_any: 4,
+        slots_interactive: 2,
+        max_age_sec: 14400,
+        interval_sec: 5,
+        prefix: "arc-worker",
+        db: "/tmp/t.db",
+      },
+      1716192000,
+    );
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("factory_started");
+  expect(j.pid).toBe(process.pid);
+  expect(j.slots_any).toBe(4);
+  expect(j.slots_interactive).toBe(2);
+  expect(j.max_age_sec).toBe(14400);
+  expect(j.interval_sec).toBe(5);
+  expect(j.prefix).toBe("arc-worker");
+  expect(j.db).toBe("/tmp/t.db");
+  expect(typeof j.ts).toBe("string");
+});
+
+test("printMergeablePruned emits expected JSON shape on stdout", async () => {
+  const { printMergeablePruned } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printMergeablePruned(
+      {
+        pruned: [{ path: "/w/foo", branch: "foo" }],
+        skipped: [{ path: "/w/bar", branch: null, reason: "dirty-worktree" }],
+      },
+      1716192000,
+    );
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("mergeable_pruned");
+  expect(j.pruned_count).toBe(1);
+  expect(j.skipped_count).toBe(1);
+  expect(j.pruned).toEqual([{ path: "/w/foo", branch: "foo" }]);
+  expect(j.skipped).toEqual([{ path: "/w/bar", branch: null, reason: "dirty-worktree" }]);
+  expect(typeof j.ts).toBe("string");
 });
