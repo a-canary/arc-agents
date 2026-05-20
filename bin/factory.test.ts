@@ -457,3 +457,105 @@ test("worker-shell.sh claims atomically: only one of two parallel shells wins fo
   expect(issue.state).toBe("claimed");
   expect(["w1", "w2"]).toContain(issue.claimed_by);
 });
+
+// --- reapMergeableWorktrees regression tests --------------------------------
+// Build a real git repo + worktree on HEAD-of-main and feed it directly to
+// reapMergeableWorktrees(found) so we bypass auditMergeableWorktrees and
+// ledger doctor. This keeps the test scoped to the prune logic itself.
+
+import { existsSync } from "node:fs";
+
+function setupMergeableRepo(): { parent: string; wt: string; branch: string } {
+  const root = mkdtempSync(join(tmpdir(), "arc-prune-test-"));
+  const parent = join(root, "parent");
+  spawnSync("git", ["init", "-q", "-b", "main", parent], { encoding: "utf8" });
+  spawnSync("git", ["-C", parent, "config", "user.email", "t@t"], { encoding: "utf8" });
+  spawnSync("git", ["-C", parent, "config", "user.name", "t"], { encoding: "utf8" });
+  writeFileSync(join(parent, "a"), "1\n");
+  spawnSync("git", ["-C", parent, "add", "a"], { encoding: "utf8" });
+  spawnSync("git", ["-C", parent, "commit", "-q", "-m", "init"], { encoding: "utf8" });
+  const branch = `wt-${Math.random().toString(36).slice(2, 8)}`;
+  const wt = join(root, "wt");
+  const add = spawnSync("git", ["-C", parent, "worktree", "add", "-q", "-b", branch, wt], { encoding: "utf8" });
+  if (add.status !== 0) throw new Error(`worktree add failed: ${add.stderr}`);
+  return { parent, wt, branch };
+}
+
+test("reapMergeableWorktrees: gated off when ARC_AUTO_PRUNE != 1", async () => {
+  const { reapMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const { wt, branch } = setupMergeableRepo();
+  const orig = process.env.ARC_AUTO_PRUNE;
+  delete process.env.ARC_AUTO_PRUNE;
+  try {
+    const r = reapMergeableWorktrees({ paths: [wt], branches: [branch] });
+    expect(r.pruned).toEqual([]);
+    expect(r.skipped).toEqual([]);
+    expect(existsSync(wt)).toBe(true);
+  } finally {
+    if (orig === undefined) delete process.env.ARC_AUTO_PRUNE;
+    else process.env.ARC_AUTO_PRUNE = orig;
+  }
+});
+
+test("reapMergeableWorktrees: prunes a clean worktree end-to-end", async () => {
+  const { reapMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const { parent, wt, branch } = setupMergeableRepo();
+  const orig = process.env.ARC_AUTO_PRUNE;
+  process.env.ARC_AUTO_PRUNE = "1";
+  try {
+    const r = reapMergeableWorktrees({ paths: [wt], branches: [branch] });
+    expect(r.skipped).toEqual([]);
+    expect(r.pruned).toEqual([{ path: wt, branch }]);
+    expect(existsSync(wt)).toBe(false);
+    // Branch should also be gone.
+    const br = spawnSync("git", ["-C", parent, "branch", "--list", branch], { encoding: "utf8" });
+    expect(br.stdout.trim()).toBe("");
+  } finally {
+    if (orig === undefined) delete process.env.ARC_AUTO_PRUNE;
+    else process.env.ARC_AUTO_PRUNE = orig;
+  }
+});
+
+test("reapMergeableWorktrees: skips dirty worktree with reason=dirty-worktree", async () => {
+  const { reapMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const { wt, branch } = setupMergeableRepo();
+  writeFileSync(join(wt, "scratch"), "uncommitted\n");
+  const orig = process.env.ARC_AUTO_PRUNE;
+  process.env.ARC_AUTO_PRUNE = "1";
+  try {
+    const r = reapMergeableWorktrees({ paths: [wt], branches: [branch] });
+    expect(r.pruned).toEqual([]);
+    expect(r.skipped.length).toBe(1);
+    expect(r.skipped[0]!.path).toBe(wt);
+    expect(r.skipped[0]!.reason).toBe("dirty-worktree");
+    expect(existsSync(wt)).toBe(true);
+  } finally {
+    if (orig === undefined) delete process.env.ARC_AUTO_PRUNE;
+    else process.env.ARC_AUTO_PRUNE = orig;
+  }
+});
+
+test("printMergeablePruned emits expected JSON shape on stdout", async () => {
+  const { printMergeablePruned } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printMergeablePruned(
+      {
+        pruned: [{ path: "/w/foo", branch: "foo" }],
+        skipped: [{ path: "/w/bar", branch: null, reason: "dirty-worktree" }],
+      },
+      1716192000,
+    );
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("mergeable_pruned");
+  expect(j.pruned_count).toBe(1);
+  expect(j.skipped_count).toBe(1);
+  expect(j.pruned).toEqual([{ path: "/w/foo", branch: "foo" }]);
+  expect(j.skipped).toEqual([{ path: "/w/bar", branch: null, reason: "dirty-worktree" }]);
+  expect(typeof j.ts).toBe("string");
+});
