@@ -32,6 +32,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openWithMigrate } from "../src/ledger/db";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
+import { reapWorktrees, type ReapedWorktree } from "../src/ledger/worktree-reaper";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SHELL = join(REPO, "bin", "worker-shell.sh");
@@ -167,6 +168,7 @@ export function spawnWorker(pool: "any" | "interactive" = "any"): string {
 export type TickResult = {
   reaped: string[];
   swept: string[];
+  worktrees: ReapedWorktree[];
   live: number;
   ready: number;
   spawned: string[];
@@ -179,6 +181,7 @@ export function tick(): TickResult {
   const db = openWithMigrate(process.env.ARC_LEDGER_DB);
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
+  const worktrees = reapWorktrees(db);
   db.close();
   const reaped = [...reapedExited, ...reapedAge, ...reapedDone];
 
@@ -223,6 +226,7 @@ export function tick(): TickResult {
   return {
     reaped,
     swept: sweep.ids,
+    worktrees,
     live: curAny + curInteractive,
     ready: allReady.length,
     spawned,
