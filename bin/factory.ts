@@ -133,7 +133,7 @@ type ReadyRow = { id: string; kind: string; type: string; title: string };
 export function listReady(typeFilter?: string): ReadyRow[] {
   const args = [LEDGER, "spawn-ready", ...DB_FLAG];
   if (typeFilter) args.push("--type", typeFilter);
-  const r = spawnSync("bun", args, { encoding: "utf8" });
+  const r = spawnSync(process.execPath, args, { encoding: "utf8" });
   if (r.status !== 0) return [];
   try {
     const rows = JSON.parse(r.stdout ?? "[]");
@@ -360,7 +360,7 @@ export function printOrphansCleared(priorCount: number, now: number = Math.floor
 // Scoped to ~/worktrees/<prefix>* via the existing `ledger doctor --json` reader
 // to reuse its battle-tested git porcelain parsing rather than re-implementing.
 export function auditMergeableWorktrees(): { paths: string[]; branches: (string | null)[] } {
-  const r = spawnSync("bun", [LEDGER, "doctor", "--json", ...DB_FLAG], { encoding: "utf8" });
+  const r = spawnSync(process.execPath, [LEDGER, "doctor", "--json", ...DB_FLAG], { encoding: "utf8" });
   if (r.status !== 0) return { paths: [], branches: [] };
   try {
     const out = JSON.parse(r.stdout ?? "{}") as {

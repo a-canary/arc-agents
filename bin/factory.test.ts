@@ -378,6 +378,33 @@ test("printMergeableCleared emits info-level JSON on stdout", async () => {
   expect(typeof j.ts).toBe("string");
 });
 
+// Regression: systemd runs the daemon with a PATH that excludes ~/.bun/bin,
+// so spawnSync("bun", ...) silently fails with ENOENT and the audit returns
+// empty. The fix is to spawn process.execPath (the bun binary that started
+// the daemon) instead of relying on PATH lookup.
+test("auditMergeableWorktrees works when PATH does not contain bun", async () => {
+  const { auditMergeableWorktrees } = await import(join(REPO, "bin", "factory.ts"));
+  const origPath = process.env.PATH;
+  const origDb = process.env.ARC_LEDGER_DB;
+  process.env.ARC_LEDGER_DB = dbPath;
+  // Strip bun from PATH; keep system bins so git/tmux still work for doctor.
+  process.env.PATH = "/usr/bin:/bin";
+  try {
+    const r = auditMergeableWorktrees();
+    // No worktrees in the empty test ledger → expect empty arrays, NOT a
+    // silent ENOENT fallback. The key distinction: with the bug, doctor was
+    // never invoked at all; with the fix, doctor runs and returns an empty
+    // mergeable_worktrees set.
+    expect(Array.isArray(r.paths)).toBe(true);
+    expect(Array.isArray(r.branches)).toBe(true);
+    expect(r.paths.length).toBe(r.branches.length);
+  } finally {
+    process.env.PATH = origPath;
+    if (origDb === undefined) delete process.env.ARC_LEDGER_DB;
+    else process.env.ARC_LEDGER_DB = origDb;
+  }
+});
+
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
