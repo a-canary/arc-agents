@@ -374,6 +374,24 @@ test("update --hitl 1 flips column without state change", async () => {
   }
 });
 
+test("update --worktree NULL clears worktree_path", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "w")) as {
+      id: string;
+    };
+    await run(db, "update", c.id, "--worktree", "/tmp/x");
+    let shown = (await run(db, "show", c.id)) as { issue: { worktree_path: string | null } };
+    expect(shown.issue.worktree_path).toBe("/tmp/x");
+    await run(db, "update", c.id, "--worktree", "NULL");
+    shown = (await run(db, "show", c.id)) as { issue: { worktree_path: string | null } };
+    expect(shown.issue.worktree_path).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
 test("update --hitl rejects non-binary value", async () => {
   const { db, cleanup } = freshDb();
   try {

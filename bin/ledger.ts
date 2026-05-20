@@ -296,9 +296,9 @@ switch (cmd) {
       sets.push("branch=?");
       vals.push(branch);
     }
-    if (worktree) {
+    if (worktree !== undefined) {
       sets.push("worktree_path=?");
-      vals.push(worktree);
+      vals.push(worktree === "NULL" ? (null as unknown as string) : worktree);
     }
     if (hitl !== undefined) {
       if (hitl !== "0" && hitl !== "1") die("--hitl must be 0 or 1");
