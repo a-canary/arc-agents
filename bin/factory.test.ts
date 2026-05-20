@@ -280,6 +280,42 @@ test("auditOrphans detects long-running wait-for-ledger.ts processes", async () 
   for (const a of r.ages) expect(a).toBeGreaterThanOrEqual(86400);
 });
 
+test("printOrphanWarn emits expected JSON shape on stderr", async () => {
+  const { printOrphanWarn } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.error;
+  let captured = "";
+  console.error = (s: string) => { captured = s; };
+  try {
+    printOrphanWarn({ pids: [1234, 5678], ages: [90000, 432000] }, 1716192000);
+  } finally {
+    console.error = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.warn).toBe("orphaned_wait_for_ledger");
+  expect(j.count).toBe(2);
+  expect(j.pids).toEqual([1234, 5678]);
+  expect(j.ages_hr).toEqual([25, 120]);
+  expect(typeof j.ts).toBe("string");
+  expect(typeof j.hint).toBe("string");
+});
+
+test("printOrphansCleared emits info-level JSON on stdout", async () => {
+  const { printOrphansCleared } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printOrphansCleared(3, 1716192000);
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("orphans_cleared");
+  expect(j.prior_count).toBe(3);
+  expect(j.warn).toBeUndefined();
+  expect(typeof j.ts).toBe("string");
+});
+
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
