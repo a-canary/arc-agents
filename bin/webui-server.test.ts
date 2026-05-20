@@ -7,8 +7,10 @@ import {
   buildHandler,
   queryAfkRows,
   queryHitlRows,
+  queryTop3ChatIn,
   resolveIfaceAddr,
   sseStream,
+  submitReply,
 } from "./webui-server";
 
 function freshDb() {
@@ -114,7 +116,7 @@ test("handler /health returns ok", async () => {
   const { db, cleanup } = freshDb();
   try {
     const handler = buildHandler(db);
-    const res = handler(new Request("http://x/health"));
+    const res = await handler(new Request("http://x/health"));
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
@@ -123,11 +125,11 @@ test("handler /health returns ok", async () => {
   }
 });
 
-test("handler unknown path returns 404", () => {
+test("handler unknown path returns 404", async () => {
   const { db, cleanup } = freshDb();
   try {
     const handler = buildHandler(db);
-    const res = handler(new Request("http://x/nope"));
+    const res = await handler(new Request("http://x/nope"));
     expect(res.status).toBe(404);
   } finally {
     cleanup();
@@ -220,6 +222,223 @@ test("server SSE delta smoke: insert after connect -> snapshot within 2s", async
     server.stop(true);
     db.close();
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+function insertChatIn(
+  db: ReturnType<typeof openWithMigrate>,
+  row: {
+    id: string;
+    title: string;
+    thread_id?: string;
+    draft_md?: string | null;
+    priority?: number | null;
+    updated_at?: number;
+    state?: string;
+  },
+) {
+  const now = row.updated_at ?? Math.floor(Date.now() / 1000);
+  db.exec(
+    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind,
+                         class, urgency, source_module, thread_id, draft_md, priority,
+                         hitl, created_at, updated_at)
+     VALUES (?, 'arc-agents', ?, '', '', 'interactive', ?, 'event',
+             'class_unset', 'interactive', 'arc-chat', ?, ?, ?, 0, ?, ?)`,
+    [
+      row.id,
+      row.title,
+      row.state ?? "ready",
+      row.thread_id ?? `t-${row.id}`,
+      row.draft_md ?? null,
+      row.priority ?? null,
+      now,
+      now,
+    ] as never,
+  );
+}
+
+test("queryTop3ChatIn returns chat_in rows in priority order, capped at 3", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertChatIn(db, { id: "c1", title: "lo", priority: 10, updated_at: 1700 });
+    insertChatIn(db, { id: "c2", title: "hi", priority: 1, updated_at: 1701 });
+    insertChatIn(db, { id: "c3", title: "mid", priority: 5, updated_at: 1702 });
+    insertChatIn(db, { id: "c4", title: "extra", priority: 999, updated_at: 1703 });
+    insertChatIn(db, { id: "c5", title: "merged", priority: 0, state: "merged", updated_at: 1704 });
+    const rows = queryTop3ChatIn(db);
+    expect(rows.length).toBe(3);
+    expect(rows.map((r) => r.id)).toEqual(["c2", "c3", "c1"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("queryTop3ChatIn excludes non chat_in rows", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertChatIn(db, { id: "c1", title: "chat" });
+    insertIssue(db, { id: "h1", title: "hitl", type: "HITL", state: "ready" });
+    const ids = queryTop3ChatIn(db).map((r) => r.id);
+    expect(ids).toEqual(["c1"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("submitReply writes a chat_out row visible to arc-chat tail filter", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const { id } = submitReply(db, {
+      thread_id: "t-abc",
+      body: "hello from human",
+      in_reply_to: "c1",
+    });
+    expect(id.length).toBeGreaterThan(0);
+    const row = db
+      .query<
+        { id: string; kind: string; source_module: string; thread_id: string; body_md: string; parent_id: string | null },
+        [string]
+      >(
+        `SELECT id, kind, source_module, thread_id, body_md, parent_id
+           FROM issues WHERE id=?`,
+      )
+      .get(id);
+    expect(row).not.toBeNull();
+    expect(row!.kind).toBe("reply");
+    expect(row!.source_module).toBe("arc-chat");
+    expect(row!.thread_id).toBe("t-abc");
+    expect(row!.body_md).toBe("hello from human");
+    expect(row!.parent_id).toBe("c1");
+    // Tail filter from arc-chat: WHERE thread_id=? AND kind='reply' AND source_module='arc-chat'.
+    const tailed = db
+      .query<{ id: string }, [string]>(
+        "SELECT id FROM issues WHERE thread_id=? AND kind='reply' AND source_module='arc-chat'",
+      )
+      .all("t-abc");
+    expect(tailed.map((r) => r.id)).toEqual([id]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("submitReply rejects empty body", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    expect(() => submitReply(db, { thread_id: "t", body: "   " })).toThrow(/body required/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("submitReply rejects missing thread_id", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    expect(() => submitReply(db, { thread_id: "", body: "hi" })).toThrow(/thread_id required/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler GET /api/top3 returns rows json", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertChatIn(db, { id: "c1", title: "first", priority: 1 });
+    const handler = buildHandler(db);
+    const res = await handler(new Request("http://x/api/top3"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(Array.isArray(body.rows)).toBe(true);
+    expect(body.rows[0].id).toBe("c1");
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler POST /api/submit persists reply and returns id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = await handler(
+      new Request("http://x/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ thread_id: "t-1", body: "reply body" }),
+      }),
+    );
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.ok).toBe(true);
+    expect(typeof body.id).toBe("string");
+    const row = db
+      .query<{ kind: string; body_md: string }, [string]>(
+        "SELECT kind, body_md FROM issues WHERE id=?",
+      )
+      .get(body.id);
+    expect(row!.kind).toBe("reply");
+    expect(row!.body_md).toBe("reply body");
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler POST /api/submit returns 400 on invalid json", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = await handler(
+      new Request("http://x/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "not json",
+      }),
+    );
+    expect(res.status).toBe(400);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler POST /api/submit returns 400 on missing thread_id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = await handler(
+      new Request("http://x/api/submit", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ body: "x" }),
+      }),
+    );
+    expect(res.status).toBe(400);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler GET /api/alternatives/:id returns empty list when missing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = await handler(new Request("http://x/api/alternatives/nope-row"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.alternatives).toEqual([]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler GET /hitl serves panel html", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = await handler(new Request("http://x/hitl"));
+    // assets/webui/hitl.html exists alongside this binary; expect 200.
+    expect(res.status).toBe(200);
+    const text = await res.text();
+    expect(text).toContain("HITL · top-3");
+  } finally {
+    cleanup();
   }
 });
 

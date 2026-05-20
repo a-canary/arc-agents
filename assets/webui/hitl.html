@@ -1,0 +1,299 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=375, initial-scale=1, viewport-fit=cover" />
+<title>arc-webui · HITL</title>
+<style>
+  :root {
+    --bg: #0f1115;
+    --panel: #1a1d24;
+    --panel-2: #232730;
+    --border: #2c313c;
+    --fg: #e6e8eb;
+    --fg-dim: #98a0ad;
+    --accent: #6aa8ff;
+    --accent-2: #4d8bff;
+    --danger: #ff6a6a;
+    --ok: #57c98c;
+  }
+  * { box-sizing: border-box; }
+  html, body {
+    margin: 0; padding: 0; background: var(--bg); color: var(--fg);
+    font: 14px/1.4 system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+    -webkit-text-size-adjust: 100%;
+  }
+  header {
+    padding: 12px 16px; border-bottom: 1px solid var(--border);
+    display: flex; justify-content: space-between; align-items: center;
+    position: sticky; top: 0; background: var(--bg); z-index: 10;
+  }
+  header h1 { margin: 0; font-size: 15px; font-weight: 600; }
+  header .status { font-size: 12px; color: var(--fg-dim); }
+  header .status.ok { color: var(--ok); }
+  header .status.err { color: var(--danger); }
+
+  .carousel {
+    display: flex; overflow-x: auto; scroll-snap-type: x mandatory;
+    scroll-behavior: smooth; -webkit-overflow-scrolling: touch;
+    padding: 12px; gap: 12px;
+  }
+  .carousel::-webkit-scrollbar { height: 4px; }
+  .carousel::-webkit-scrollbar-thumb { background: var(--border); border-radius: 2px; }
+
+  .card {
+    flex: 0 0 calc(100vw - 24px); max-width: 351px;
+    scroll-snap-align: center;
+    background: var(--panel); border: 1px solid var(--border);
+    border-radius: 12px; padding: 14px;
+    display: flex; flex-direction: column; gap: 10px;
+  }
+  .card .meta { display: flex; justify-content: space-between; font-size: 11px; color: var(--fg-dim); }
+  .card .rank { font-weight: 700; color: var(--accent); }
+  .card h2 { margin: 0; font-size: 15px; font-weight: 600; word-break: break-word; }
+  .card .body {
+    background: var(--panel-2); border-radius: 8px; padding: 10px;
+    font-size: 13px; white-space: pre-wrap; word-break: break-word;
+    max-height: 30vh; overflow-y: auto;
+  }
+  .card .draft { color: var(--fg); }
+  .card .draft.empty { color: var(--fg-dim); font-style: italic; }
+  .card .alts { display: flex; flex-direction: column; gap: 6px; }
+  .card .alt {
+    background: var(--panel-2); border: 1px solid var(--border);
+    border-radius: 6px; padding: 8px; font-size: 12px;
+    cursor: pointer; text-align: left; color: var(--fg);
+  }
+  .card .alt:hover, .card .alt:focus {
+    border-color: var(--accent); outline: none;
+  }
+  .card textarea {
+    width: 100%; min-height: 70px; resize: vertical;
+    background: var(--panel-2); color: var(--fg);
+    border: 1px solid var(--border); border-radius: 8px; padding: 10px;
+    font: inherit;
+  }
+  .card textarea:focus { border-color: var(--accent); outline: none; }
+  .row { display: flex; gap: 8px; }
+  .row button {
+    flex: 1; padding: 10px; border-radius: 8px; border: 0;
+    background: var(--accent-2); color: white; font-weight: 600;
+    cursor: pointer; font: inherit;
+  }
+  .row button:disabled { opacity: 0.5; cursor: not-allowed; }
+  .row button.secondary { background: var(--panel-2); color: var(--fg); border: 1px solid var(--border); }
+  .empty {
+    padding: 32px 16px; text-align: center; color: var(--fg-dim);
+  }
+  .dots {
+    display: flex; justify-content: center; gap: 6px; padding: 4px 0 12px;
+  }
+  .dot { width: 7px; height: 7px; border-radius: 50%; background: var(--border); }
+  .dot.active { background: var(--accent); }
+  .toast {
+    position: fixed; bottom: 16px; left: 50%; transform: translateX(-50%);
+    background: var(--panel-2); border: 1px solid var(--border);
+    padding: 10px 16px; border-radius: 8px; font-size: 13px;
+    opacity: 0; transition: opacity 0.2s; pointer-events: none; z-index: 20;
+  }
+  .toast.show { opacity: 1; }
+  .toast.ok { border-color: var(--ok); }
+  .toast.err { border-color: var(--danger); }
+</style>
+</head>
+<body>
+<header>
+  <h1>HITL · top-3</h1>
+  <span class="status" id="status">connecting…</span>
+</header>
+<main>
+  <div class="carousel" id="carousel" aria-label="top 3 chat threads"></div>
+  <div class="dots" id="dots" aria-hidden="true"></div>
+</main>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script>
+(() => {
+  const carousel = document.getElementById("carousel");
+  const dots = document.getElementById("dots");
+  const statusEl = document.getElementById("status");
+  const toast = document.getElementById("toast");
+  let currentRows = [];
+  const altsCache = new Map();
+
+  function setStatus(text, cls) {
+    statusEl.textContent = text;
+    statusEl.className = "status " + (cls || "");
+  }
+  function showToast(text, cls) {
+    toast.textContent = text;
+    toast.className = "toast show " + (cls || "");
+    setTimeout(() => { toast.className = "toast " + (cls || ""); }, 2200);
+  }
+
+  function dedupe(rows) {
+    const seen = new Set();
+    const out = [];
+    for (const r of rows) {
+      if (seen.has(r.id)) continue;
+      seen.add(r.id);
+      out.push(r);
+      if (out.length >= 3) break;
+    }
+    return out;
+  }
+
+  async function fetchAlts(rowId) {
+    if (altsCache.has(rowId)) return altsCache.get(rowId);
+    try {
+      const r = await fetch("/api/alternatives/" + encodeURIComponent(rowId));
+      if (!r.ok) return [];
+      const data = await r.json();
+      const alts = Array.isArray(data.alternatives) ? data.alternatives : [];
+      altsCache.set(rowId, alts);
+      return alts;
+    } catch { return []; }
+  }
+
+  function renderDots(n, active) {
+    dots.innerHTML = "";
+    for (let i = 0; i < n; i++) {
+      const d = document.createElement("span");
+      d.className = "dot" + (i === active ? " active" : "");
+      dots.appendChild(d);
+    }
+  }
+
+  function makeCard(row, idx, total) {
+    const card = document.createElement("section");
+    card.className = "card";
+    card.dataset.rowId = row.id;
+
+    const meta = document.createElement("div");
+    meta.className = "meta";
+    meta.innerHTML = '<span class="rank">#' + (idx + 1) + " of " + total + '</span>' +
+      '<span>' + (row.thread_id || "(no thread)") + '</span>';
+    card.appendChild(meta);
+
+    const h2 = document.createElement("h2");
+    h2.textContent = row.title || "(untitled)";
+    card.appendChild(h2);
+
+    const body = document.createElement("div");
+    body.className = "body draft" + (row.draft_md ? "" : " empty");
+    body.textContent = row.draft_md || "(no draft yet — type below)";
+    card.appendChild(body);
+
+    const alts = document.createElement("div");
+    alts.className = "alts";
+    card.appendChild(alts);
+
+    const ta = document.createElement("textarea");
+    ta.placeholder = "your reply…";
+    ta.value = row.draft_md || "";
+    card.appendChild(ta);
+
+    const btnRow = document.createElement("div");
+    btnRow.className = "row";
+    const submit = document.createElement("button");
+    submit.textContent = "send";
+    const clear = document.createElement("button");
+    clear.textContent = "clear";
+    clear.className = "secondary";
+    btnRow.appendChild(clear);
+    btnRow.appendChild(submit);
+    card.appendChild(btnRow);
+
+    clear.addEventListener("click", () => { ta.value = ""; ta.focus(); });
+    submit.addEventListener("click", async () => {
+      const body = ta.value.trim();
+      if (!body) { showToast("empty reply", "err"); return; }
+      if (!row.thread_id) { showToast("row has no thread_id", "err"); return; }
+      submit.disabled = true;
+      submit.textContent = "sending…";
+      try {
+        const r = await fetch("/api/submit", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ thread_id: row.thread_id, body, in_reply_to: row.id }),
+        });
+        const data = await r.json();
+        if (!r.ok || data.error) throw new Error(data.error || ("http " + r.status));
+        showToast("sent " + data.id, "ok");
+        ta.value = "";
+      } catch (e) {
+        showToast("send failed: " + e.message, "err");
+      } finally {
+        submit.disabled = false;
+        submit.textContent = "send";
+      }
+    });
+
+    fetchAlts(row.id).then((list) => {
+      for (const alt of list) {
+        const b = document.createElement("button");
+        b.className = "alt";
+        b.type = "button";
+        b.textContent = typeof alt === "string" ? alt : (alt.text || JSON.stringify(alt));
+        b.addEventListener("click", () => { ta.value = b.textContent; ta.focus(); });
+        alts.appendChild(b);
+      }
+    });
+
+    return card;
+  }
+
+  function render(rows) {
+    rows = dedupe(rows);
+    currentRows = rows;
+    carousel.innerHTML = "";
+    if (rows.length === 0) {
+      const e = document.createElement("div");
+      e.className = "empty";
+      e.textContent = "no chat_in rows. quiet inbox.";
+      carousel.appendChild(e);
+      renderDots(0, 0);
+      return;
+    }
+    for (let i = 0; i < rows.length; i++) {
+      carousel.appendChild(makeCard(rows[i], i, rows.length));
+    }
+    renderDots(rows.length, 0);
+  }
+
+  carousel.addEventListener("scroll", () => {
+    if (currentRows.length === 0) return;
+    const w = carousel.clientWidth;
+    const idx = Math.min(currentRows.length - 1, Math.round(carousel.scrollLeft / w));
+    renderDots(currentRows.length, idx);
+  }, { passive: true });
+
+  async function refreshTop3() {
+    try {
+      const r = await fetch("/api/top3");
+      if (!r.ok) return;
+      const data = await r.json();
+      render(data.rows || []);
+    } catch {/* ignore */}
+  }
+
+  function startSse() {
+    const es = new EventSource("/sse/hitl");
+    es.addEventListener("snapshot", () => {
+      // Source of truth for top-3 is the dedicated endpoint, not the
+      // broader HITL projection. SSE acts as a change-trigger.
+      setStatus("live", "ok");
+      refreshTop3();
+    });
+    es.addEventListener("error", () => {
+      setStatus("reconnecting…", "err");
+    });
+    es.addEventListener("open", () => setStatus("live", "ok"));
+  }
+
+  refreshTop3();
+  startSse();
+})();
+</script>
+</body>
+</html>
