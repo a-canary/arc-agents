@@ -339,6 +339,45 @@ test("printOrphansCleared emits info-level JSON on stdout", async () => {
   expect(typeof j.ts).toBe("string");
 });
 
+test("printMergeableWarn emits expected JSON shape on stderr", async () => {
+  const { printMergeableWarn } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.error;
+  let captured = "";
+  console.error = (s: string) => { captured = s; };
+  try {
+    printMergeableWarn(
+      { paths: ["/home/u/worktrees/arc-agents-foo", "/home/u/worktrees/arc-agents-bar"], branches: ["foo", null] },
+      1716192000,
+    );
+  } finally {
+    console.error = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.warn).toBe("mergeable_worktrees");
+  expect(j.count).toBe(2);
+  expect(j.paths).toEqual(["/home/u/worktrees/arc-agents-foo", "/home/u/worktrees/arc-agents-bar"]);
+  expect(j.branches).toEqual(["foo", null]);
+  expect(typeof j.ts).toBe("string");
+  expect(typeof j.hint).toBe("string");
+});
+
+test("printMergeableCleared emits info-level JSON on stdout", async () => {
+  const { printMergeableCleared } = await import(join(REPO, "bin", "factory.ts"));
+  const orig = console.log;
+  let captured = "";
+  console.log = (s: string) => { captured = s; };
+  try {
+    printMergeableCleared(2, 1716192000);
+  } finally {
+    console.log = orig;
+  }
+  const j = JSON.parse(captured);
+  expect(j.info).toBe("mergeable_cleared");
+  expect(j.prior_count).toBe(2);
+  expect(j.warn).toBeUndefined();
+  expect(typeof j.ts).toBe("string");
+});
+
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
