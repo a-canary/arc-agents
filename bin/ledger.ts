@@ -803,6 +803,143 @@ switch (cmd) {
     break;
   }
 
+  case "doctor": {
+    // Pure-read health probe. Surfaces lifecycle anomalies a /loop iteration
+    // would otherwise have to assemble by hand:
+    //   - phantom_claims: rows with claimed_by set while state is non-claim
+    //     (should be 0 after migration 015's trigger)
+    //   - stale_claims: claimed/wip rows whose claim has aged past --stale-hours
+    //     (default 4hr; matches factory.ts reap threshold)
+    //   - state_counts: tally of issues by state
+    //   - untracked_worktree_dirs: <repo>-* dirs under --worktree-root that
+    //     git doesn't know about (orphan scratch leaks)
+    //   - mergeable_worktrees: registered worktrees whose HEAD is an ancestor
+    //     of main — safe to reap manually
+    // Flags:
+    //   --stale-hours N      claim age cutoff (default 4)
+    //   --worktree-root P    scan root (default ~/worktrees)
+    //   --repo-prefix S      dir prefix to consider (default "arc-agents-")
+    const { readdirSync, existsSync, statSync } = require("node:fs") as typeof import("node:fs");
+    const { join: pjoin } = require("node:path") as typeof import("node:path");
+    const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+
+    const db = openWithMigrate(getFlag("db"));
+    const staleHours = parseInt(getFlag("stale-hours") ?? "4", 10);
+    const worktreeRoot = getFlag("worktree-root") ?? `${process.env.HOME}/worktrees`;
+    const repoPrefix = getFlag("repo-prefix") ?? "arc-agents-";
+    const staleCutoff = Math.floor(Date.now() / 1000) - staleHours * 3600;
+
+    const phantomClaims = db
+      .query<{ id: string; state: string; claimed_by: string; claimed_at: number | null }, []>(
+        `SELECT id, state, claimed_by, claimed_at FROM issues
+         WHERE claimed_by IS NOT NULL AND state NOT IN ('claimed','wip')
+         ORDER BY updated_at DESC`,
+      )
+      .all();
+
+    const staleClaims = db
+      .query<{ id: string; state: string; claimed_by: string; claimed_at: number; age_hours: number }, [number]>(
+        `SELECT id, state, claimed_by, claimed_at,
+                ROUND((strftime('%s','now') - claimed_at) / 3600.0, 1) AS age_hours
+         FROM issues
+         WHERE state IN ('claimed','wip')
+           AND claimed_at IS NOT NULL
+           AND claimed_at < ?
+         ORDER BY claimed_at ASC`,
+      )
+      .all(staleCutoff);
+
+    const stateCounts = db
+      .query<{ state: string; n: number }, []>(
+        `SELECT state, COUNT(*) AS n FROM issues GROUP BY state ORDER BY n DESC`,
+      )
+      .all();
+
+    let untrackedWorktreeDirs: string[] = [];
+    let mergeableWorktrees: { path: string; branch: string | null }[] = [];
+    let worktreeScanError: string | null = null;
+
+    if (existsSync(worktreeRoot)) {
+      const dirs = readdirSync(worktreeRoot).filter((n) => n.startsWith(repoPrefix));
+      // Pick any one matching dir to anchor `git worktree list`; if none exist,
+      // we have nothing to compare against.
+      const sampleDir = dirs.find((n) => {
+        try { return statSync(pjoin(worktreeRoot, n)).isDirectory(); }
+        catch { return false; }
+      });
+
+      if (sampleDir) {
+        const sample = pjoin(worktreeRoot, sampleDir);
+        const wt = spawnSync("git", ["-C", sample, "worktree", "list", "--porcelain"], {
+          encoding: "utf8",
+        });
+        if (wt.status === 0) {
+          // Parse porcelain: blocks separated by blank lines, each starts with `worktree <path>`.
+          const registered = new Map<string, string | null>();
+          let curPath: string | null = null;
+          let curBranch: string | null = null;
+          for (const line of wt.stdout.split("\n")) {
+            if (line.startsWith("worktree ")) {
+              if (curPath) registered.set(curPath, curBranch);
+              curPath = line.slice("worktree ".length).trim();
+              curBranch = null;
+            } else if (line.startsWith("branch ")) {
+              curBranch = line.slice("branch ".length).trim();
+            } else if (line === "" && curPath) {
+              registered.set(curPath, curBranch);
+              curPath = null;
+              curBranch = null;
+            }
+          }
+          if (curPath) registered.set(curPath, curBranch);
+
+          // Untracked: present on disk but not in `git worktree list`.
+          const fullDirs = dirs
+            .map((n) => pjoin(worktreeRoot, n))
+            .filter((p) => {
+              try { return statSync(p).isDirectory(); } catch { return false; }
+            });
+          untrackedWorktreeDirs = fullDirs.filter((p) => !registered.has(p));
+
+          // Mergeable: registered worktree whose HEAD is an ancestor of main.
+          for (const [path, branch] of registered) {
+            if (path === sample.replace(/\/+$/, "")) {
+              // Skip the anchor itself only if it isn't relevant; still check it.
+            }
+            const head = spawnSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" });
+            if (head.status !== 0) continue;
+            const headSha = head.stdout.trim();
+            const ancestor = spawnSync(
+              "git",
+              ["-C", path, "merge-base", "--is-ancestor", headSha, "main"],
+              { encoding: "utf8" },
+            );
+            if (ancestor.status === 0) {
+              mergeableWorktrees.push({ path, branch });
+            }
+          }
+        } else {
+          worktreeScanError = wt.stderr.trim() || "git worktree list failed";
+        }
+      }
+    } else {
+      worktreeScanError = `worktree root not found: ${worktreeRoot}`;
+    }
+
+    out({
+      stale_hours: staleHours,
+      worktree_root: worktreeRoot,
+      repo_prefix: repoPrefix,
+      phantom_claims: phantomClaims,
+      stale_claims: staleClaims,
+      state_counts: stateCounts,
+      untracked_worktree_dirs: untrackedWorktreeDirs,
+      mergeable_worktrees: mergeableWorktrees,
+      worktree_scan_error: worktreeScanError,
+    });
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -845,6 +982,11 @@ switch (cmd) {
                                        row + last merged event as audit anchor.
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
+  doctor [--stale-hours N --worktree-root P --repo-prefix S]
+                                       pure-read health probe: phantom_claims,
+                                       stale_claims (>N hr, default 4),
+                                       state_counts, untracked_worktree_dirs,
+                                       mergeable_worktrees
 
   global flags: --db <path>
 
