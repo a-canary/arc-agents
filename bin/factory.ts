@@ -351,6 +351,54 @@ export function printOrphansCleared(priorCount: number, now: number = Math.floor
   );
 }
 
+// Detect registered worktrees whose HEAD is an ancestor of main (== fully merged,
+// safe to remove). `ledger doctor` already surfaces these but only when run on
+// demand; the daemon owns continuous surveillance, so emit the same alert with
+// edge+heartbeat throttling. Pure: returns findings; never removes anything
+// (auto-removal is a separate, riskier decision left for a future iteration).
+//
+// Scoped to ~/worktrees/<prefix>* via the existing `ledger doctor --json` reader
+// to reuse its battle-tested git porcelain parsing rather than re-implementing.
+export function auditMergeableWorktrees(): { paths: string[]; branches: (string | null)[] } {
+  const r = spawnSync("bun", [LEDGER, "doctor", "--json", ...DB_FLAG], { encoding: "utf8" });
+  if (r.status !== 0) return { paths: [], branches: [] };
+  try {
+    const out = JSON.parse(r.stdout ?? "{}") as {
+      mergeable_worktrees?: { path: string; branch: string | null }[];
+    };
+    const found = out.mergeable_worktrees ?? [];
+    return { paths: found.map((w) => w.path), branches: found.map((w) => w.branch) };
+  } catch {
+    return { paths: [], branches: [] };
+  }
+}
+
+export function printMergeableWarn(
+  found: { paths: string[]; branches: (string | null)[] },
+  now: number = Math.floor(Date.now() / 1000),
+): void {
+  console.error(
+    JSON.stringify({
+      ts: new Date(now * 1000).toISOString(),
+      warn: "mergeable_worktrees",
+      count: found.paths.length,
+      paths: found.paths,
+      branches: found.branches,
+      hint: "branch fully merged to main; `git worktree remove <path>` to reclaim disk",
+    }),
+  );
+}
+
+export function printMergeableCleared(priorCount: number, now: number = Math.floor(Date.now() / 1000)): void {
+  console.log(
+    JSON.stringify({
+      ts: new Date(now * 1000).toISOString(),
+      info: "mergeable_cleared",
+      prior_count: priorCount,
+    }),
+  );
+}
+
 async function sleep(s: number): Promise<void> {
   return new Promise((r) => setTimeout(r, s * 1000));
 }
@@ -363,6 +411,8 @@ async function loop(): Promise<void> {
   let lastUnclaimableLog = 0;
   let lastOrphans = 0;
   let lastOrphansLog = 0;
+  let lastMergeable = 0;
+  let lastMergeableLog = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -395,6 +445,18 @@ async function loop(): Promise<void> {
         printOrphansCleared(lastOrphans, now);
       }
       lastOrphans = orph.pids.length;
+
+      const merge = auditMergeableWorktrees();
+      const mergeEdge = merge.paths.length > 0 && lastMergeable === 0;
+      const mergeHeartbeat = merge.paths.length > 0 && now - lastMergeableLog >= 300;
+      if (mergeEdge || mergeHeartbeat) {
+        printMergeableWarn(merge, now);
+        lastMergeableLog = now;
+      }
+      if (merge.paths.length === 0 && lastMergeable > 0) {
+        printMergeableCleared(lastMergeable, now);
+      }
+      lastMergeable = merge.paths.length;
     } catch (err) {
       // Don't let a single bad tick (silent tmux/ledger error) kill the daemon
       // and freeze the queue. Log + continue. See bug: factory went silent on
