@@ -59,6 +59,12 @@ test("blocks with checklist when task is in non-terminal state", () => {
 
 test("passes through when task is merged", () => {
   const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger([
+    "event",
+    c.id,
+    "diff_review",
+    JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }),
+  ]);
   ledger(["update", c.id, "--state", "merged", "--evidence", "ok", "--pr", "branch/x"]);
   const r = runHook({ ARC_TASK_ID: c.id });
   expect(r.status).toBe(0);
