@@ -1,0 +1,54 @@
+# Example ~/.config/arc/config.yaml — declarative UX module registry.
+# Schema: system/config-schema.json. See CHOICES U-0005 and docs/adr/0002-ux-module-contract.md.
+#
+# Config = what should exist. Ledger = what is alive (heartbeats).
+# No transport, auth, or endpoint fields — those are the module's internal business.
+
+ux_modules:
+  - name: arc-webui
+    implements: [ask_text, ask_choice, ask_confirm, notify, show_artifact]
+    renders:
+      text/markdown:    native
+      text/diff:        native
+      diagram/mermaid:  native
+      chart/vega-lite:  native
+      image/png:        native
+      table/rows:       native
+    can_retract: true
+    cli: arc-webui
+    pusher: null            # sync medium — polls ledger directly
+    heartbeat:
+      interval_sec: 60
+      stale_after_sec: 300
+
+  - name: arc-tui
+    implements: [ask_text, ask_choice, ask_confirm, notify, show_artifact]
+    renders:
+      text/markdown:    native
+      text/diff:        native
+      diagram/mermaid:  ascii-degrade
+      chart/vega-lite:  ascii-degrade
+      image/png:        unsupported
+      table/rows:       native
+    can_retract: true
+    cli: arc-tui
+    pusher: null
+    heartbeat:
+      interval_sec: 60
+      stale_after_sec: 300
+
+  - name: arc-discord
+    implements: [ask_text, ask_choice, ask_confirm, notify]
+    renders:
+      text/markdown:    truncate-codeblock
+      text/diff:        truncate-codeblock
+      diagram/mermaid:  rasterize-png
+      chart/vega-lite:  rasterize-png
+      image/png:        native
+      table/rows:       truncate-codeblock
+    can_retract: true       # edits its own bot message
+    cli: arc-discord
+    pusher: arc-discord-pusherd
+    heartbeat:
+      interval_sec: 60
+      stale_after_sec: 300

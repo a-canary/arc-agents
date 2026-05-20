@@ -1,0 +1,316 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "rebase-merge-pr-16-retire-bin-launch-ts",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "rebase-merge-pr-16-retire-bin-launch-ts",
+    "task_kind": "task",
+    "task_type": "HITL",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-qzxx8h",
+    "claimed_at": 1779174377,
+    "terminated_at": 1779174377,
+    "terminal_state": "merged",
+    "parent_id": "retire-bin-launch-ts-deprecated-single-p",
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 48,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "96c768ab552ee2ce89b7a2b36eb62b714ac4d45a3a86983fe7841055e81158c6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "23753f3d92f60b99de12355225c38bcefd7d335039c6bc0a566c644e5b1eef69",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "dd200af7ed6e7e1260d6ed30a8b8f5beb26467da1ec19189cdd883370b0479e9",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "42a60502c35743408f09737778994814ee1c6b4018bf2745d3f8d7291501e4d0",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "68cce4e6315446a1bf84f74447b7c03e3a8eea56a1b8f7775e38d0167afb265f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "8480898b742a5fba567bd81eddc9b46202c9eab10d8293359166b399bd094c19",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Bash",
+        "input_sha256": "234250725b1b7e95da54b511136078cb75f832da13331b35176d6cc22169e143",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Bash",
+        "input_sha256": "f102db6e7045d67bec989c68c76dc2613e8cf74debe937e1f900ec6d01c86b53",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Bash",
+        "input_sha256": "0a7c2f1edc5dd80228e2e5f96136c5db00a6e80018e3604cbaa25cc71007ba0c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Bash",
+        "input_sha256": "4c644006fb5c84e67c679bb8ff33f07ca3f7c53dafdbbea3ec1b9a3f704fbaee",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Bash",
+        "input_sha256": "ff3a737b2deacbee4c3c106ec975141000778a80d1a7f07d30acd03727a844b1",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Bash",
+        "input_sha256": "5ed13a4857afb50dc08bcf13d3a6d1f473e70a12617f93bcea8154bc33e19a96",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Read",
+        "input_sha256": "13ed7c6d5ea238a1dec6fc2d22a83c3ff829c5141e0192121d2a6ae4eb42a8aa",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Read",
+        "input_sha256": "7a60e82509f73ef7270bdc60f62ceb7924dc8ff419900a996371812b734017fc",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Edit",
+        "input_sha256": "4532225894b21cacdf52c41a9ab43d60bcd284d05c8f782321cb4ffdca2e110f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "a753fa3f9da607fe8b31b80f313369d7151be54a370eeee2373fc53aeb18cdee",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Bash",
+        "input_sha256": "3903d7a32760f9d2e964dbe42880f7eeff9d6d2ff5f973876277d9867bc6566e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "374eea81249912866c93cb5e92af5ff0900ae30b9e1737d4f77716a06f05dcea",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Bash",
+        "input_sha256": "07d3d1b126b2a9be941ed0422dc1547e6d3d69a0ef6e12acf5df1417abe2fb81",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Read",
+        "input_sha256": "675f71d8dba85c95d5028d31c828e84329f89d614e4564357a66df882d79c21d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 20,
+        "tool": "Edit",
+        "input_sha256": "dbfb1affa45c55611a97c166ee10eac9dd4ed8ab8693b94aa2c26cc1b5e96617",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 21,
+        "tool": "Bash",
+        "input_sha256": "3514eb5dabfdbeb8b5acc5e5b38fc13680f34ba86f72ab5b57c2f6a070810681",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 22,
+        "tool": "Bash",
+        "input_sha256": "2cb820b9fc5d0716f7f1b692215abaf5588cb062e213f9767993f86ef74508b6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 23,
+        "tool": "Bash",
+        "input_sha256": "c60e113ced8f5eb8ee246aebb900f9492448d110497754d8dd5859439ac57244",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 24,
+        "tool": "Bash",
+        "input_sha256": "26d331e6c1772ceda57e8fd43e5c31f1066dbe5813a1e30dcf976f0470c2713f",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 25,
+        "tool": "Bash",
+        "input_sha256": "d28925c51ad5f6bdb8b4e9d49800b216fb1cb8d6ba041ac0dd23429379693431",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 26,
+        "tool": "Bash",
+        "input_sha256": "55921eeec65c05942192750457b1bfe334041aacb2a2e5c87484f8306d2b26d7",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 27,
+        "tool": "Bash",
+        "input_sha256": "db58be271142529daf2257761b70d1fa0dea8fd6210414b88ee97a8379e6c64d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 28,
+        "tool": "Bash",
+        "input_sha256": "40e4b092c52f4f57bde1414afd6a990620b2e0c1493b31da199972d564b2e91e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 29,
+        "tool": "Bash",
+        "input_sha256": "3a21fedcd8557cba8c32577df49a1b8b21ec3f6af443ff22ed1a009c951c249c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 30,
+        "tool": "Bash",
+        "input_sha256": "c8cac60172ee5a6ae2f20d035953997f56f1bf1cc5ae6f659661b468e2044d85",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 31,
+        "tool": "Agent",
+        "input_sha256": "e57328a3a5f10bdc8bb23f3196bc5fb7df1b5cd682d02a55f345eadf78e65d3c",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 31,
+        "subagent_type": "bookie",
+        "purpose": "Mark task merged"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "rebase-merge-pr-16-retire-bin-launch-ts",
+        "event_kind": "claimed",
+        "payload_md_sha256": "e82b7ca142e8fb408bdb5f0579455019f55b4c9929193cff43324a5e2165726e",
+        "payload_md_preview": "claimed by arc-worker-a-qzxx8h"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "rebase-merge-pr-16-retire-bin-launch-ts",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/16"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 260,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 9e760a55-9e66-454c-8607-325ec1d191eb.jsonl. evidence: Rebased PR #16 onto origin/main. Original branch had 4 commits stacked; 3 were unrelated (refactor/templates, arc-webui docs, spawn skill) with conflicting/obsolete chat_in/chat_out type names and unrelated cross-cutting changes. Reset branch to origin/main and cherry-picked only the on-topic commit 5072cf9 (chore: retire bin/launch.ts). Resolved package.json conflict keeping main's bin entries (a"
+  }
+}

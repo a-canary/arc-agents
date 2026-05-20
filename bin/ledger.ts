@@ -5,11 +5,14 @@
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
-import { TYPE_PRIORITY_SQL } from "../src/ledger/type-priority-sort";
+import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
+import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { renderSystemPrompt } from "../src/worker/templates";
+import { loadThreadContext } from "../src/worker/thread-context";
 import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
-import type { HitlKind } from "../src/ledger/hitl-schemas";
+import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
+import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
 
 const KNOWN_HYGIENE_SKILLS = [
@@ -85,6 +88,8 @@ switch (cmd) {
       parent: getFlag("parent"),
       blockedBy: getFlag("blocked-by"),
       project: getFlag("project"),
+      class: getFlag("class"),
+      urgency: getFlag("urgency"),
     };
     const errs = validateCreate(input, positionalAfterVerb());
     if (errs.length > 0) {
@@ -101,14 +106,39 @@ switch (cmd) {
     const state = blockedBy ? "blocked" : "ready";
     const thread = getFlag("thread") ?? null;
     const sourceModule = getFlag("source-module") ?? null;
+    // ADR 0005: pass through when supplied, fall back to schema defaults
+    // (class_unset / nominal) so unchanged callers stay compatible. The
+    // bookie subagent is expected to pass both explicitly going forward.
+    const cls = input.class ?? null;
+    const urgency = input.urgency ?? null;
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
-    db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
-    );
+    if (cls !== null && urgency !== null) {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class, urgency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls, urgency],
+      );
+    } else if (cls !== null) {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls],
+      );
+    } else if (urgency !== null) {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, urgency)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, urgency],
+      );
+    } else {
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
+      );
+    }
     db.run(
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
       [id, getFlag("agent") ?? "cli", title],
@@ -121,17 +151,13 @@ switch (cmd) {
     // ledger claim <worker> [--type X]
     // --type restricts the claim to a single priority class (used by fast-pass
     // interactive pool so a reserved slot doesn't burn on backlog work).
+    // SQL lives in src/ledger/claim.ts so the bash bootstrap in
+    // worker-shell.sh and this CLI share one canonical UPDATE...RETURNING.
     const worker = args[1] ?? die("worker required");
     if (worker.startsWith("--")) die("worker required (positional)");
     const typeFilter = getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const typeClause = typeFilter ? "AND type=?2" : "";
-    const sql = `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause} ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT 1)
-         RETURNING id`;
-    const row = typeFilter
-      ? db.query<{ id: string }, [string, string]>(sql).get(worker, typeFilter)
-      : db.query<{ id: string }, [string]>(sql).get(worker);
+    const row = claimOnce(db, worker, typeFilter);
     if (!row) {
       out({ claimed: null });
       break;
@@ -142,6 +168,20 @@ switch (cmd) {
       `claimed by ${worker}`,
     ]);
     out({ claimed: row.id });
+    break;
+  }
+
+  case "print-claim-sql": {
+    // Emit the canonical claim SQL to stdout. Sole consumer is
+    // bin/worker-shell.sh, the bash bootstrap (ADR 0001): bash has no
+    // agent process yet at claim time, so it can't import claimOnce
+    // directly — it pipes this text into sqlite3 instead. Keeping the
+    // SQL in one place preserves G-0002's single-statement guarantee.
+    //
+    // `--type-filter` emits the variant with `AND type=?2` baked in, so
+    // bash callers don't have to rewrite the SQL post-hoc.
+    const withTypeFilter = args.includes("--type-filter");
+    process.stdout.write(withTypeFilter ? buildClaimSQL(true) : CLAIM_SQL);
     break;
   }
 
@@ -164,8 +204,8 @@ switch (cmd) {
     if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    const parentRow = db.query<{ id: string; project: string; state: string }, [string]>(
-      "SELECT id, project, state FROM issues WHERE id=?",
+    const parentRow = db.query<{ id: string; project: string; state: string; class: string; urgency: string }, [string]>(
+      "SELECT id, project, state, class, urgency FROM issues WHERE id=?",
     ).get(parent);
     if (!parentRow) die(`no such issue: ${parent}`);
     if (parentRow.state === "merged" || parentRow.state === "cancelled") {
@@ -177,10 +217,13 @@ switch (cmd) {
     try {
       for (const title of children) {
         const id = mintId(db, title);
+        // ADR 0005: children inherit parent's class+urgency so a BUG/interactive
+        // decomposition stays BUG/interactive instead of dumping the subtree
+        // into the class_unset triage backlog.
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by)
-           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL)`,
-          [id, parentRow.project, parent, title],
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, class, urgency)
+           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?)`,
+          [id, parentRow.project, parent, title, parentRow.class, parentRow.urgency],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
@@ -221,6 +264,18 @@ switch (cmd) {
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+      if (state === "merged") {
+        const review = db
+          .query<{ c: number }, [string]>(
+            "SELECT COUNT(*) AS c FROM issue_events WHERE issue_id=? AND kind='diff_review'",
+          )
+          .get(id);
+        if (!review || review.c === 0) {
+          die(
+            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging.`,
+          );
+        }
+      }
     }
 
     const sets: string[] = ["updated_at=strftime('%s','now')"];
@@ -255,7 +310,7 @@ switch (cmd) {
     if (state) {
       db.run(
         `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
-        [id, state === "merged" ? "merged" : state === "failed" ? "failed" : "progress", getFlag("agent") ?? "cli", `→ ${state}`],
+        [id, state === "merged" ? "merged" : state === "failed" ? "failed" : "progress", getFlag("agent") ?? "cli", evidence ? `→ ${state}\n\n${evidence}` : `→ ${state}`],
       );
     }
     out({ id, updated: true });
@@ -281,12 +336,15 @@ switch (cmd) {
     const state = getFlag("state");
     const kind = getFlag("kind");
     const type = getFlag("type");
+    const all = args.includes("--all");
     const limit = parseInt(getFlag("limit") ?? "100", 10);
     const where: string[] = [];
     const vals: (string | number)[] = [];
     if (state) {
       where.push("state=?");
       vals.push(state);
+    } else if (!all) {
+      where.push("state NOT IN ('merged','cancelled','failed')");
     }
     if (kind) {
       where.push("kind=?");
@@ -298,7 +356,7 @@ switch (cmd) {
     }
     const sql = `SELECT id, state, kind, type, title FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
-    } ORDER BY ${TYPE_PRIORITY_SQL}, id LIMIT ?`;
+    } ORDER BY ${SORT_KEY_SQL} LIMIT ?`;
     vals.push(limit);
     const db = openWithMigrate(getFlag("db"));
     out(db.query(sql).all(...vals));
@@ -329,7 +387,15 @@ switch (cmd) {
     if (sub !== "emit") die("usage: hitl emit ...");
     const cls = getFlag("class") ?? die("--class taste|impact required");
     if (cls !== "taste" && cls !== "impact") die("--class must be taste|impact");
-    const kind = getFlag("kind") ?? die("--kind required");
+    const kindRaw = getFlag("kind") ?? die("--kind required");
+    // Validate enum membership early — keeps the per-verb error consistent
+    // with the prior CLI behavior rather than letting buildPayload's exhaustive
+    // switch throw a less-helpful generic error.
+    const kindParsed = hitlKind.safeParse(kindRaw);
+    if (!kindParsed.success) {
+      die(`--kind '${kindRaw}' not supported by this verb (use ${hitlKind.options.join("|")})`);
+    }
+    const kind: HitlKind = kindParsed.data;
     const promptText = getFlag("prompt") ?? die("--prompt required");
     const recommended = getFlag("recommended");
     const timeoutSec = getFlag("timeout-sec");
@@ -357,53 +423,55 @@ switch (cmd) {
       }
     }
 
-    let payload: Record<string, unknown>;
-    if (kind === "ask_choice") {
-      if (options.length < 2) die("ask_choice requires at least 2 --option flags");
-      payload = { prompt: promptText, options, artifacts: [] };
-    } else if (kind === "ask_text" || kind === "ask_confirm") {
-      payload = { prompt: promptText, artifacts: [] };
-    } else if (kind === "notify") {
-      payload = { message: promptText, level: "info" };
-    } else {
-      die(`--kind '${kind}' not supported by this verb (use ask_choice|ask_text|ask_confirm|notify)`);
+    // Build + validate the payload via the consolidated module so the Zod
+    // checks (e.g. ask_choice requires options.min(2)) actually run. Pre-
+    // refactor this code path inserted directly without validation.
+    let validatedPayload: unknown;
+    try {
+      validatedPayload = buildPayload(kind, {
+        prompt: promptText,
+        options,
+        message: promptText,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      die(`payload validation failed for kind=${kind}: ${msg}`);
     }
 
     const db = openWithMigrate(getFlag("db"));
     const cfg = loadConfig();
-    const modules = pickModulesForHitl(db, cfg, kind as HitlKind);
-    if (modules.length === 0)
-      die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
+    const timeoutSecInt = timeoutSec ? parseInt(timeoutSec, 10) : null;
 
-    const id = `hitl-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
-    db.run(
-      `INSERT INTO hitl_prompts
-         (id, kind, class, payload, recommended, divergence_strategy, timeout_sec,
-          anchor_repo, anchor_branch, anchor_commit, emitted_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-      [
-        id,
+    let result: { id: string; deliveries: string[] };
+    try {
+      result = insertHitlPrompt(db, {
         kind,
         cls,
-        JSON.stringify(payload),
-        recommended ?? null,
-        divergence ?? null,
-        timeoutSec ? parseInt(timeoutSec, 10) : null,
-        anchorRepo ?? null,
-        anchorBranch ?? null,
-        anchorCommit ?? null,
+        payload: validatedPayload,
+        recommended: recommended ?? null,
+        strategy: (divergence as "forward_fix" | "replay" | undefined) ?? null,
+        timeoutSec: timeoutSecInt,
+        anchor:
+          anchorRepo || anchorBranch || anchorCommit
+            ? { repo: anchorRepo ?? null, branch: anchorBranch ?? null, commit: anchorCommit ?? null }
+            : null,
         emittedBy,
-      ],
-    );
-    const deliveries: string[] = [];
-    for (const m of modules) {
-      db.run(
-        `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, ?, 'pending')`,
-        [id, m.name],
-      );
-      deliveries.push(m.name);
+        cfg,
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg.includes("no alive UX module")) {
+        die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
+      }
+      die(msg);
     }
-    out({ id, kind, class: cls, recommended: recommended ?? null, deliveries });
+    out({
+      id: result.id,
+      kind,
+      class: cls,
+      recommended: recommended ?? null,
+      deliveries: result.deliveries,
+    });
     break;
   }
 
@@ -462,7 +530,8 @@ switch (cmd) {
   }
 
   case "tick": {
-    // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr).
+    // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr)
+    // + reap expired hitl_prompts (open → timeout_locked).
     const db = openWithMigrate(getFlag("db"));
     const u = db.run(`
       UPDATE issues SET state='ready', updated_at=strftime('%s','now')
@@ -474,7 +543,31 @@ switch (cmd) {
         )
     `);
     const s = sweepStaleClaims(db);
-    out({ unblocked: u.changes, reclaimed: s.reset, reclaimed_ids: s.ids });
+    // Collect ids first so we can return them; the UPDATE itself fires
+    // hitl_retract_losers (migrate.ts:284) which retracts pending/delivered
+    // sibling deliveries — that's exactly the cascade we want.
+    const expiredRows = db
+      .query<{ id: string }, []>(
+        `SELECT id FROM hitl_prompts
+         WHERE state='open' AND expires_at IS NOT NULL
+           AND expires_at <= strftime('%s','now')`,
+      )
+      .all();
+    const expiredIds = expiredRows.map((r) => r.id);
+    if (expiredIds.length > 0) {
+      db.run(
+        `UPDATE hitl_prompts SET state='timeout_locked'
+         WHERE state='open' AND expires_at IS NOT NULL
+           AND expires_at <= strftime('%s','now')`,
+      );
+    }
+    out({
+      unblocked: u.changes,
+      reclaimed: s.reset,
+      reclaimed_ids: s.ids,
+      expired: expiredIds.length,
+      expired_ids: expiredIds,
+    });
     break;
   }
 
@@ -483,7 +576,7 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN ('task','event') ${
       type ? "AND type=?" : ""
-    } ORDER BY ${TYPE_PRIORITY_SQL}, id`;
+    } ORDER BY ${SORT_KEY_SQL}`;
     out(type ? db.query(sql).all(type) : db.query(sql).all());
     break;
   }
@@ -500,19 +593,10 @@ switch (cmd) {
       )
       .get(id);
     if (!row) die(`no issue ${id}`);
-    // Thread replay: for chat_in tasks, include prior chat turns so the cold
-    // interviewer has conversational continuity. Order = id (mintId is time-monotonic).
-    let thread_history: { id: string; kind: string; title: string; body: string }[] | undefined;
-    if (row.thread_id) {
-      thread_history = db
-        .query<{ id: string; kind: string; title: string; body: string }, [string, string]>(
-          `SELECT id, kind, title, COALESCE(body_md, '') AS body
-           FROM issues
-           WHERE thread_id=? AND id != ? AND kind IN ('event','reply') AND source_module='arc-chat'
-           ORDER BY id`,
-        )
-        .all(row.thread_id, id);
-    }
+    // Thread replay: for chat threads, include prior turns so the cold
+    // interviewer has conversational continuity. SQL filter + speaker mapping
+    // live together in src/worker/thread-context.ts.
+    const thread_replay = row.thread_id ? loadThreadContext(db, row.thread_id, id) : "";
     process.stdout.write(
       renderSystemPrompt({
         kind: row.kind,
@@ -520,7 +604,7 @@ switch (cmd) {
         worker,
         task: id,
         thread_id: row.thread_id ?? undefined,
-        thread_history,
+        thread_replay,
       }),
     );
     break;
@@ -538,9 +622,177 @@ switch (cmd) {
   }
 
   case "vacuum": {
+    // Three-pass GC (ADR 0006 §4 — file pending):
+    //   (1) --deliveries: prune hitl_deliveries on terminal prompts older than --older-than days
+    //   (2) --artifacts:  unlink ~/vault/artifacts/ blobs unreferenced by any live delivery's prompt payload
+    //   (3) default (no sub-flag): run both passes + SQLite VACUUM
+    // Terminal prompt states per actual schema (009_hitl_prompts): answered,
+    // user_confirmed, user_diverged, timeout_locked, cancelled.
+    // Live delivery = state IN ('pending','delivered'). Artifact reachability
+    // is by payload path field; sha-keyed dedup not yet a schema feature.
     const db = openWithMigrate(getFlag("db"));
-    db.exec("VACUUM");
-    out({ vacuumed: true });
+    if (args.includes("--events")) {
+      // Retention GC for issue_events on terminal (merged/cancelled) rows.
+      // Deletes events older than cutoff while preserving the row and its
+      // last terminal event (merged/cancelled) as an audit anchor.
+      const days = parseInt(getFlag("older-than") ?? "30", 10);
+      const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+      const r = db.run(
+        `DELETE FROM issue_events
+         WHERE ts < ?
+           AND issue_id IN (SELECT id FROM issues WHERE state IN ('merged','cancelled'))
+           AND seq NOT IN (
+             SELECT MAX(seq) FROM issue_events
+             WHERE kind = 'merged'
+             GROUP BY issue_id
+           )`,
+        [cutoff],
+      );
+      out({ events_deleted: r.changes, older_than_days: days });
+      break;
+    }
+    const olderDays = Number(getFlag("older-than") ?? "30");
+    if (!Number.isFinite(olderDays) || olderDays < 0) die("--older-than must be a non-negative number");
+    const onlyDeliveries = args.includes("--deliveries");
+    const onlyArtifacts = args.includes("--artifacts");
+    const runDeliveries = onlyDeliveries || (!onlyDeliveries && !onlyArtifacts);
+    const runArtifacts = onlyArtifacts || (!onlyDeliveries && !onlyArtifacts);
+    const runVacuum = !onlyDeliveries && !onlyArtifacts;
+
+    const TERMINAL = "('answered','user_confirmed','user_diverged','timeout_locked','cancelled')";
+    const cutoff = Math.floor(Date.now() / 1000) - olderDays * 24 * 3600;
+
+    const result: Record<string, unknown> = {};
+
+    if (runDeliveries) {
+      const r = db.run(
+        `DELETE FROM hitl_deliveries
+         WHERE prompt_id IN (
+           SELECT id FROM hitl_prompts
+           WHERE state IN ${TERMINAL} AND created_at < ?
+         )`,
+        [cutoff],
+      );
+      result.deliveries_deleted = r.changes;
+    }
+
+    if (runArtifacts) {
+      const { readdirSync, statSync, unlinkSync, existsSync } = require("node:fs") as typeof import("node:fs");
+      const { join: pjoin } = require("node:path") as typeof import("node:path");
+      const dir = (process.env.HOME ?? "") + "/vault/artifacts";
+      const reachable = new Set<string>();
+      if (existsSync(dir)) {
+        // Collect payload paths from prompts that still have a live delivery.
+        const prompts = db
+          .query<{ payload: string }, []>(
+            `SELECT DISTINCT p.payload AS payload
+             FROM hitl_prompts p
+             JOIN hitl_deliveries d ON d.prompt_id = p.id
+             WHERE d.state IN ('pending','delivered')`,
+          )
+          .all();
+        for (const row of prompts) {
+          try {
+            const parsed = JSON.parse(row.payload) as { artifacts?: { path?: string }[] };
+            for (const a of parsed.artifacts ?? []) {
+              if (a.path) reachable.add(a.path);
+            }
+          } catch {
+            // Skip malformed payload — log path for operator review.
+          }
+        }
+        let unlinked = 0;
+        let bytes = 0;
+        for (const name of readdirSync(dir)) {
+          const full = pjoin(dir, name);
+          let st;
+          try {
+            st = statSync(full);
+          } catch {
+            continue;
+          }
+          if (!st.isFile()) continue;
+          if (reachable.has(full)) continue;
+          bytes += st.size;
+          try {
+            unlinkSync(full);
+            unlinked += 1;
+          } catch {
+            // Best-effort; continue.
+          }
+        }
+        result.artifacts_unlinked = unlinked;
+        result.artifacts_bytes_freed = bytes;
+      } else {
+        result.artifacts_unlinked = 0;
+        result.artifacts_bytes_freed = 0;
+      }
+    }
+
+    if (runVacuum) {
+      db.exec("VACUUM");
+      result.vacuumed = true;
+    }
+
+    out(result);
+    break;
+  }
+
+  case "scratch-gc": {
+    // List ~/vault/scratch/<slug>/ dirs with no mtime activity in >14d.
+    // --root <path>     override scratch root (default ~/vault/scratch)
+    // --days <N>        staleness threshold (default 14)
+    // --apply           delete stale dirs (default: dry-run)
+    const { readdirSync, statSync, rmSync } = require("node:fs") as typeof import("node:fs");
+    const { join: pjoin } = require("node:path") as typeof import("node:path");
+    const root = getFlag("root") ?? `${process.env.HOME}/vault/scratch`;
+    const days = parseInt(getFlag("days") ?? "14", 10);
+    const apply = args.includes("--apply");
+    const cutoff = Date.now() - days * 86400 * 1000;
+
+    let entries: string[] = [];
+    try {
+      entries = readdirSync(root);
+    } catch {
+      out({ root, stale: [], deleted: [], note: "root not found" });
+      break;
+    }
+
+    // Recursive mtime check: max mtime over dir tree.
+    function maxMtime(p: string): number {
+      let m = statSync(p).mtimeMs;
+      try {
+        for (const e of readdirSync(p)) {
+          const sub = pjoin(p, e);
+          let s;
+          try { s = statSync(sub); } catch { continue; }
+          if (s.isDirectory()) {
+            const mm = maxMtime(sub);
+            if (mm > m) m = mm;
+          } else if (s.mtimeMs > m) m = s.mtimeMs;
+        }
+      } catch { /* unreadable */ }
+      return m;
+    }
+
+    const stale: { path: string; last_activity: string }[] = [];
+    for (const name of entries) {
+      const p = pjoin(root, name);
+      let s;
+      try { s = statSync(p); } catch { continue; }
+      if (!s.isDirectory()) continue;
+      const mt = maxMtime(p);
+      if (mt < cutoff) stale.push({ path: p, last_activity: new Date(mt).toISOString() });
+    }
+
+    const deleted: string[] = [];
+    if (apply) {
+      for (const s of stale) {
+        rmSync(s.path, { recursive: true, force: true });
+        deleted.push(s.path);
+      }
+    }
+    out({ root, days, apply, stale, deleted });
     break;
   }
 
@@ -555,6 +807,9 @@ switch (cmd) {
                                        flags: --project --body --acceptance --parent --blocked-by --agent
   claim <worker> [--type T]            atomic claim of highest-priority ready task
                                        (--type restricts to one priority class)
+  print-claim-sql [--type-filter]      emit canonical claim SQL (src/ledger/claim.ts)
+                                       to stdout for ops/debug; --type-filter
+                                       includes the AND type=?2 variant
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
   update <id> [--state --evidence --pr --branch --worktree --hitl 0|1 --agent]
   event <id> <kind> <payload>          append event row
@@ -566,13 +821,23 @@ switch (cmd) {
                                        skills: clarify-docs, improve-architecture,
                                                trash-retired-files, analyse-recent-sessions
                                        dedups against ready/blocked/wip/claimed hygiene rows
-  list [--state --kind --type --limit]
+  list [--state --kind --type --limit --all]
+                                       default excludes terminal (merged/
+                                       cancelled/failed); --all includes them
   show <id>
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
-  vacuum
+  vacuum [--events | --deliveries | --artifacts] [--older-than N]
+                                       Default (no sub-flag): GC HITL deliveries
+                                       on terminal prompts, unlink unreachable
+                                       ~/vault/artifacts/ blobs, then SQLite VACUUM.
+                                       --events: GC issue_events on merged/cancelled
+                                       rows older than N days (default 30); retains
+                                       row + last merged event as audit anchor.
+  scratch-gc [--root P --days N --apply]
+                                       list/delete stale ~/vault/scratch/<slug>/ dirs
 
   global flags: --db <path>
 

@@ -127,6 +127,27 @@ test("no alive module -> exit 3, spawn no row in hitl_prompts", async () => {
   expect(prompts.length).toBe(0);
 });
 
+test("repeated bootstrap spawns at most one install task (idempotent)", async () => {
+  // No heartbeats; two back-to-back asks should both refuse and both nudge the
+  // bookie to spawn the install task — but the install task itself must dedupe.
+  // mintId appends a random suffix on PK collision (src/ledger/db.ts:29), so
+  // without an explicit pre-check the bootstrap path generates a new row per
+  // call, flooding the queue.
+  for (let i = 0; i < 3; i++) {
+    const r = await runUx([
+      "ask-choice",
+      "--prompt", "x",
+      "--options", "a,b",
+      "--recommended", "a",
+    ]);
+    expect(r.exitCode).toBe(3);
+  }
+  const installs = rows<{ id: string }>(
+    "SELECT id FROM issues WHERE title='Install a UX surface module'",
+  );
+  expect(installs.length).toBe(1);
+});
+
 test("class=impact from worker role exits 4", async () => {
   heartbeat("arc-tui");
   const r = await runUx(
@@ -182,6 +203,20 @@ test("notify broadcasts to all alive modules, exits 0 without waiting", async ()
   expect(new Set(out.broadcast)).toEqual(new Set(["arc-tui", "arc-webui"]));
   const dels = rows<{ module_name: string }>("SELECT module_name FROM hitl_deliveries");
   expect(dels.length).toBe(2);
+});
+
+test("show-artifact succeeds without --recommended (ack-only, no answer to recommend)", async () => {
+  heartbeat("arc-tui");
+  const r = await runUx([
+    "show-artifact", "--caption", "look", "--artifact", "text/markdown:hi",
+  ]);
+  expect(r.exitCode).toBe(0);
+  const got = rows<{ kind: string; recommended: string | null; state: string }>(
+    "SELECT kind, recommended, state FROM hitl_prompts",
+  );
+  expect(got.length).toBe(1);
+  expect(got[0]!.kind).toBe("show_artifact");
+  expect(got[0]!.state).toBe("open");
 });
 
 test("ask-choice requires >=2 options", async () => {

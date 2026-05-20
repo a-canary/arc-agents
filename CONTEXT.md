@@ -8,7 +8,7 @@ Glossary of domain terms. Definitions only — no implementation details, no spe
 The SQLite database at `~/vault/ledger.db` that is the system of record for all work. Two tables: `issues` (rows of work) and `issue_events` (append-only audit log). Every meaningful state change goes through it.
 
 ## Issue
-A row in the ledger representing a unit of work. Has a `kind` (task, chat_in, chat_out, encounter_reply, prd, prefetch), a `type` (priority class — interactive, HITL, mvp, security, …, deferred), and a `state` (ready → claimed → wip → review → merged, or → blocked / failed / cancelled).
+A row in the ledger representing a unit of work. Has a `kind` (task, event, reply, prd, prefetch), a `source_module` (required for `event`/`reply`; identifies the producing module, e.g. `arc-chat`), a `type` (priority class — interactive, HITL, mvp, security, …, deferred), and a `state` (ready → claimed → wip → review → merged, or → blocked / failed / cancelled).
 
 ## Interactive (type)
 A `type` reserved for work the user is *actively waiting on*: next interviewer reply (`chat_out`), prefetch/precache for a pending taste/impact decision, UX request. Ranks above HITL in priority. Served by the fast-pass slot pool in the factory (see CHOICES `I-0007`).
@@ -45,8 +45,11 @@ The atomic transition `state=ready → state=claimed` performed by a single SQL 
 ## Bookie
 A claude subagent (`.claude/agents/bookie.md`) that is the sole authority for ledger **writes** (create, update, decompose, event) inside an agent session. Workers and the interviewer delegate every write to the bookie via the Agent tool. The bookie validates against project rules and refuses non-compliant writes. Reads (show, list) bypass the bookie and run directly.
 
+## Diff Review
+A pre-commit phase in the worker loop: the worker spawns an independent subagent (via the `/diff-review` skill, no shared reasoning trace) that reviews the finalized diff against the task brief + touched ADRs and returns a structured JSON report `{consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts}`. The worker logs the report as a `kind=diff_review` event. `bin/ledger.ts update --state merged` refuses without a prior `diff_review` event for the issue id; bookie rule #7 mirrors the refusal. Surprises/gaps must be reconciled in the diff or addressed in `evidence_md`. See [I-0008](CHOICES.md#i-0008-pre-commit-diff-review-gate).
+
 ## Decomposition
-The act of breaking a parent task into N HITL children atomically: insert N child issues + set `parent.blocked_by=[childIds]` + flip `parent.state='blocked'`. Used when an AFK worker discovers a blocker only a human can resolve. No fanout cap; recursion allowed.
+The act of breaking a parent task into N HITL children atomically: insert N child issues + set `parent.blocked_by=[childIds]` + flip `parent.state='blocked'`. Used when an AFK worker discovers a blocker only a human can resolve. Fanout cap = 5; recursion allowed.
 
 ## Terminal State
 An issue state from which there is no exit: `merged` and `cancelled`. Once a row reaches a terminal state, no writes are accepted against it.
@@ -89,3 +92,13 @@ A worker's escalation of a decision outside its scope, a risky action, or a bloc
 
 ## Pattern
 A symptom observed across multiple rows, workers, or cycles. Distinguished from a one-off observation: a single `state=failed` row is an observation; the same failure shape across N rows is a pattern. Patterns escalate to director-level review via [triage-failed](skills/triage-failed/SKILL.md), not per-row patching. Root-cause fixes only — patching symptoms while the root cause persists wastes every future cycle.
+
+## Drift
+Active renames or convention-residues where the old name still appears somewhere in code, comments, columns, or docs. Each entry has a 7-day TTL from the originating decision. After TTL expires, either the residue is gone (delete the line) or the rename is stuck — file a task to track the blocker and keep the entry until cleared. One line per drift, format:
+
+`- **old-name → new-name** (decided: ADR-NNNN or CHOICES tier) — residue: <where old name still appears>. *expires: YYYY-MM-DD (7d from decision)*`
+
+Current drift:
+
+- **encounter_reply → event** (decided: ADR-0005) — residue: `encounter_mode`/`encounter_timeout_at`/`encounter_default_resolution` columns on `issues` (see `src/ledger/migrate.ts`); `wait-for-ledger --interviewer` doc string; skills/to-ledger, skills/spawn, skills/bookie kind lists. *expires: 2026-05-26 (7d from ADR-0005)*
+- **chat_in / chat_out → event / reply with source_module** (decided: ADR-0005) — residue: `bin/arc-chat.ts` usage and code comments; `bin/ledger.ts:444` thread-replay comment; `bin/wait-for-ledger.ts` `--interviewer` filter mentions `chat_in`. *expires: 2026-05-26 (7d from ADR-0005)*

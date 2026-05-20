@@ -5,8 +5,10 @@
 //   heartbeat                              upsert ux_heartbeats row, exit
 //   list                                   print open prompts for arc-tui as JSON lines
 //   answer <prompt-id> <answer>            atomic first-reply-wins UPDATE
+//   ack <prompt-id>                        mark delivery acked for ack-only kinds (notify/show_artifact)
 //
-// Exit codes: 0 ok, 2 usage, 3 lost the race (prompt no longer open or not addressed)
+// Exit codes: 0 ok, 2 usage, 3 lost the race (prompt no longer open, not addressed,
+//             or wrong kind for the verb)
 
 import { open } from "../src/ledger/db";
 
@@ -37,21 +39,42 @@ switch (cmd) {
         { id: string; kind: string; class: string; payload: string; recommended: string | null },
         [string]
       >(
+        // Hide expired prompts even though they're still state='open' — no
+        // reconciler exists yet to flip them, so the expires_at check lives
+        // here. Without it, operators see (and can answer) timed-out prompts
+        // long after the requesting worker has given up. (bin/arc-ux.ts:292
+        // notes the reconciler is still missing.)
+        // Hide ack-only kinds (notify, show_artifact) from the answerable list.
+        // Per src/ledger/hitl-schemas.ts they carry no answer-shaped payload —
+        // surfacing them here would invite operators to type a reply that the
+        // answer verb would then refuse with exit 3 anyway. (A future `ack` verb
+        // is the right home for them; see ADR 0002.)
         `SELECT p.id, p.kind, p.class, p.payload, p.recommended
          FROM hitl_prompts p
          JOIN hitl_deliveries d ON d.prompt_id = p.id
          WHERE p.state = 'open'
+           AND p.kind IN ('ask_text','ask_choice','ask_confirm')
+           AND (p.expires_at IS NULL OR p.expires_at > strftime('%s','now'))
            AND d.module_name = ?
            AND d.state IN ('pending','delivered')
          ORDER BY p.id`,
       )
       .all(MODULE_NAME);
     for (const r of rows) {
+      // One malformed payload must not poison the whole listing — surface it as
+      // a raw string with a parse_error marker so the operator can still see+act
+      // on healthy prompts.
+      let payload: unknown;
+      try {
+        payload = JSON.parse(r.payload);
+      } catch (e) {
+        payload = { _parse_error: (e as Error).message, _raw: r.payload };
+      }
       process.stdout.write(JSON.stringify({
         id: r.id,
         kind: r.kind,
         class: r.class,
-        payload: JSON.parse(r.payload),
+        payload,
         recommended: r.recommended,
       }) + "\n");
     }
@@ -63,14 +86,29 @@ switch (cmd) {
     if (!id || answer === undefined) die(2, "usage: answer <prompt-id> <answer>");
     const db = open();
     const now = Math.floor(Date.now() / 1000);
-    // Atomic first-reply-wins: UPDATE only succeeds if state still 'open'.
+    // Atomic first-reply-wins, scoped to deliveries addressed to *this* module.
+    // Without the delivery gate, any module could answer prompts targeted at
+    // another module — the cascading retract trigger would then yank the
+    // legitimate delivery. See arc-tui.test.ts "refuses to answer when not addressed".
+    // kind filter mirrors the list SELECT: notify/show_artifact are one-way per
+    // hitl-schemas.ts and must not be transitioned to 'answered' (doing so would
+    // also fire the retract cascade against sibling deliveries — see
+    // hitl_retract_losers trigger).
     const r = db.run(
       `UPDATE hitl_prompts
        SET state='answered', answer=?, answered_by=?, answered_at=?
-       WHERE id=? AND state='open'`,
-      [answer, MODULE_NAME, now, id],
+       WHERE id=? AND state='open'
+         AND kind IN ('ask_text','ask_choice','ask_confirm')
+         AND (expires_at IS NULL OR expires_at > strftime('%s','now'))
+         AND EXISTS (
+           SELECT 1 FROM hitl_deliveries d
+           WHERE d.prompt_id=hitl_prompts.id
+             AND d.module_name=?
+             AND d.state IN ('pending','delivered')
+         )`,
+      [answer, MODULE_NAME, now, id, MODULE_NAME],
     );
-    if (r.changes === 0) die(3, `prompt ${id} no longer open`);
+    if (r.changes === 0) die(3, `prompt ${id} no longer open, expired, not answerable kind, or not addressed to ${MODULE_NAME}`);
     // Bump own delivery from pending → delivered so the retract trigger leaves it alone
     // (trigger only retracts deliveries whose module_name != answered_by).
     db.run(
@@ -80,6 +118,33 @@ switch (cmd) {
     );
     break;
   }
+  case "ack": {
+    const id = args[1];
+    if (!id) die(2, "usage: ack <prompt-id>");
+    const db = open();
+    const now = Math.floor(Date.now() / 1000);
+    // Atomic ack scoped to (this module, ack-only kinds, currently pending/delivered).
+    // We deliberately do NOT touch hitl_prompts — its state CHECK has no 'acked'
+    // value, and transitioning to 'answered' would fire hitl_retract_losers and
+    // yank sibling deliveries on a broadcast notify. The prompt stays 'open'
+    // until cancel/timeout; closure is delivery-level for ack-only kinds.
+    const r = db.run(
+      `UPDATE hitl_deliveries
+       SET state='acked', delivered_at=COALESCE(delivered_at, ?)
+       WHERE prompt_id=? AND module_name=? AND state IN ('pending','delivered')
+         AND EXISTS (
+           SELECT 1 FROM hitl_prompts p
+           WHERE p.id = hitl_deliveries.prompt_id
+             AND p.kind IN ('notify','show_artifact')
+             AND p.state = 'open'
+         )`,
+      [now, id, MODULE_NAME],
+    );
+    if (r.changes === 0) {
+      die(3, `prompt ${id} not in ackable state for ${MODULE_NAME} (wrong kind, already acked/retracted, or not addressed)`);
+    }
+    break;
+  }
   default:
-    die(2, "usage: arc-tui <heartbeat|list|answer>");
+    die(2, "usage: arc-tui <heartbeat|list|answer|ack>");
 }

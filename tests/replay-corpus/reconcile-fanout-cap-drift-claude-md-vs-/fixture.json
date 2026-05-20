@@ -1,0 +1,288 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "reconcile-fanout-cap-drift-claude-md-vs-",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "reconcile-fanout-cap-drift-claude-md-vs-",
+    "task_kind": "task",
+    "task_type": "quality",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-6htgu6",
+    "claimed_at": 1779172997,
+    "terminated_at": 1779172997,
+    "terminal_state": "merged",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": "worker/factory-metrics-endpoint"
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 43,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "bcad42e226639530a92a185c8167c7c4175f6e581aaf9a2880c116892b0f3241",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "a255e04939671b1823078c4338c942e2e022b672142ddbd8ac7033db03e47851",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "26056d82d2f1d7fe09cec7b2f85baa1c9bb4da871288919a74bfe7347641dda6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "c780a74de8068fd49e62499e8ec3a3ae11b8fe8cf6030f5ac889cd11cb847841",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "85fbee36c953a65e894ffd29c092c1a6d2c5b2cfdd1736db37995d95a81c21c6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Read",
+        "input_sha256": "ec2362b4d5fe275e7eea33afa15a9977ed8bd3419bf616ef5391c62e035a3604",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Edit",
+        "input_sha256": "4b13eb02cac1c861b4c92c31935b4448cdd2af4e9b30ac19d3d6d72073bfeb4b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Edit",
+        "input_sha256": "953e2e64a83da818f04b1da1bfbcc5c5c8d48a3982034f650ac7ce79de9062ab",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Edit",
+        "input_sha256": "4d5312b120bc6c2335877f518009b847f4da596bd3078374245e27959b442cbb",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Bash",
+        "input_sha256": "1babaee1ebe0fc314921aef0d76ba99274c82006c074e5466391288cd0e04d3d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Bash",
+        "input_sha256": "38040c9cbcb2bdc88718a09848b83f1c12c99438abb60370a8526d8b213839f5",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Bash",
+        "input_sha256": "f25c8453b8879a05f009caac230f73dccc8235242e07e7a1d3fbc2ce0bd34626",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Bash",
+        "input_sha256": "041c10a7a9d094635789b8a2b870ac2cd04b973c1a306cf1447328e435ff8513",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Bash",
+        "input_sha256": "c767f109121f2964791be272afe531733dafdc7bea27507b49ebfdf0b5a395bb",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Bash",
+        "input_sha256": "c775cb148a118abdcc9aecb680bcf74671e875861fd919b7add519d019497561",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "f6f91ce852912f90d7a3c234218d26ccd8600649e3c410cfcf9c7a9264f388c8",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Bash",
+        "input_sha256": "ef828dd10eaf55944b1b681c69d41a71e076eb7b88611ea4559b85601db303b9",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "0f3e0a06ec0685a2a0fc152a29f8b32645a1acb8a97cee579222325ba21ce9b4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Bash",
+        "input_sha256": "e243189b951090a3814b248c4e08d39b9514bb9fe865d2b0a361dd94cc5840b9",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Bash",
+        "input_sha256": "8e2afac4e3cefa4c99d8832fa7fd249d017ea4e858307bd331e21f991ca855a3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 20,
+        "tool": "Bash",
+        "input_sha256": "7e6d7af9efa75690b9d46972b1be9447d6314ea2d4fefccdcf53dfd82f3b852c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 21,
+        "tool": "Bash",
+        "input_sha256": "eb12b497ed19052ac2aabf359edbad72678711a1882934b7bf0cc688de0235f8",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 22,
+        "tool": "Bash",
+        "input_sha256": "488087b8430c487febb953d236e1e2780988b9116ff7398f7bfe3f3773601103",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 23,
+        "tool": "Bash",
+        "input_sha256": "006c0a174548ac35cafab999d06de2b45120e0a3909cdbaa5bd40da7f194a4d0",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 24,
+        "tool": "Bash",
+        "input_sha256": "fd8a44d55314f77fe7bb3b872079c9ab3f6b258d261e70b0bb996116880e42fb",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 25,
+        "tool": "Bash",
+        "input_sha256": "8e7f80bfd58bf714770bcf4de28284a23481934389ecb60366e5ce270b5fd69d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 26,
+        "tool": "Bash",
+        "input_sha256": "7126bf5dec0ed4c9f88c5959a9e3c1bf0dc456e8ba0bc372def425061551c258",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 27,
+        "tool": "Agent",
+        "input_sha256": "270e1c873c4d09b3bf02fa93802959989e8c85e36f98843244a8e8faeb307109",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 27,
+        "subagent_type": "bookie",
+        "purpose": "Update reconcile task"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "reconcile-fanout-cap-drift-claude-md-vs-",
+        "event_kind": "claimed",
+        "payload_md_sha256": "56a2b5ed0066b3965901945733e3f25056cbdeb46f901b7e3b38d08b6ef80246",
+        "payload_md_preview": "claimed by arc-worker-a-6htgu6"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "reconcile-fanout-cap-drift-claude-md-vs-",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/18"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 240,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 57b735da-7484-44bc-90eb-c6c87df09c87.jsonl. evidence: Added CHOICES G-0009 (no hardcoded fanout cap), updated CLAUDE.md decomposition paragraph, deleted fanout-cap-5 test in bin/ledger.test.ts, restored hooks/pre-commit-slice-guard.sh. bun test bin/ledger.test.ts: 15 pass / 0 fail. Commit e722e5b on branch worker/factory-metrics-endpoint cites 0626d37."
+  }
+}

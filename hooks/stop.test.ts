@@ -21,10 +21,11 @@ function ledger(args: string[]): { stdout: string; status: number } {
 }
 
 function runHook(env: Record<string, string>, stdin = "{}"): { stdout: string; status: number } {
+  const { ARC_TASK_ID: _drop, ...parent } = process.env;
   const r = spawnSync("bash", [HOOK], {
     encoding: "utf8",
     input: stdin,
-    env: { ...process.env, ARC_LEDGER_DB: dbPath, ...env },
+    env: { ...parent, ARC_LEDGER_DB: dbPath, ...env },
   });
   return { stdout: r.stdout, status: r.status ?? 1 };
 }
@@ -58,6 +59,12 @@ test("blocks with checklist when task is in non-terminal state", () => {
 
 test("passes through when task is merged", () => {
   const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger([
+    "event",
+    c.id,
+    "diff_review",
+    JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }),
+  ]);
   ledger(["update", c.id, "--state", "merged", "--evidence", "ok", "--pr", "branch/x"]);
   const r = runHook({ ARC_TASK_ID: c.id });
   expect(r.status).toBe(0);

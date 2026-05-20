@@ -23,8 +23,9 @@
 import { spawnSync } from "child_process";
 import { open } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
-import { parsePayload, type HitlKind } from "../src/ledger/hitl-schemas";
-import { loadConfig, pickModulesForHitl, validateHitlWrite } from "../src/ledger/ux-config";
+import { type HitlKind } from "../src/ledger/hitl-schemas";
+import { loadConfig } from "../src/ledger/ux-config";
+import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -55,16 +56,6 @@ function die(code: number, msg: string): never {
   process.exit(code);
 }
 
-function uuid(): string {
-  // 16 random bytes, formatted as 8-4-4-4-12 hex. Cheap and dependency-free.
-  const b = new Uint8Array(16);
-  crypto.getRandomValues(b);
-  b[6] = (b[6]! & 0x0f) | 0x40;
-  b[8] = (b[8]! & 0x3f) | 0x80;
-  const h = Array.from(b, (x) => x.toString(16).padStart(2, "0")).join("");
-  return `${h.slice(0, 8)}-${h.slice(8, 12)}-${h.slice(12, 16)}-${h.slice(16, 20)}-${h.slice(20)}`;
-}
-
 function gitAnchor(): { repo: string; branch: string; commit: string } | null {
   const repoR = spawnSync("git", ["rev-parse", "--show-toplevel"], { encoding: "utf8" });
   if (repoR.status !== 0) return null;
@@ -78,13 +69,25 @@ function gitAnchor(): { repo: string; branch: string; commit: string } | null {
   };
 }
 
-type AliveModule = { name: string; implements: string[]; can_retract: boolean };
-
 function bootstrapTaskIfNeeded(reason: string): void {
-  // Atomically spawn an install/repair task via the `ledger` CLI. The bookie
-  // is the canonical write path; we shell out instead of duplicating its
-  // validation here. Idempotency: we use a deterministic slug, so re-runs
-  // collide on PK and become no-ops.
+  // Pre-check: if a non-terminal "Install a UX surface module" issue is already
+  // queued, no-op. mintId (src/ledger/db.ts) appends a random suffix on PK
+  // collision rather than failing, so without this guard every refusal floods
+  // the queue with duplicate install tasks.
+  const db = open();
+  const existing = db
+    .query<{ id: string }, []>(
+      `SELECT id FROM issues
+       WHERE title = 'Install a UX surface module'
+         AND state NOT IN ('merged','cancelled')
+       LIMIT 1`,
+    )
+    .get();
+  db.close();
+  if (existing) return;
+
+  // First-time spawn: shell out to the bookie via `ledger create` so we don't
+  // duplicate its validation here.
   spawnSync(
     "bun",
     [
@@ -103,27 +106,7 @@ function bootstrapTaskIfNeeded(reason: string): void {
   );
 }
 
-function pickModulesFor(kind: HitlKind, artifactTypes: string[] = []): AliveModule[] {
-  const db = open();
-  const cfg = loadConfig();
-  const errs = validateHitlWrite(db, cfg, {
-    kind,
-    artifacts: artifactTypes.map((t) => ({ type: t })),
-  });
-  if (errs.length > 0) {
-    // Surface the first error to stderr so the caller sees *why*.
-    process.stderr.write(`arc-ux: ${errs.map((e) => `${e.field}: ${e.message}`).join("; ")}\n`);
-    return [];
-  }
-  return pickModulesForHitl(db, cfg, kind).map((m) => ({
-    name: m.name,
-    implements: m.implements,
-    can_retract: m.can_retract,
-  }));
-}
-
-function insertPromptAndDeliveries(opts: {
-  id: string;
+function emitPrompt(opts: {
   kind: HitlKind;
   cls: "taste" | "impact";
   payload: unknown;
@@ -131,40 +114,32 @@ function insertPromptAndDeliveries(opts: {
   strategy: "forward_fix" | "replay" | null;
   timeoutSec: number | null;
   anchor: { repo: string; branch: string; commit: string } | null;
-  modules: AliveModule[];
-}): void {
+}): { id: string; deliveries: string[] } {
   const db = open();
   migrate(db);
-  const now = Math.floor(Date.now() / 1000);
-  const expiresAt = opts.timeoutSec ? now + opts.timeoutSec : null;
-  db.transaction(() => {
-    db.run(
-      `INSERT INTO hitl_prompts
-         (id, kind, class, payload, recommended, divergence_strategy, timeout_sec,
-          state, anchor_repo, anchor_branch, anchor_commit, expires_at, emitted_by)
-       VALUES (?, ?, ?, ?, ?, ?, ?, 'open', ?, ?, ?, ?, ?)`,
-      [
-        opts.id,
-        opts.kind,
-        opts.cls,
-        JSON.stringify(opts.payload),
-        opts.recommended,
-        opts.strategy,
-        opts.timeoutSec,
-        opts.anchor?.repo ?? null,
-        opts.anchor?.branch ?? null,
-        opts.anchor?.commit ?? null,
-        expiresAt,
-        process.env.ARC_ROLE ?? null,
-      ],
-    );
-    for (const m of opts.modules) {
-      db.run(
-        `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES (?, ?, 'pending')`,
-        [opts.id, m.name],
-      );
+  const cfg = loadConfig();
+  try {
+    return insertHitlPrompt(db, {
+      kind: opts.kind,
+      cls: opts.cls,
+      payload: opts.payload,
+      recommended: opts.recommended,
+      strategy: opts.strategy,
+      timeoutSec: opts.timeoutSec,
+      anchor: opts.anchor,
+      emittedBy: process.env.ARC_ROLE ?? null,
+      cfg,
+    });
+  } catch (e) {
+    const msg = e instanceof Error ? e.message : String(e);
+    // Distinguish "no alive module" (exit 3 + bootstrap task) from generic
+    // validation failures (exit 2 — bad payload/artifact).
+    if (msg.includes("no alive UX module") || msg.startsWith("kind:")) {
+      bootstrapTaskIfNeeded(`no alive module implements ${opts.kind}`);
+      die(3, `no alive UX module implements ${opts.kind}; bootstrap task spawned`);
     }
-  })();
+    die(2, msg);
+  }
 }
 
 function waitForAnswer(promptId: string, timeoutSec: number | null): { state: string; answer: string | null } {
@@ -207,7 +182,11 @@ function commonAsk(kind: HitlKind, payload: unknown): { ok: boolean; out?: { id:
     die(4, `class=impact requires ARC_ROLE=interviewer (got '${process.env.ARC_ROLE}'). Workers must decompose, not block.`);
   }
 
-  const recommended = flag("recommended") ?? null;
+  // Ack-only kinds (show_artifact) have no answer to recommend, but the schema
+  // CHECK constraint requires class='taste' rows to have a non-null `recommended`
+  // (see src/ledger/migrate.ts:254). Mirror the notify path's sentinel.
+  const isAckOnly = kind === "show_artifact";
+  const recommended = flag("recommended") ?? (isAckOnly ? "(show_artifact)" : null);
   if (cls === "taste" && !recommended) die(2, `class=taste requires --recommended`);
 
   const strategyRaw = flag("strategy") ?? "forward_fix";
@@ -218,28 +197,18 @@ function commonAsk(kind: HitlKind, payload: unknown): { ok: boolean; out?: { id:
 
   const timeoutSec = cls === "taste" ? Number(flag("timeout") ?? 60) : null;
 
-  // Validate payload shape.
-  parsePayload(kind, payload);
+  // Validate payload shape via the consolidated build path.
+  const validated = buildPayload(kind, payload as Parameters<typeof buildPayload>[1]);
 
-  const artifactTypes = ((payload as { artifacts?: { type: string }[] }).artifacts ?? []).map((a) => a.type);
-  const modules = pickModulesFor(kind, artifactTypes);
-  if (modules.length === 0) {
-    bootstrapTaskIfNeeded(`no alive module implements ${kind}`);
-    die(3, `no alive UX module implements ${kind}; bootstrap task spawned`);
-  }
-
-  const id = uuid();
   const anchor = cls === "taste" ? gitAnchor() : null;
-  insertPromptAndDeliveries({
-    id,
+  const { id } = emitPrompt({
     kind,
     cls,
-    payload,
+    payload: validated,
     recommended,
     strategy,
     timeoutSec,
     anchor,
-    modules,
   });
 
   if (cls === "taste") {
@@ -279,29 +248,20 @@ switch (cmd) {
   case "notify": {
     const message = flag("message") ?? die(2, "--message required");
     const level = (flag("level") ?? "info") as "info" | "warn" | "error";
-    const payload = { message, level };
-    parsePayload("notify", payload);
-    const modules = pickModulesFor("notify");
-    if (modules.length === 0) {
-      bootstrapTaskIfNeeded("no alive module implements notify");
-      die(3, "no alive UX module implements notify; bootstrap task spawned");
-    }
-    const id = uuid();
     // notify is broadcast, never claimed, never waited on. Same row machinery,
     // but state goes straight to 'answered' once any module acks — or we leave
     // it 'open' with a short expires_at and let the reconciler reap it.
-    insertPromptAndDeliveries({
-      id,
+    const validated = buildPayload("notify", { message, level });
+    const { id, deliveries } = emitPrompt({
       kind: "notify",
       cls: "taste",
-      payload,
+      payload: validated,
       recommended: "(notify)",
       strategy: null,
       timeoutSec: 3600,
       anchor: null,
-      modules,
     });
-    process.stdout.write(JSON.stringify({ id, broadcast: modules.map((m) => m.name) }) + "\n");
+    process.stdout.write(JSON.stringify({ id, broadcast: deliveries }) + "\n");
     break;
   }
   case "show-artifact": {

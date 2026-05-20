@@ -2,6 +2,7 @@
 // Apply order is append-only. Each migration checks current state before running.
 
 import { Database } from "bun:sqlite";
+import { CLASS_VALUES, URGENCY_VALUES, sqlInList } from "./schema-enums";
 
 export type Migration = {
   id: string;
@@ -397,6 +398,8 @@ export const migrations: Migration[] = [
       // CHECK during rebuild only because the INSERT...SELECT below relies on the rewrite
       // CASE to map them — but we want post-rename validation strict, so the new CHECK
       // lists only the post-ADR-0005 kind set).
+      // CHECK lists for class/urgency are generated from schema-enums.ts to
+      // keep migration 011 and the runtime validators on the same enum.
       db.exec(`
         CREATE TABLE issues_new (
           id            TEXT PRIMARY KEY,
@@ -413,9 +416,9 @@ export const migrations: Migration[] = [
           kind          TEXT NOT NULL DEFAULT 'task'
                         CHECK (kind IN ('task','event','reply','prd','prefetch')),
           class         TEXT NOT NULL DEFAULT 'class_unset'
-                        CHECK (class IN ('BUG','MVP','ops','hygiene','quality','trust','scale','efficiency','class_unset')),
+                        CHECK (class IN (${sqlInList(CLASS_VALUES)})),
           urgency       TEXT NOT NULL DEFAULT 'nominal'
-                        CHECK (urgency IN ('interactive','nominal','deferred')),
+                        CHECK (urgency IN (${sqlInList(URGENCY_VALUES)})),
           source_module TEXT,
           blocked_by    TEXT CHECK (blocked_by IS NULL OR blocked_by LIKE '[%]'),
           worktree_path TEXT,
@@ -513,6 +516,111 @@ export const migrations: Migration[] = [
             );
         END;
       `);
+    },
+  },
+  {
+    id: "012_webui_columns",
+    // SLICE-PLAN-arc-webui.md S1. Add columns the webui needs:
+    //   priority      INT  — numeric priority. Lower = sooner. Backfilled
+    //                        from TYPE_PRIORITY (interactive=0…deferred=8)*10
+    //                        so /triage-failed and /defer can mutate without
+    //                        colliding with neighbors. Defer subtracts 100.
+    //   paused        BOOL — webui pause toggle. Waiter/factory skip when true.
+    //   deferred_at   TS   — set when the row was last deferred (rejoin queue).
+    //   artifact_dir  TEXT — path under ~/vault/agents/<role>/artifacts/<row>/
+    //                        for any drafts/sketches a worker produced.
+    //   draft_md      TEXT — cached HITL panel draft body (S5/S8 pre-drafter).
+    // parent_id already exists from 001/008/010/011 — no-op here.
+    up: (db) => {
+      const cols = db
+        .query<{ name: string }, []>("PRAGMA table_info(issues)")
+        .all()
+        .map((r) => r.name);
+      if (!cols.includes("priority")) db.exec("ALTER TABLE issues ADD COLUMN priority INTEGER");
+      if (!cols.includes("paused"))
+        db.exec("ALTER TABLE issues ADD COLUMN paused INTEGER NOT NULL DEFAULT 0 CHECK (paused IN (0,1))");
+      if (!cols.includes("deferred_at")) db.exec("ALTER TABLE issues ADD COLUMN deferred_at INTEGER");
+      if (!cols.includes("artifact_dir")) db.exec("ALTER TABLE issues ADD COLUMN artifact_dir TEXT");
+      if (!cols.includes("draft_md")) db.exec("ALTER TABLE issues ADD COLUMN draft_md TEXT");
+
+      // Backfill priority from TYPE_PRIORITY * 10 so defer (-100) and manual
+      // bumps have headroom without colliding with the type bucket.
+      db.exec(`
+        UPDATE issues SET priority = CASE type
+          WHEN 'interactive' THEN 0
+          WHEN 'HITL'        THEN 10
+          WHEN 'cron'        THEN 20
+          WHEN 'mvp'         THEN 30
+          WHEN 'security'    THEN 40
+          WHEN 'quality'     THEN 50
+          WHEN 'scale'       THEN 60
+          WHEN 'efficiency'  THEN 70
+          WHEN 'deferred'    THEN 80
+          ELSE 999
+        END
+        WHERE priority IS NULL;
+      `);
+
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_priority ON issues(priority) WHERE state='ready'");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_paused ON issues(paused) WHERE paused=1");
+    },
+  },
+  {
+    id: "013_event_kind_reclaimed",
+    // Expand issue_events.kind CHECK to include 'reclaimed', emitted by
+    // claim-stale-sweeper so operators have a forensic trail of which worker
+    // hung and for how long before its claim was reset.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE issue_events_new (
+          seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+          issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          ts         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          agent      TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','claimed','progress','blocked','unblocked',
+                                     'evidence','complete','failed','review','merged',
+                                     'budget-blocked','mirror-conflict','note','reclaimed')),
+          payload_md TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO issue_events_new (seq, issue_id, ts, agent, kind, payload_md)
+        SELECT seq, issue_id, ts, agent, kind, payload_md FROM issue_events;
+      `);
+      db.exec("DROP TABLE issue_events");
+      db.exec("ALTER TABLE issue_events_new RENAME TO issue_events");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
+    },
+  },
+  {
+    id: "014_event_kind_diff_review",
+    // Expand issue_events.kind CHECK to include 'diff_review'. The ledger
+    // CLI's merge gate (bin/ledger.ts update --state=merged) requires a
+    // prior diff_review event; without this kind in the CHECK, the gate is
+    // unsatisfiable.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE issue_events_new (
+          seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+          issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          ts         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          agent      TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','claimed','progress','blocked','unblocked',
+                                     'evidence','complete','failed','review','merged',
+                                     'budget-blocked','mirror-conflict','note','reclaimed',
+                                     'diff_review')),
+          payload_md TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO issue_events_new (seq, issue_id, ts, agent, kind, payload_md)
+        SELECT seq, issue_id, ts, agent, kind, payload_md FROM issue_events;
+      `);
+      db.exec("DROP TABLE issue_events");
+      db.exec("ALTER TABLE issue_events_new RENAME TO issue_events");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
     },
   },
 ];

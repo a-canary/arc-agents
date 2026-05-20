@@ -5,6 +5,7 @@
 //   `bun bin/factory.ts`           run loop in foreground
 //   `bun bin/factory.ts --once`    one tick, then exit (useful for tests / cron fallback)
 //   `bun bin/factory.ts --reap`    reap only, then exit
+//   `bun bin/factory.ts --metrics` print observability snapshot, then exit
 //
 // Env:
 //   ARC_SLOTS_ANY         general-pool slots (any type)       (default 4)
@@ -232,6 +233,50 @@ export function tick(): TickResult {
   };
 }
 
+export type Metrics = {
+  alive_workers: number;
+  claims_per_hr: number;
+  reaps_per_hr: number;
+  seconds_since_last_spawn: number | null;
+  slots: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
+};
+
+export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
+  const sessions = listWorkers();
+  const liveInteractive = sessions.filter((s) => s.name.startsWith(`${PREFIX}-i-`)).length;
+  const liveAny = sessions.length - liveInteractive;
+  const lastSpawn = sessions.reduce((m, s) => Math.max(m, s.created), 0);
+  const since = lastSpawn === 0 ? null : Math.max(0, now - lastSpawn);
+
+  const db = openWithMigrate(process.env.ARC_LEDGER_DB);
+  const hourAgo = now - 3600;
+  const claims = db
+    .query<{ n: number }, [number]>(
+      `SELECT COUNT(*) AS n FROM issue_events WHERE kind='claimed' AND ts >= ?`,
+    )
+    .get(hourAgo);
+  // Event kind must match what claim-stale-sweeper actually writes
+  // (src/ledger/claim-stale-sweeper.ts inserts kind='reclaimed'). Was 'note'
+  // here, so reaps_per_hr silently always reported 0.
+  const reaps = db
+    .query<{ n: number }, [number]>(
+      `SELECT COUNT(*) AS n FROM issue_events WHERE kind='reclaimed' AND agent='claim-stale-sweeper' AND ts >= ?`,
+    )
+    .get(hourAgo);
+  db.close();
+
+  return {
+    alive_workers: sessions.length,
+    claims_per_hr: claims?.n ?? 0,
+    reaps_per_hr: reaps?.n ?? 0,
+    seconds_since_last_spawn: since,
+    slots: {
+      any: { live: liveAny, cap: SLOTS_ANY },
+      interactive: { live: liveInteractive, cap: SLOTS_INTERACTIVE },
+    },
+  };
+}
+
 async function sleep(s: number): Promise<void> {
   return new Promise((r) => setTimeout(r, s * 1000));
 }
@@ -259,6 +304,10 @@ async function run(): Promise<void> {
   if (process.argv.includes("--reap")) {
     const reaped = reapStale();
     console.log(JSON.stringify({ reaped }));
+    return;
+  }
+  if (process.argv.includes("--metrics")) {
+    console.log(JSON.stringify(metrics()));
     return;
   }
   if (process.argv.includes("--once")) {

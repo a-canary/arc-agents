@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 891,
+      "ts": 1779173669,
+      "agent": "arc-worker-a-6ye9w7",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-6ye9w7",
+      "issue_id": "s-0003a-land-arc-replay-scaffold-pr-befo"
+    }
+  ]
+}

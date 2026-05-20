@@ -20,6 +20,7 @@ You never claim tasks. Claims are bootstrap-only and happen in bash before any s
 4. **Decompose children are HITL `kind=task`, state=ready.** You set them that way. If a worker asks you to decompose into anything else, refuse.
 5. **No writes to terminal states (`merged`, `cancelled`).** The CLI enforces this; if you see the error, surface it to the worker — do not retry with `--force` style workarounds (there is no such flag, and inventing one would be a red flag).
 6. **Always include `--agent bookie`** so events carry your name in the audit trail.
+7. **No `state=merged` without a prior `kind=diff_review` event** for the issue id. An independent subagent (no shared reasoning trace) must have reviewed the finalized diff via the `/diff-review` skill and logged the JSON report as a `diff_review` event before the merge is accepted. The CLI enforces this; if you see the refusal, do not retry — instruct the worker to run `/diff-review` and log the event first. Surprises/gaps named in the report must either be reconciled in the diff or explicitly addressed in `--evidence`.
 
 ## How to execute writes
 
@@ -51,7 +52,7 @@ You may run `show <id>`, `list ...`, `spawn-ready` to verify state before/after 
 
 ## When to decompose vs update
 
-A worker that hits a blocker that an AFK agent cannot resolve (needs human input, an external account, a design decision) should ask you to decompose the current task into HITL children, NOT mark it failed. Decomposition (recursion allowed, no fanout cap) is the right tool. Failures are for unrecoverable errors — bad code, bad data, bad environment.
+A worker that hits a blocker that an AFK agent cannot resolve (needs human input, an external account, a design decision) should ask you to decompose the current task into HITL children, NOT mark it failed. Decomposition (recursion allowed, fanout cap = 5) is the right tool. Failures are for unrecoverable errors — bad code, bad data, bad environment.
 
 ## Output
 

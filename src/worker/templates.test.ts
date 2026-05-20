@@ -1,5 +1,29 @@
 import { describe, expect, it } from "bun:test";
+import { existsSync } from "node:fs";
+import { dirname, join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { renderSystemPrompt, resolveTemplate } from "./templates";
+
+const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
+
+const TEMPLATE_COMBOS: Array<[string, string]> = [
+  ["task", "interactive"],
+  ["task", "HITL"],
+  ["task", "cron"],
+  ["task", "mvp"],
+  ["task", "security"],
+  ["task", "quality"],
+  ["task", "scale"],
+  ["task", "efficiency"],
+  ["task", "deferred"],
+  ["event", "interactive"],
+  ["reply", "interactive"],
+  ["prefetch", "interactive"],
+  ["prd", "mvp"],
+  ["task", "__unknown__"],
+];
+
+const EXTERNAL_SKILLS = new Set(["grill-with-docs", "choose-wisely"]);
 
 describe("resolveTemplate", () => {
   it("picks interactive frame for reply/interactive", () => {
@@ -22,6 +46,21 @@ describe("resolveTemplate", () => {
   it("task/mvp includes triage-failed", () => {
     expect(resolveTemplate("task", "mvp").opening_skills).toContain("triage-failed");
   });
+});
+
+describe("opening_skills resolve to skills/<name>/SKILL.md", () => {
+  for (const [kind, type] of TEMPLATE_COMBOS) {
+    it(`${kind}/${type}: every opening skill has a SKILL.md or is external`, () => {
+      const t = resolveTemplate(kind, type);
+      for (const name of t.opening_skills) {
+        if (EXTERNAL_SKILLS.has(name)) continue;
+        const path = join(REPO_ROOT, "skills", name, "SKILL.md");
+        if (!existsSync(path)) {
+          throw new Error(`opening skill "${name}" referenced by ${kind}/${type} missing at ${path}`);
+        }
+      }
+    });
+  }
 });
 
 describe("renderSystemPrompt", () => {

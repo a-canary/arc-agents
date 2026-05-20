@@ -29,7 +29,7 @@ CLI verbs (see `I-0001`): `init, create, claim, update, event, list, show, tick,
 
 Install bins on PATH (only after merge to main, per `I-0005`):
 ```
-bun link && bun link arc-agents      # registers ledger, arc-launch, wait-for-ledger
+bun link && bun link arc-agents      # registers ledger, wait-for-ledger
 ```
 
 ## Architecture (big picture)
@@ -37,7 +37,7 @@ bun link && bun link arc-agents      # registers ledger, arc-launch, wait-for-le
 **Ledger is the message bus.** SQLite at `~/vault/ledger.db` with two tables: `issues` and `issue_events` (append-only). Every state change is an atomic SQL transition. No daemons, no IPC, no queues — just rows.
 
 **Three runtime actors:**
-- **Interviewer** — ephemeral, same factory pool as workers (ADR 0003). User posts via `bin/arc-chat.ts post <msg>`; the factory's fast-pass slot claims the resulting `chat_in` row and the worker (frame=intake, skills=grill-with-docs+choose-wisely+ke-recall) emits a `chat_out` reply tagged with the same `thread_id`. `bin/arc-chat.ts tail --thread T` streams replies. `bin/launch.ts` is deprecated.
+- **Interviewer** — ephemeral, same factory pool as workers (ADR 0003). User posts via `bin/arc-chat.ts post <msg>`; the factory's fast-pass slot claims the resulting `chat_in` row and the worker (frame=intake, skills=grill-with-docs+choose-wisely+ke-recall) emits a `chat_out` reply tagged with the same `thread_id`. `bin/arc-chat.ts tail --thread T` streams replies.
 - **Workers** — ephemeral tmux sessions (`arc-worker-<rand>`). Each = one task = one `claude` process. Booted by `bin/worker-shell.sh`, which performs the atomic claim in bash then `exec`s interactive `claude`. The claim is the *only* ledger write that bypasses the bookie.
 - **Factory** — supervisor daemon (`bin/factory.ts`). Reaps workers >4hr old, spawns fresh ones up to N=4 when ready tasks exist. Always-on.
 
@@ -50,7 +50,7 @@ bun link && bun link arc-agents      # registers ledger, arc-launch, wait-for-le
 ## Layout
 
 ```
-bin/        executables (ledger, launch, factory, worker-shell.sh, wait-for-ledger)
+bin/        executables (ledger, factory, arc-chat, worker-shell.sh, wait-for-ledger)
 src/        library code (ledger/, profiles/)
 profiles/   role JSON (developer, director, admin) — context, boot skills, model, budget, concurrency
 skills/     skill definitions (bookie, ke-recall, ke-learn, claude-afk, to-ledger, triage-failed)

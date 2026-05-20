@@ -1,0 +1,30 @@
+[
+  {
+    "id": "i-0006-git-author-audit-no-hardcoded-nam",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "I-0006 git-author audit (no hardcoded names)",
+    "body_md": "I-0006 says commit author is whatever git config user.name/user.email resolve to — no hardcoded usernames. Add bin/lint-no-hardcoded-author.sh that greps src/ bin/ for literal patterns like 'a-canary' / 'aaron' / 'anthropic.com' / 'noreply' embedded in commit/author logic (allowed in comments + tests as fixtures). Wire into merge-gate.",
+    "acceptance_md": "lint script exits 0 on clean tree; exits 1 if a hardcoded literal author surfaces in non-test source; merge-gate invokes it.",
+    "type": "security",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": "/home/aaron/worktrees/arc-agents-i-0006-author-audit",
+    "branch": "worker/i-0006-author-audit",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/29",
+    "evidence_md": "Added bin/lint-no-hardcoded-author.sh as Gate 4 in merge-gate.sh; clean tree PASS, planted offender FAIL; commit 2a06d83 PR #29",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779173000,
+    "updated_at": 1779173365,
+    "claimed_at": 1779173163,
+    "claimed_by": "arc-worker-a-8t3oud"
+  }
+]

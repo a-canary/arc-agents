@@ -1,0 +1,284 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "s-0003b-define-replay-shadow-fixture-jso",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "s-0003b-define-replay-shadow-fixture-jso",
+    "task_kind": "task",
+    "task_type": "HITL",
+    "task_class": "class_unset",
+    "worker_id": "arc-worker-a-rga55g",
+    "claimed_at": 1779174010,
+    "terminated_at": 1779174010,
+    "terminal_state": "merged",
+    "parent_id": "s-0003-replay-shadow-corpus-seed-capture",
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": "worker/s-0003b-replay-fixture-schema"
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 43,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "722a8980cb3d0d28af69bfee3c6910dfed9253f927a3c75c0e676b0c76c6523d",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Bash",
+        "input_sha256": "2a3ffe771958844114e7f1042a51283a7bb86ca0db2213bd4b7ccdf5fca98fe4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 2,
+        "tool": "Bash",
+        "input_sha256": "f92ca715cb2deca72271670051e2b6758f312d80b2d7754787c294962e0e5653",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 3,
+        "tool": "Bash",
+        "input_sha256": "3802c40c55f8ac96169b6f3d2e2b0f71d9ffd3849993a788d1b1fd4bb3a122a1",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 4,
+        "tool": "Bash",
+        "input_sha256": "0814e844a3831aa8e56d6f5fb43e1373fe9b1b84b64e3f809fb7984481320055",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 5,
+        "tool": "Bash",
+        "input_sha256": "72372c9845773c474cf6f27c7056973d0ec8812a7baf12d553f8cc5336c0749a",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 6,
+        "tool": "Bash",
+        "input_sha256": "50aba1402627279a113ddf15eab750bb0651e6ad0a6ab69857dd530883a4e0c6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 7,
+        "tool": "Bash",
+        "input_sha256": "ead70b501c975a7fc36d2edf27bdf8c8f9c2e532c7cd49fe42e359506c1b885b",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 8,
+        "tool": "Bash",
+        "input_sha256": "d824ba24c0a97ec8eb109fbba15d972e187769e035d8e01ef8b5e7a336b74eb6",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 9,
+        "tool": "Bash",
+        "input_sha256": "549cad9456fe1ef86caf3280eaa8d2ee4dde7ea0151156ca2ab70145e7ab5f1e",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 10,
+        "tool": "Edit",
+        "input_sha256": "65854ef5fafadb8488079f0ca77b829921319d50c884e75c39dce81e7c3a8fa2",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 11,
+        "tool": "Bash",
+        "input_sha256": "0415d4c08185eef49e268ffd6af5139c3baedcf2780a7dedb8f370342b042abe",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 12,
+        "tool": "Bash",
+        "input_sha256": "b18ebb491f492b88da3d8df32b1774d693937590d6c006141071537c60383dac",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 13,
+        "tool": "Bash",
+        "input_sha256": "326b39058eaa84892e76988739d60092c30e98685cdf95f28dc4f9a50c294181",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 14,
+        "tool": "Bash",
+        "input_sha256": "83eba8c12bdb956d3f3755d99fc6781ab86c75e134ca3e893f449052c3e583fe",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 15,
+        "tool": "Bash",
+        "input_sha256": "0f6f61320c0d2443df620dfbc1efcb929eea9f1364b55312463e281c26a2d0a0",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 16,
+        "tool": "Bash",
+        "input_sha256": "d13af5d776800e521e761894449d65616d11f2024cc4d25a2c36911814420f87",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 17,
+        "tool": "Bash",
+        "input_sha256": "9864946aeb1efd6f867c233d02f778afe9101c1dc549e3cdc4e12490e889b2a3",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 18,
+        "tool": "Bash",
+        "input_sha256": "30e3940decff712fa08b7f9ff6cf0000a73fb742873685c9e9c649e615e4aab0",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 19,
+        "tool": "Bash",
+        "input_sha256": "785af1a62336cc1c646c03ba32a38e5791dd82026577f779b9bb0fd6d41b288c",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 20,
+        "tool": "Bash",
+        "input_sha256": "1b18360d93f49b146c066656ce66631bbdcbd0c784f5db2121eb393e0e8646a4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 21,
+        "tool": "Bash",
+        "input_sha256": "371dbcdb419cea461db3802fb886293be005309d8ab3974e777b1811965903cc",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 22,
+        "tool": "Bash",
+        "input_sha256": "84343eccfa218178a732cc5523a74f9f52a18be4a6b22719f559040bfb4ca5f4",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 23,
+        "tool": "Agent",
+        "input_sha256": "802a2eb827d83c3f69a1a423d585199425f846c9409fa016be4d25361b473979",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 24,
+        "tool": "Agent",
+        "input_sha256": "62fd158ac6765c5e42851728404d8f0175c0d83a0db31163eb424a797d707194",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 25,
+        "tool": "Agent",
+        "input_sha256": "9988301693669d2ffca184a6530d924dca8456e87f39328b9b6b8b32f77a29d2",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 23,
+        "subagent_type": "bookie",
+        "purpose": "Mark s-0003c review + evidence"
+      },
+      {
+        "seq": 24,
+        "subagent_type": "bookie",
+        "purpose": "Merge s-0003c"
+      },
+      {
+        "seq": 25,
+        "subagent_type": "bookie",
+        "purpose": "Decompose s-0003c to HITL ratification child"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "s-0003b-define-replay-shadow-fixture-jso",
+        "event_kind": "claimed",
+        "payload_md_sha256": "53cd666a0eba936c466ee041dce5dc2707a0112abe754ca90ac93770918dab43",
+        "payload_md_preview": "claimed by arc-worker-a-rga55g"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "s-0003b-define-replay-shadow-fixture-jso",
+        "from": "claimed",
+        "to": "merged"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": "https://github.com/a-canary/arc-agents/pull/36"
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 217,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 04ec074e-0f75-4054-a9f2-e77b1d6fc689.jsonl. evidence: Spec at skills/replay-shadow/FIXTURE-SCHEMA.md (279 lines) encoding 4-part fixture from SKILL.md. PR #36 open. Commit 5745a50 on worker/s-0003b-replay-fixture-schema."
+  }
+}

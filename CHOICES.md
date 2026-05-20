@@ -82,6 +82,15 @@ TS over Python where reasonable. Bun runtime.
 ### S-0003: Replay-Shadow as the Confidence Primitive
 Capture one real worker turn → replay against candidate config in an isolated sandbox → diff transcript + ledger writes + quality signals. Run on a corpus (~30) before promoting prompt/template/model/skill-set changes. Generic dev practice, not arc-specific; harness is per-system (`bin/arc-replay.ts` for arc-agents). Skill defines contract, system wires it. Not a substitute for live shadow on concurrency/UX/scale regressions. See `skills/replay-shadow/SKILL.md`.
 
+### S-0003.c: Canonical Transcript Source for Worker Turns
+Replay-shadow fixtures use the claude session JSONL at `~/.claude/projects/<proj>/<session>.jsonl` as the canonical transcript for a worker turn. Rationale: it is the only artifact that contains the full ordered sequence of model I/O, tool calls, and tool results in a single file written by the runtime itself — no reconstruction needed. Ledger `issue_events` rows are the canonical *output-diff* (a separate fixture part), not the transcript; they record decisions but not deliberation. Tmux scrollback is lossy (truncation, ANSI noise) and not a stable format. The session JSONL is keyed by session id; the binding from worker → session is recoverable from the worker tmux name + `~/.claude/projects/<proj>/` directory mtime (capture procedure stores the resolved path in `fixture.json`).
+
+### S-0004: Intake Skill — grill-with-docs
+Path: `~/projects/mattpocock-skills/skills/engineering/grill-with-docs/SKILL.md`. Purpose: stress-test a plan against `CONTEXT.md` + `docs/adr/` anchor docs, sharpen terminology, update docs inline as decisions crystallise. Who may invoke: **interviewer always** (step 1 of Intake/UX_1 per U-0007). **Workers**: invoke only when a task body explicitly requests it (e.g., scope-alignment tasks). Default for routine impl/quality tasks is to skip — workers act on already-decomposed rows.
+
+### S-0005: Intake Skill — choose-wisely
+Path: `~/agents/skills/governance/choose-wisely/SKILL.md`. Purpose: iterate `CHOICES.md` to surface and resolve up/downstream design choices, cascade impact across M/A/G/S/D/I tiers, plan implementation phases. Who may invoke: **interviewer always** (step 2 of Intake/UX_1 per U-0007). **Workers**: invoke when a task introduces or revises a CHOICES entry; otherwise skip. Cascades will reference S-0004/S-0005 once these pointers exist.
+
 ---
 
 ## Data
@@ -106,7 +115,7 @@ Capture one real worker turn → replay against candidate config in an isolated 
 `ledger` binary (TS, bun). Verbs: init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum.
 
 ### I-0002: Launcher + Factory
-`bin/arc-chat.ts` — user-facing chat surface (`post`/`tail`/`threads`). `bin/factory.ts` — supervisor daemon spawning ephemeral worker AND interviewer sessions (M-0004 + ADR 0003); fast-pass pool serves `type=interactive`. `bin/worker-shell.sh` — bootstrap: atomic claim → `ledger render-prompt` (with thread replay) → exec interactive `claude`. `bin/launch.ts` — deprecated single-pane interviewer; retire after one release.
+`bin/arc-chat.ts` — user-facing chat surface (`post`/`tail`/`threads`). `bin/factory.ts` — supervisor daemon spawning ephemeral worker AND interviewer sessions (M-0004 + ADR 0003); fast-pass pool serves `type=interactive`. `bin/worker-shell.sh` — bootstrap: atomic claim → `ledger render-prompt` (with thread replay) → exec interactive `claude`.
 
 ### I-0003: Bookie Subagent
 Writes ledger rows on behalf of agents. Single point of validation.
@@ -119,6 +128,12 @@ Writes ledger rows on behalf of agents. Single point of validation.
 
 ### I-0006: Git Author
 Commits use the deployer's configured git user (`git config user.name` / `user.email`). No hardcoded author in framework code — repo is public, deployed by many.
+
+### I-0007: arc-webui Tailscale-Only Binding
+`bin/webui-server.ts` binds the tailscale0 interface address resolved via `resolveIfaceAddr()` (override with `ARC_WEBUI_IFACE`). Fails fast on `Bun.serve` boot if the interface is absent — no `0.0.0.0` fallback. Verified S10: socket listens only on `100.91.151.13:PORT`; connections from eno1 LAN IP and loopback are refused (`ECONNREFUSED`). Blocks public-network exposure of the HITL/AFK SSE feeds.
+
+### I-0008: Pre-Commit Diff-Review Gate
+Before `git commit`, the worker spawns an independent subagent (no shared reasoning trace) via the `/diff-review` skill that reviews the finalized diff against the task brief + touched ADRs and returns JSON `{consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts}`. Worker asks bookie to log it as a `kind=diff_review` event. `bin/ledger.ts update --state merged` refuses if no `diff_review` event exists for the issue; bookie mirrors the rule (rule #7). Surprises/gaps must be reconciled in the diff OR addressed in `evidence_md` at merge.
 
 ---
 
@@ -139,13 +154,13 @@ Taste prompts capture `(repo, branch, HEAD sha)` at create. Divergent user repli
 `hitl_prompts` + `hitl_deliveries` (one delivery row per alive module per prompt). Broadcast on create, first-reply-wins via atomic UPDATE on `hitl_prompts.state`, SQL cascade flips loser deliveries to `retracted`. Same primitives as `issues` + `issue_events`.
 
 ### U-0005: Config Declares, Ledger Tracks
-`~/.config/arc/config.yaml` is the declarative contract (verbs implemented, artifact render capabilities, can_retract, cli, pusher). Ledger holds liveness via heartbeats. No transport, auth, or endpoint fields in config — those are the module's internal business.
+`~/.config/arc/config.yaml` is the declarative contract (verbs implemented, artifact render capabilities, can_retract, cli, pusher). Ledger holds liveness via heartbeats. No transport, auth, or endpoint fields in config — those are the module's internal business. Schema: [system/config-schema.json](system/config-schema.json); canonical example: [system/config.example.yaml](system/config.example.yaml).
+
+### U-0006: Canonical Artifact Types
+Interviewer produces medium-agnostic artifacts (`text/markdown`, `text/diff`, `chart/vega-lite`, `diagram/mermaid`, `image/png`, `table/rows`). Modules declare per-type render strategy (`native`, `rasterize-png`, `ascii-degrade`, …, `unsupported`). Conversion is the module's job; agents never produce per-medium variants.
 
 ### U-0007: Interviewer Owns Intake (UX_1) and HITL Prompts (UX_2)
 The two user-facing flows are both interviewer-mediated. **Intake (UX_1)**: on a new chat thread (idea, feature, pivot, bug, one-off, artifact request) the interviewer runs `grill-with-docs` to align scope/intent against `CONTEXT.md` + ADRs, then `choose-wisely` to cascade through `CHOICES.md` and resolve up/downstream design choices, then decomposes into ledger rows via bookie. **HITL Prompt (UX_2)**: in-flight tasks needing impact decisions or taste judgements emit `hitl_prompts` rows; the UX Module Contract handles fanout/first-reply-wins/retract. See [CONTEXT.md → Intake](CONTEXT.md#intake-ux_1) and [HITL Prompt Flow](CONTEXT.md#hitl-prompt-flow-ux_2).
 
 ### U-0008: CHOICES vs ADRs
 `CHOICES.md` is the working ledger of scoped decisions (one line each, M/A/G/S/D/I tiered, cheap to add/revise) — `choose-wisely` operates here. `docs/adr/` is the long-form record of hard-to-reverse architectural trade-offs (context, alternatives, consequences). A CHOICES entry graduates to an ADR when the trade-off warrants the narrative. Not redundant: CHOICES is the cascade surface, ADRs are anchor reading.
-
-### U-0006: Canonical Artifact Types
-Interviewer produces medium-agnostic artifacts (`text/markdown`, `text/diff`, `chart/vega-lite`, `diagram/mermaid`, `image/png`, `table/rows`). Modules declare per-type render strategy (`native`, `rasterize-png`, `ascii-degrade`, …, `unsupported`). Conversion is the module's job; agents never produce per-medium variants.

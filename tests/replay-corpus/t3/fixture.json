@@ -1,0 +1,106 @@
+{
+  "$schema_version": 1,
+  "fixture_id": "t3",
+  "captured_at": 1779174720,
+  "source": {
+    "system": "arc-agents",
+    "system_sha": "b72843f2a1241214c250400ed9deb5fb785fcbf9",
+    "schema_sha": "pending-s-0003b-merge"
+  },
+  "unit": {
+    "task_id": "t3",
+    "task_kind": "task",
+    "task_type": "mvp",
+    "task_class": "MVP",
+    "worker_id": "arc-worker-a-xi1b3a",
+    "claimed_at": 1779056836,
+    "terminated_at": 1779056836,
+    "terminal_state": "failed",
+    "parent_id": null,
+    "repo": "arc-agents"
+  },
+  "input": {
+    "rendered_prompt": null,
+    "rendered_prompt_sha256": null,
+    "profile": "developer",
+    "model": null,
+    "skill_set": [],
+    "frame": "afk-worker",
+    "note": "rendered_prompt unavailable for retro-captured turns; capture-time fixtures will populate."
+  },
+  "env": {
+    "git": {
+      "repo_sha": null,
+      "branch": null
+    },
+    "ledger": {
+      "kind": "rows",
+      "rows_path": "ledger-seed.json"
+    },
+    "ke": {
+      "kind": "none",
+      "path": null,
+      "cursor": null
+    },
+    "env_vars": {},
+    "thread_history": []
+  },
+  "transcript": {
+    "session_jsonl": "session.jsonl",
+    "turn_count": 4,
+    "tool_calls": [
+      {
+        "seq": 0,
+        "tool": "Bash",
+        "input_sha256": "9639311f148adf22de72e59e50831f8ac292c349357a4a3c3408a18988bb2620",
+        "exit_code": null,
+        "elapsed_ms": null
+      },
+      {
+        "seq": 1,
+        "tool": "Agent",
+        "input_sha256": "fec405078adee49b09d915afb84c4b8c3ffbd8a677173cd59b8d49400b6bb95a",
+        "exit_code": null,
+        "elapsed_ms": null
+      }
+    ],
+    "subagent_invocations": [
+      {
+        "seq": 1,
+        "subagent_type": "bookie",
+        "purpose": "Mark t3 failed - empty spec"
+      }
+    ]
+  },
+  "output_diff": {
+    "ledger_writes": [
+      {
+        "issue_id": "t3",
+        "event_kind": "claimed",
+        "payload_md_sha256": "4bbb7c6144f88963ae6a9aab2003ae1ef512ea8e973e0d2b16dba74105ceabad",
+        "payload_md_preview": "claimed by arc-worker-a-xi1b3a"
+      }
+    ],
+    "ledger_state_transitions": [
+      {
+        "issue_id": "t3",
+        "from": "claimed",
+        "to": "failed"
+      }
+    ],
+    "children_spawned": [],
+    "git": {
+      "commits": [],
+      "files_committed": [],
+      "pr_url": null
+    },
+    "intent_log": []
+  },
+  "quality": {
+    "wall_time_seconds": 21,
+    "token_cost": null,
+    "terminated_cleanly": true,
+    "human_intervention": false,
+    "notes": "Retro-captured from session 3b282025-5a50-4439-9250-94dc640a5b05.jsonl. evidence: Unactionable: empty title/body/acceptance. Claimed 3x (arctest-f49jfk-s9eo67, arctest-fg8ubs-a-lzjdjt, arc-worker-a-xi1b3a), stale-swept twice. No spec to implement. Recommend deletion or backfill with real requirements before reopening."
+  }
+}

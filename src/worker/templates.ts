@@ -25,7 +25,7 @@ type Template = {
   extras?: string[];
 };
 
-const DEFAULT_OVERLAYS = ["caveman", "bookie-routing", "commit-author"];
+const DEFAULT_OVERLAYS = ["caveman", "bookie-routing", "commit-author", "diff-review"];
 const DEFAULT_DOCTRINE = ["AGENTS.md"];
 
 const TABLE: Partial<Record<`${Kind}/${Type}`, Template>> = {
@@ -57,15 +57,17 @@ export function resolveTemplate(kind: string, type: string): Template {
   return TABLE[`${kind}/${type}` as keyof typeof TABLE] ?? DEFAULT_TEMPLATE;
 }
 
-export type ThreadTurn = { id: string; kind: string; title: string; body: string };
-
 export type RenderInput = {
   kind: string;
   type: string;
   worker: string;
   task: string;
   thread_id?: string;
-  thread_history?: ThreadTurn[];
+  /**
+   * Pre-rendered thread replay block (see `src/worker/thread-context.ts`).
+   * Pass empty string when there's no thread or no prior turns.
+   */
+  thread_replay?: string;
 };
 
 export function renderSystemPrompt(input: RenderInput): string {
@@ -79,26 +81,15 @@ export function renderSystemPrompt(input: RenderInput): string {
   const header = input.thread_id
     ? `kind=${input.kind}; type=${input.type}; worker=${input.worker}; task=${input.task}; thread=${input.thread_id}; ephemeral.`
     : `kind=${input.kind}; type=${input.type}; worker=${input.worker}; task=${input.task}; ephemeral.`;
-  const replay = renderThreadReplay(input.thread_history);
   return [
     header,
     frame,
     ...overlays,
     skillsLine,
     ...doctrine,
-    replay,
+    input.thread_replay ?? "",
     ...(t.extras ?? []),
   ]
     .filter(Boolean)
     .join("\n\n");
-}
-
-function renderThreadReplay(turns: ThreadTurn[] | undefined): string {
-  if (!turns || turns.length === 0) return "";
-  const lines = turns.map((t) => {
-    const speaker = t.kind === "event" ? "user" : "you";
-    const body = t.body.trim() || t.title;
-    return `[${speaker}] ${body}`;
-  });
-  return `Prior turns in this thread (oldest first):\n${lines.join("\n")}`;
 }

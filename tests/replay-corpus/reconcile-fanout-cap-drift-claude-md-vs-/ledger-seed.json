@@ -1,0 +1,30 @@
+[
+  {
+    "id": "reconcile-fanout-cap-drift-claude-md-vs-",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "reconcile fanout cap drift CLAUDE.md vs code",
+    "body_md": "Commit 0626d37 removed the fanout cap of 5 from bookie-validator/ledger code, but CLAUDE.md still says 'Fanout cap = 5, recursion allowed' and bin/ledger.test.ts:235 'decompose: fanout cap of 5 enforced' still fails. Pick a direction: (a) re-instate the cap, or (b) delete the test + update CLAUDE.md. Recommend (b) since the code already removed it intentionally — but require an ADR or CHOICES note explaining why removal was the right call (uncapped recursion has obvious risks).",
+    "acceptance_md": "bun test passes (failing test resolved either way); CLAUDE.md + (ADR or CHOICES) consistent with code; commit message references the discrepancy.",
+    "type": "quality",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": null,
+    "branch": "worker/factory-metrics-endpoint",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/18",
+    "evidence_md": "Added CHOICES G-0009 (no hardcoded fanout cap), updated CLAUDE.md decomposition paragraph, deleted fanout-cap-5 test in bin/ledger.test.ts, restored hooks/pre-commit-slice-guard.sh. bun test bin/ledger.test.ts: 15 pass / 0 fail. Commit e722e5b on branch worker/factory-metrics-endpoint cites 0626d37.",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779172987,
+    "updated_at": 1779173237,
+    "claimed_at": 1779172997,
+    "claimed_by": "arc-worker-a-6htgu6"
+  }
+]

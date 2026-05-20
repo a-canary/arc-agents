@@ -14,11 +14,31 @@ REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LEDGER_BIN="${REPO}/bin/ledger.ts"
 CLAUDE="${CLAUDE_BIN:-claude}"
 
+# arctest-* workers are reserved for test harnesses. They must never claim
+# against the canonical ledger — a leaked ARC_LEDGER_DB env var (or its
+# absence, which defaults to canon) would otherwise let a test fixture
+# corrupt production rows. Refuse before any ledger write.
+if [[ "${WORKER:-}" == arctest-* ]]; then
+  CANON_DB="${HOME}/vault/ledger.db"
+  EFFECTIVE_DB="${ARC_LEDGER_DB:-$CANON_DB}"
+  if [[ "$EFFECTIVE_DB" == "$CANON_DB" ]]; then
+    echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"arctest-claim-against-canon-refused\"}" >&2
+    exit 2
+  fi
+fi
+
 DB_FLAG=()
 [ -n "${ARC_LEDGER_DB:-}" ] && DB_FLAG=(--db "${ARC_LEDGER_DB}")
 
 # Atomic claim. Race-safe — losers get claimed=null and exit.
 # ARC_CLAIM_TYPE (set by factory for fast-pass pool) restricts claim to one type.
+#
+# The SQL literal lives in src/ledger/claim.ts; `ledger claim` executes it
+# via claimOnce(). ADR 0001 §"Why not alternatives" requires this bootstrap
+# entrypoint to stay bash (no agent process exists yet at claim time), but
+# the SQL itself is single-sourced — `bun ledger print-claim-sql` dumps the
+# same canonical UPDATE...RETURNING for any ops/debug consumer that wants
+# the raw text without re-entering the claim path.
 TYPE_FLAG=()
 [ -n "${ARC_CLAIM_TYPE:-}" ] && TYPE_FLAG=(--type "${ARC_CLAIM_TYPE}")
 CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${TYPE_FLAG[@]}")"

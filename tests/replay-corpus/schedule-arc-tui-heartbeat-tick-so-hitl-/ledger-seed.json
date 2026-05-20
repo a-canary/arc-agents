@@ -1,0 +1,30 @@
+[
+  {
+    "id": "schedule-arc-tui-heartbeat-tick-so-hitl-",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "schedule arc-tui heartbeat tick so HITL writes are not rejected",
+    "body_md": "U-0005 + U-0001: bookie refuses HITL writes when no alive module implements verb; aliveness comes from ux_heartbeats.last_beat within STALE_SEC. bin/arc-tui.ts has a 'heartbeat' subcommand but no scheduler invokes it — grep finds zero callers. Wire a cron entry (or hygiene-tick hook) to run 'arc-tui heartbeat' every ~30s so the TUI module stays registered alive. Without this, all HITL prompts will trip the bookie no-alive-module fallback.",
+    "acceptance_md": "",
+    "type": "cron",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": null,
+    "branch": "worker/merge-gate-typecheck-banner",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/28",
+    "evidence_md": "factory tick() beats ux_heartbeats.arc-tui every ~5s; smoke test confirmed row written age_sec=0; bun test bin/factory.test.ts 8/8 pass; commit e6854bf on PR #28",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779173249,
+    "updated_at": 1779173783,
+    "claimed_at": 1779173555,
+    "claimed_by": "arc-worker-a-3ojzed"
+  }
+]

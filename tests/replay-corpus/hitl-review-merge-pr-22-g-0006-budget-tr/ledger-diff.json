@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 816,
+      "ts": 1779171450,
+      "agent": "arc-worker-a-gf6jhd",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-gf6jhd",
+      "issue_id": "hitl-review-merge-pr-22-g-0006-budget-tr"
+    }
+  ]
+}

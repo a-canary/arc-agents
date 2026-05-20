@@ -1,0 +1,30 @@
+[
+  {
+    "id": "resolve-grill-with-docs-choose-wisely-sk",
+    "project": "arc-agents",
+    "parent_id": null,
+    "title": "Resolve grill-with-docs + choose-wisely skill drift in templates.ts",
+    "body_md": "src/worker/skills-resolution.test.ts (added by ke-wiring-smoke-test-boot-skills-resolut) fails on 4 cases: event/interactive and prd/mvp both reference skills/grill-with-docs and skills/choose-wisely, neither of which exist on disk. Either (a) author SKILL.md for each under skills/<name>/, or (b) remove the references from templates.ts TABLE. Choose based on whether intake-frame workers actually need those skills.",
+    "acceptance_md": "bun test src/worker/skills-resolution.test.ts -> all green. No remaining references to missing skill names in src/worker/templates.ts.",
+    "type": "quality",
+    "state": "merged",
+    "hitl": 0,
+    "kind": "task",
+    "class": "class_unset",
+    "urgency": "nominal",
+    "source_module": null,
+    "blocked_by": null,
+    "worktree_path": null,
+    "branch": "worker/resolve-grill-with-docs-choose-wisely",
+    "pr_url": "https://github.com/a-canary/arc-agents/pull/38",
+    "evidence_md": "PR #38 open with tests green (24/24 skills-resolution + 34/34 worker suite); awaiting human merge on branch worker/resolve-grill-with-docs-choose-wisely",
+    "thread_id": null,
+    "encounter_mode": null,
+    "encounter_timeout_at": null,
+    "encounter_default_resolution": null,
+    "created_at": 1779173773,
+    "updated_at": 1779174462,
+    "claimed_at": 1779174232,
+    "claimed_by": "arc-worker-a-rvfc41"
+  }
+]

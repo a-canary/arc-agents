@@ -55,6 +55,8 @@ switch (cmd) {
         LEDGER, "create",
         "--kind", "event",
         "--type", "interactive",
+        "--class", "trust",
+        "--urgency", "interactive",
         "--source-module", "arc-chat",
         "--title", title,
         "--body", message,

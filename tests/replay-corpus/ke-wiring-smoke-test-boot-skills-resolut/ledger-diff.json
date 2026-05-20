@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 879,
+      "ts": 1779173411,
+      "agent": "arc-worker-a-6c2qiw",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-6c2qiw",
+      "issue_id": "ke-wiring-smoke-test-boot-skills-resolut"
+    }
+  ]
+}

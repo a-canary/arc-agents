@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 828,
+      "ts": 1779171879,
+      "agent": "arc-worker-a-psvl61",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-psvl61",
+      "issue_id": "review-merge-pr-24-g-0007-no-symlinks-mi"
+    }
+  ]
+}

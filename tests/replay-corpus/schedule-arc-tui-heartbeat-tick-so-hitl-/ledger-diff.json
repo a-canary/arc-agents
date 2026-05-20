@@ -1,0 +1,12 @@
+{
+  "worker_events": [
+    {
+      "seq": 884,
+      "ts": 1779173555,
+      "agent": "arc-worker-a-3ojzed",
+      "kind": "claimed",
+      "payload_md": "claimed by arc-worker-a-3ojzed",
+      "issue_id": "schedule-arc-tui-heartbeat-tick-so-hitl-"
+    }
+  ]
+}
