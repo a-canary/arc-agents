@@ -281,6 +281,46 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
   };
 }
 
+// Boot-time check for orphaned wait-for-ledger.ts procs older than 24hr.
+// Context: wait-for-ledger.ts used to accept --role; it was renamed to --kind,
+// but stale launch sites kept spawning the old flag — the binary printed usage
+// to stderr in a tight loop while the parent held the pid. Three such procs
+// ran for 5+ days unnoticed (2026-05-15 → 2026-05-20). This warns; it never
+// kills (operator decides), and never blocks the daemon if `ps` is unavailable.
+export function auditOrphans(now: number = Math.floor(Date.now() / 1000)): { pids: number[]; ages: number[] } {
+  const r = spawnSync("ps", ["-eo", "pid=,etimes=,cmd="], { encoding: "utf8" });
+  if (r.status !== 0) return { pids: [], ages: [] };
+  const pids: number[] = [];
+  const ages: number[] = [];
+  for (const raw of (r.stdout ?? "").split("\n")) {
+    const line = raw.trim();
+    if (!line) continue;
+    if (!line.includes("wait-for-ledger.ts")) continue;
+    if (line.includes("grep ")) continue;
+    const m = line.match(/^(\d+)\s+(\d+)\s+(.*)$/);
+    if (!m) continue;
+    const pid = parseInt(m[1]!, 10);
+    const etimes = parseInt(m[2]!, 10);
+    if (pid === process.pid) continue;
+    if (etimes < 86400) continue; // <24hr — fresh, not orphan
+    pids.push(pid);
+    ages.push(etimes);
+  }
+  if (pids.length > 0) {
+    console.error(
+      JSON.stringify({
+        ts: new Date(now * 1000).toISOString(),
+        warn: "orphaned_wait_for_ledger",
+        count: pids.length,
+        pids,
+        ages_hr: ages.map((a) => +(a / 3600).toFixed(1)),
+        hint: "ps -fp <pid> to inspect; kill <pid> if confirmed stale",
+      }),
+    );
+  }
+  return { pids, ages };
+}
+
 async function sleep(s: number): Promise<void> {
   return new Promise((r) => setTimeout(r, s * 1000));
 }
@@ -318,6 +358,7 @@ async function run(): Promise<void> {
     console.log(JSON.stringify({ ts: new Date().toISOString(), ...tick() }));
     return;
   }
+  auditOrphans();
   await loop();
 }
 
