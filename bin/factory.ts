@@ -32,6 +32,7 @@ import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { openWithMigrate } from "../src/ledger/db";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
+import { CLAIMABLE_KINDS_SQL, PARKED_KINDS_SQL } from "../src/ledger/kinds";
 import { reapWorktrees, type ReapedWorktree } from "../src/ledger/worktree-reaper";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -185,13 +186,13 @@ export function countReady(): number {
 
 // Ready rows the factory can never claim — surfaces transient artifacts the
 // factory ignores (`reply`, `prefetch`) so operators can spot stuck queues.
-// `prd` is excluded: PRDs are product specs parked indefinitely by design, not
-// stuck work, so counting them produced daily warn-spam with no signal.
+// PARKED_KINDS (e.g. PRDs) are excluded by design: parked indefinitely for
+// human reference, not stuck work.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 export function countUnclaimableReady(db: any): number {
   const row = db
     .query(
-      `SELECT COUNT(*) AS n FROM issues WHERE state='ready' AND kind NOT IN ('task','event','prd')`,
+      `SELECT COUNT(*) AS n FROM issues WHERE state='ready' AND kind NOT IN (${CLAIMABLE_KINDS_SQL}) AND kind NOT IN (${PARKED_KINDS_SQL})`,
     )
     .get() as { n: number } | undefined;
   return row?.n ?? 0;
