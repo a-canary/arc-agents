@@ -11,6 +11,7 @@
 
 import type { Database } from "bun:sqlite";
 import { SORT_KEY_SQL } from "./class-urgency-sort";
+import { CLAIMABLE_KINDS_SQL } from "./kinds";
 
 export type ClaimRow = { id: string };
 
@@ -22,7 +23,7 @@ export type ClaimRow = { id: string };
 export function buildClaimSQL(typeFilter: boolean): string {
   const typeClause = typeFilter ? "AND type=?2 " : "";
   return `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN ('task','event') ${typeClause}ORDER BY ${SORT_KEY_SQL} LIMIT 1)
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${typeClause}ORDER BY ${SORT_KEY_SQL} LIMIT 1)
          RETURNING id`;
 }
 
