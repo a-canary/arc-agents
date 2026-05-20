@@ -26,7 +26,7 @@ async function doctor(db: string, root: string, extra: string[] = []): Promise<{
   mergeable_worktrees: { path: string; branch: string | null }[];
   worktree_scan_error: string | null;
 }> {
-  const r = await $`bun ${cli} doctor --db ${db} --worktree-root ${root} ${extra}`.quiet();
+  const r = await $`bun ${cli} doctor --db ${db} --worktree-root ${root} --json ${extra}`.quiet();
   return JSON.parse(r.stdout.toString());
 }
 
