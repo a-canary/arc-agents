@@ -36,7 +36,8 @@ DB_FLAG=()
 [ -n "${ARC_LEDGER_DB:-}" ] && DB_FLAG=(--db "${ARC_LEDGER_DB}")
 
 # Atomic claim. Race-safe — losers get claimed=null and exit.
-# ARC_CLAIM_TYPE (set by factory for fast-pass pool) restricts claim to one type.
+# ARC_CLAIM_POOL (preferred) or ARC_CLAIM_TYPE (deprecated alias) restricts
+# claim to one pool lane when set by factory for the fast-pass slot.
 #
 # The SQL literal lives in src/ledger/claim.ts; `ledger claim` executes it
 # via claimOnce(). ADR 0001 §"Why not alternatives" requires this bootstrap
@@ -44,9 +45,10 @@ DB_FLAG=()
 # the SQL itself is single-sourced — `bun ledger print-claim-sql` dumps the
 # same canonical UPDATE...RETURNING for any ops/debug consumer that wants
 # the raw text without re-entering the claim path.
-TYPE_FLAG=()
-[ -n "${ARC_CLAIM_TYPE:-}" ] && TYPE_FLAG=(--type "${ARC_CLAIM_TYPE}")
-CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${TYPE_FLAG[@]}")"
+POOL_FLAG=()
+CLAIM_POOL="${ARC_CLAIM_POOL:-${ARC_CLAIM_TYPE:-}}"
+[ -n "$CLAIM_POOL" ] && POOL_FLAG=(--pool "$CLAIM_POOL")
+CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${POOL_FLAG[@]}")"
 CLAIM_ID="$(echo "$CLAIM_JSON" | grep -oE '"claimed":[[:space:]]*"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/' || true)"
 
 if [ -z "$CLAIM_ID" ]; then

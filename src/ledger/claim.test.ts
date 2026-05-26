@@ -99,16 +99,16 @@ test("claimOnce returns null when ready rows are all wrong kind", () => {
   }
 });
 
-test("claimOnce with typeFilter restricts to a single type (fast-pass pool)", () => {
+test("claimOnce with poolFilter restricts to a single pool (fast-pass pool)", () => {
   const { db, cleanup } = freshDb();
   try {
-    // mvp/pool_unset mvp-typed row outranks the HITL row on tier. But with
-    // typeFilter='HITL' the mvp row must be ignored.
-    insertReadyType(db, "mvp-row", "mvp", "mvp", "pool_unset");
-    const hitl = insertReadyType(db, "hitl-row", "HITL", "tier_unset", "pool_unset");
+    // build/mvp row outranks the interactive row on tier. But with
+    // poolFilter='interactive' the build row must be ignored.
+    insertReadyType(db, "build-row", "mvp", "mvp", "build");
+    const interactive = insertReadyType(db, "interactive-row", "mvp", "tier_unset", "interactive");
 
-    const row = claimOnce(db, "w-fast", "HITL");
-    expect(row?.id).toBe(hitl);
+    const row = claimOnce(db, "w-fast", "interactive");
+    expect(row?.id).toBe(interactive);
   } finally {
     cleanup();
   }

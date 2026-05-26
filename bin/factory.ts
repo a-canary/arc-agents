@@ -8,18 +8,20 @@
 //   `bun bin/factory.ts --metrics` print observability snapshot, then exit
 //
 // Env:
-//   ARC_SLOTS_ANY         general-pool slots (any type)       (default 4)
-//   ARC_SLOTS_INTERACTIVE fast-pass slots reserved for type=interactive  (default 2)
+//   ARC_SLOTS_ANY         general-pool slots (any pool)       (default 4)
+//   ARC_SLOTS_INTERACTIVE fast-pass slots reserved for pool=interactive  (default 2)
 //   ARC_WORKER_MAX        legacy: if set, overrides ARC_SLOTS_ANY and disables fast-pass
 //   ARC_WORKER_MAX_AGE    seconds before reap                 (default 14400 = 4hr)
 //   ARC_FACTORY_INTERVAL  loop sleep seconds                  (default 5)
 //   ARC_WORKER_PREFIX     tmux session name prefix            (default "arc-worker")
 //   CLAUDE_BIN            claude binary                       (default "claude")
 //   ARC_LEDGER_DB         ledger path (forwarded to ledger.ts via --db)
+//   ARC_TRIAGE_BUDGET     max rows triaged per tick           (default 10)
+//   ARC_TRIAGE_DISABLE    set to "1" to skip triageUnset     (default unset)
 //
 // Two slot pools:
-//   - "any" pool serves the highest-priority ready row of any type.
-//   - "interactive" pool ONLY serves type=interactive (fast-pass for work the user
+//   - "any" pool serves the highest-priority ready row of any pool.
+//   - "interactive" pool ONLY serves pool=interactive (fast-pass for work the user
 //     is actively waiting on — next grill question, prefetch/precache, UX reply).
 //   Interactive rows may also consume "any" slots when fast-pass is full; "any" rows
 //   never consume interactive slots.
@@ -34,6 +36,7 @@ import { openWithMigrate } from "../src/ledger/db";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { CLAIMABLE_KINDS_SQL, PARKED_KINDS_SQL } from "../src/ledger/kinds";
 import { reapWorktrees, type ReapedWorktree } from "../src/ledger/worktree-reaper";
+import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SHELL = join(REPO, "bin", "worker-shell.sh");
@@ -139,6 +142,88 @@ export function reapOrphanClaims(db: any): string[] {
   return ids;
 }
 
+// triageUnset: fill pool/agent sentinels (*_unset) on ready rows so they become
+// dispatchable. Pure-SQL, no LLM, no worker. Runs each tick after orphan/stale reap.
+//
+// Rules (only applied to columns still at their *_unset sentinel):
+//   agent: arc-chat source_module → 'chat'; kind=prd → 'director'; else → 'developer'
+//   pool:  tier in (mvp,trust,prod) → 'build'; else → 'explore'
+//   tier:  NEVER changed (tier_unset rows sink to bottom of queue; that is intentional)
+//
+// Env:
+//   ARC_TRIAGE_BUDGET  max rows per call (default 10)
+//   ARC_TRIAGE_DISABLE set to "1" to skip entirely
+// eslint-disable-next-line @typescript-eslint/no-explicit-any
+export function triageUnset(
+  db: any,
+  budget: number = Number(process.env.ARC_TRIAGE_BUDGET ?? "10"),
+): string[] {
+  if (process.env.ARC_TRIAGE_DISABLE === "1") return [];
+
+  // Select up to budget ready rows that still have at least one *_unset sentinel.
+  const rows = db
+    .query(
+      `SELECT id, kind, tier, pool, agent, source_module
+       FROM issues
+       WHERE state='ready' AND (agent='agent_unset' OR pool='pool_unset')
+       ORDER BY ${SORT_KEY_SQL}
+       LIMIT ?`,
+    )
+    .all(budget) as { id: string; kind: string; tier: string; pool: string; agent: string; source_module: string | null }[];
+
+  if (rows.length === 0) return [];
+
+  const triaged: string[] = [];
+  db.transaction(() => {
+    for (const row of rows) {
+      // Compute new agent (only if still sentinel)
+      let newAgent: string | null = null;
+      if (row.agent === "agent_unset") {
+        if (row.source_module === "arc-chat") {
+          newAgent = "chat";
+        } else if (row.kind === "prd") {
+          newAgent = "director";
+        } else {
+          newAgent = "developer"; // catch-all: task, event, reply, etc.
+        }
+      }
+
+      // Compute new pool (only if still sentinel)
+      let newPool: string | null = null;
+      if (row.pool === "pool_unset") {
+        if (row.tier === "mvp" || row.tier === "trust" || row.tier === "prod") {
+          newPool = "build";
+        } else {
+          newPool = "explore"; // hygiene, quality, efficiency, scale, tier_unset
+        }
+      }
+
+      // Build SET clause — only touch columns that actually need updating
+      const setParts: string[] = ["updated_at=strftime('%s','now')"];
+      const params: unknown[] = [];
+      if (newAgent !== null) { setParts.push("agent=?"); params.push(newAgent); }
+      if (newPool !== null) { setParts.push("pool=?"); params.push(newPool); }
+      params.push(row.id);
+
+      db.run(`UPDATE issues SET ${setParts.join(", ")} WHERE id=?`, params);
+
+      const desc = [
+        newAgent ? `agent=${newAgent}` : null,
+        newPool ? `pool=${newPool}` : null,
+      ]
+        .filter(Boolean)
+        .join(" ");
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'triaged', 'triage', ?)`,
+        [row.id, `triage: ${desc}`],
+      );
+      triaged.push(row.id);
+    }
+  })();
+
+  return triaged;
+}
+
 // Tier-1 reap: a worker whose claimed task has reached a terminal/blocked state
 // is done — claude often lingers at its interactive prompt after writing the
 // final turn (M-0002 mandates interactive panes, so we can't use --print). Kill
@@ -167,9 +252,9 @@ export function reapFinished(db: any): string[] {
 
 type ReadyRow = { id: string; kind: string; type: string; title: string };
 
-export function listReady(typeFilter?: string): ReadyRow[] {
+export function listReady(poolFilter?: string): ReadyRow[] {
   const args = [LEDGER, "spawn-ready", ...DB_FLAG];
-  if (typeFilter) args.push("--type", typeFilter);
+  if (poolFilter) args.push("--pool", poolFilter);
   const r = spawnSync(process.execPath, args, { encoding: "utf8" });
   if (r.status !== 0) return [];
   try {
@@ -209,9 +294,13 @@ export function spawnWorker(pool: "any" | "interactive" = "any"): string {
   const name = `${PREFIX}-${infix}-${shortId()}`;
   // `tmux new-session -d -s <name> <cmd>` — detached, runs cmd, session dies when cmd exits.
   // Pass worker name as arg so the shell can pass it to `ledger claim`.
-  // For interactive pool, restrict the claim to type=interactive so a fast-pass slot
+  // For interactive pool, restrict the claim to pool=interactive so a fast-pass slot
   // never wastes itself on a backlog task that landed in the queue first.
-  const env = pool === "interactive" ? { ...process.env, ARC_CLAIM_TYPE: "interactive" } : process.env;
+  // ARC_CLAIM_POOL is the preferred env var; ARC_CLAIM_TYPE is kept for one transition
+  // window so in-flight worker-shell instances still work either way.
+  const env = pool === "interactive"
+    ? { ...process.env, ARC_CLAIM_POOL: "interactive", ARC_CLAIM_TYPE: "interactive" }
+    : process.env;
   spawnSync("tmux", ["new-session", "-d", "-s", name, "bash", SHELL, name], { env });
   return name;
 }
@@ -224,6 +313,7 @@ export type TickResult = {
   ready: number;
   unclaimable_ready: number;
   spawned: string[];
+  triaged: string[];
   pools: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
 };
 
@@ -235,6 +325,7 @@ export function tick(): TickResult {
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
   const worktrees = reapWorktrees(db);
+  const triaged = triageUnset(db);
   const unclaimable = countUnclaimableReady(db);
   db.close();
   const reaped = [...reapedExited, ...reapedAge, ...reapedDone];
@@ -285,6 +376,7 @@ export function tick(): TickResult {
     ready: allReady.length,
     unclaimable_ready: unclaimable,
     spawned,
+    triaged,
     pools: {
       any: { live: curAny, cap: SLOTS_ANY },
       interactive: { live: curInteractive, cap: SLOTS_INTERACTIVE },

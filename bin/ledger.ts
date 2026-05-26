@@ -151,16 +151,17 @@ switch (cmd) {
   }
 
   case "claim": {
-    // ledger claim <worker> [--type X]
-    // --type restricts the claim to a single priority class (used by fast-pass
+    // ledger claim <worker> [--pool X] [--type X (deprecated alias)]
+    // --pool restricts the claim to a single pool lane (used by fast-pass
     // interactive pool so a reserved slot doesn't burn on backlog work).
+    // --type is kept as a deprecated alias for one transition window.
     // SQL lives in src/ledger/claim.ts so the bash bootstrap in
     // worker-shell.sh and this CLI share one canonical UPDATE...RETURNING.
     const worker = args[1] ?? die("worker required");
     if (worker.startsWith("--")) die("worker required (positional)");
-    const typeFilter = getFlag("type");
+    const poolFilter = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const row = claimOnce(db, worker, typeFilter);
+    const row = claimOnce(db, worker, poolFilter);
     if (!row) {
       out({ claimed: null });
       break;
@@ -181,10 +182,11 @@ switch (cmd) {
     // directly — it pipes this text into sqlite3 instead. Keeping the
     // SQL in one place preserves G-0002's single-statement guarantee.
     //
-    // `--type-filter` emits the variant with `AND type=?2` baked in, so
+    // `--pool-filter` emits the variant with `AND pool=?2` baked in, so
     // bash callers don't have to rewrite the SQL post-hoc.
-    const withTypeFilter = args.includes("--type-filter");
-    process.stdout.write(withTypeFilter ? buildClaimSQL(true) : CLAIM_SQL);
+    // `--type-filter` is kept as a deprecated alias.
+    const withPoolFilter = args.includes("--pool-filter") || args.includes("--type-filter");
+    process.stdout.write(withPoolFilter ? buildClaimSQL(true) : CLAIM_SQL);
     break;
   }
 
@@ -583,12 +585,13 @@ switch (cmd) {
   }
 
   case "spawn-ready": {
-    const type = getFlag("type");
+    // --pool X: filter by pool column (preferred). --type X: deprecated alias.
+    const pool = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
     const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
-      type ? "AND type=?" : ""
+      pool ? "AND pool=?" : ""
     } ORDER BY ${SORT_KEY_SQL}`;
-    out(type ? db.query(sql).all(type) : db.query(sql).all());
+    out(pool ? db.query(sql).all(pool) : db.query(sql).all());
     break;
   }
 
