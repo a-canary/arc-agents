@@ -27,7 +27,7 @@ export function loadProfile(agent: string, root: string = repoRoot()): Profile {
 
 export function loadAll(root: string = repoRoot()): Record<string, Profile> {
   const out: Record<string, Profile> = {};
-  for (const agent of ["developer", "director", "admin"]) {
+  for (const agent of ["developer", "director", "admin", "sprint", "triage"]) {
     out[agent] = loadProfile(agent, root);
   }
   return out;

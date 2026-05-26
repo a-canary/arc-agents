@@ -671,8 +671,8 @@ switch (cmd) {
     const worker = getFlag("worker") ?? "unknown";
     const db = openWithMigrate(getFlag("db"));
     const row = db
-      .query<{ kind: string; type: string; thread_id: string | null }, [string]>(
-        `SELECT kind, type, thread_id FROM issues WHERE id=?`,
+      .query<{ kind: string; agent: string; pool: string; thread_id: string | null }, [string]>(
+        `SELECT kind, agent, pool, thread_id FROM issues WHERE id=?`,
       )
       .get(id);
     if (!row) die(`no issue ${id}`);
@@ -683,7 +683,8 @@ switch (cmd) {
     process.stdout.write(
       renderSystemPrompt({
         kind: row.kind,
-        type: row.type,
+        agent: row.agent,
+        pool: row.pool,
         worker,
         task: id,
         thread_id: row.thread_id ?? undefined,

@@ -1114,6 +1114,32 @@ test("alias-cmd <unknown> falls back to default_alias command", async () => {
   expect(out).toContain("{prompt}");
 });
 
+test("render-prompt: sprint row emits sprint frame text and agent-keyed header", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    // Create a sprint row via CLI
+    const c = (await run(db, "create", "--kind", "sprint", "--type", "deferred", "--title", "test sprint")) as { id: string };
+    // Set agent=sprint, pool=build directly — the create verb doesn't expose --agent
+    // for the issues.agent column (only for issue_events.agent).
+    const directDb = new Database(db);
+    directDb.run("UPDATE issues SET agent='sprint', pool='build' WHERE id=?", [c.id]);
+    directDb.close();
+    const r = await $`bun ${cli} render-prompt ${c.id} --worker arc-worker-test --db ${db}`.quiet();
+    expect(r.exitCode).toBe(0);
+    const prompt = r.stdout.toString();
+    // Header must use agent= and pool=, not type=
+    const firstLine = prompt.split("\n")[0]!;
+    expect(firstLine).toContain("agent=sprint");
+    expect(firstLine).toContain("pool=build");
+    expect(firstLine).not.toContain("type=");
+    // Sprint frame distinctive text
+    expect(prompt).toContain("re-entrant");
+  } finally {
+    cleanup();
+  }
+});
+
 test("resolve-alias on DB without agent column returns default alias name", async () => {
   const { db, cleanup } = freshDb();
   try {
