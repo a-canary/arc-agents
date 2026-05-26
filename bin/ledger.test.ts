@@ -18,6 +18,10 @@ async function run(db: string, ...args: string[]): Promise<unknown> {
   return JSON.parse(r.stdout.toString());
 }
 
+async function runRawNoDb(...args: string[]) {
+  return await $`bun ${cli} ${args}`.quiet().nothrow();
+}
+
 async function runRaw(db: string, ...args: string[]) {
   return await $`bun ${cli} ${args} --db ${db}`.quiet().nothrow();
 }
@@ -945,6 +949,43 @@ test("update --state merged accepts after diff_review event logged", async () =>
     await stubDiffReview(db, c.id);
     const r = await runRaw(db, "update", c.id, "--state", "merged", "--evidence", "x");
     expect(r.exitCode).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+// ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
+
+test("alias-cmd opus-max prints opus command containing {prompt}", async () => {
+  const r = await runRawNoDb("alias-cmd", "opus-max");
+  expect(r.exitCode).toBe(0);
+  const out = r.stdout.toString().trim();
+  expect(out).toContain("--model opus");
+  expect(out).toContain("{prompt}");
+});
+
+test("alias-cmd <unknown> falls back to default_alias command", async () => {
+  const r = await runRawNoDb("alias-cmd", "nonexistent-alias-xyz");
+  expect(r.exitCode).toBe(0);
+  // The default is minimax-build — just verify we get a non-empty command with {prompt}
+  const out = r.stdout.toString().trim();
+  expect(out.length).toBeGreaterThan(0);
+  expect(out).toContain("{prompt}");
+});
+
+test("resolve-alias on DB without agent column returns default alias name", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "no-agent-col")) as { id: string };
+    // In PR-1 the issues table has no `agent` column — resolve-alias must fall back.
+    const r = await $`bun ${cli} resolve-alias ${c.id} --db ${db}`.quiet();
+    expect(r.exitCode).toBe(0);
+    const out = r.stdout.toString().trim();
+    // Should be the default_alias name (a non-empty string, not a full command)
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).not.toContain(" "); // alias name has no spaces
+    // TODO(PR-2): assert agent-column path once migration 016 lands
   } finally {
     cleanup();
   }

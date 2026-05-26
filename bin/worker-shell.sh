@@ -66,4 +66,16 @@ read it, then execute. On terminal state, ask bookie to update (merged + evidenc
 + pr, or failed + evidence, or decompose into HITL children). Clean up worktree
 before exit. tmux dies on exit; factory respawns if more work."
 
-exec "$CLAUDE" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
+# Resolve which model/effort to run from the row's agent→profile→alias chain.
+ALIAS="$(bun "$LEDGER_BIN" resolve-alias "$CLAIM_ID" "${DB_FLAG[@]}")"
+CMD_TEMPLATE="$(bun "$LEDGER_BIN" alias-cmd "$ALIAS")"
+# Split the template into argv on whitespace, dropping the {prompt} placeholder token.
+# The user turn is then passed as a SINGLE positional argv word — never interpolated
+# into a shell-evaluated string (avoids quoting/injection hazards).
+read -ra CMD_PARTS <<< "${CMD_TEMPLATE/\{prompt\}/}"
+# Preserve CLAUDE_BIN override: if the first word of the template is "claude" and
+# $CLAUDE differs from it (i.e. CLAUDE_BIN is set), substitute $CLAUDE as argv[0].
+if [[ "${CMD_PARTS[0]:-}" == "claude" ]]; then
+  CMD_PARTS[0]="$CLAUDE"
+fi
+exec "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"

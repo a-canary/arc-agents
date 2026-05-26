@@ -2,6 +2,7 @@
 // Ledger CLI. Flag-only create per PRD-v1 §4; positional args are rejected.
 // JSON to stdout when not a TTY; table otherwise.
 
+import { Database } from "bun:sqlite";
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
@@ -15,6 +16,8 @@ import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
+import { loadConfig as loadAppConfig, resolveAlias } from "../src/config/load";
+import { loadProfile } from "../src/profiles/load";
 
 const KNOWN_HYGIENE_SKILLS = [
   "clarify-docs",
@@ -1047,6 +1050,60 @@ switch (cmd) {
     break;
   }
 
+  case "resolve-alias": {
+    // resolve-alias <issueId> [--db <path>]
+    // Pure read: looks up the issue's agent field (if the column exists), loads
+    // its profile to get exec_cli_alias, and prints the alias NAME on stdout.
+    // If the agent column does not exist yet (pre-migration) or the value is
+    // absent/null/"agent_unset", falls back to config.default_alias.
+    // This makes the verb forward-compatible: always falls back in PR-1, will
+    // work automatically once the agent DB column lands in a later PR.
+    const issueId = positionalAfterVerb()[0] ?? die("issue id required");
+    // Pure read on the hot worker-spawn path: open read-only so this never
+    // triggers a migration write (worker-shell.sh's bootstrap claim is the
+    // only ledger write permitted to bypass the bookie).
+    const dbPath = getFlag("db") ?? process.env.ARC_LEDGER_DB ?? `${process.env.HOME}/vault/ledger.db`;
+    const db = new Database(dbPath, { readonly: true });
+    const appCfg = loadAppConfig();
+
+    // Check whether the `agent` column exists on the issues table.
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(issues)")
+      .all()
+      .map((r) => r.name);
+    const hasAgentCol = columns.includes("agent");
+
+    let aliasName = appCfg.default_alias;
+    if (hasAgentCol) {
+      const row = db
+        .query<{ agent: string | null }, [string]>("SELECT agent FROM issues WHERE id=?")
+        .get(issueId);
+      if (!row) die(`no such issue: ${issueId}`);
+      const agentVal = row.agent;
+      if (agentVal && agentVal !== "agent_unset") {
+        try {
+          const profile = loadProfile(agentVal);
+          aliasName = profile.exec_cli_alias;
+        } catch {
+          // Profile not found — fall back to default_alias silently.
+          aliasName = appCfg.default_alias;
+        }
+      }
+    }
+    process.stdout.write(aliasName + "\n");
+    break;
+  }
+
+  case "alias-cmd": {
+    // alias-cmd <aliasName>
+    // Pure read: prints the full command string for the given alias (with
+    // {prompt} placeholder intact) to stdout.
+    const aliasName = positionalAfterVerb()[0] ?? die("alias name required");
+    const appCfg = loadAppConfig();
+    process.stdout.write(resolveAlias(aliasName, appCfg) + "\n");
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -1103,6 +1160,10 @@ switch (cmd) {
                                        rows whose state is terminal or non-claim
                                        (the doctor phantom_claims backlog).
                                        Default dry-run; --apply writes.
+
+  resolve-alias <issueId> [--db <path>]   pure read: print alias NAME for issue's agent
+  alias-cmd <aliasName>                   pure read: print full command string for alias
+                                          (includes {prompt} placeholder)
 
   global flags: --db <path>
 

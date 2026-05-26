@@ -1,0 +1,10 @@
+{
+  "exec_cli_alias": {
+    "opus-max": "claude --model opus --effort max {prompt}",
+    "opus-medium": "claude --model opus --effort medium {prompt}",
+    "minimax-build": "claude --model minimax-m2.7 --effort high {prompt}",
+    "minimax-fast": "claude --model minimax-m2.7 --effort low {prompt}"
+  },
+  "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },
+  "default_alias": "minimax-build"
+}

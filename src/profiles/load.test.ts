@@ -1,11 +1,18 @@
 import { test, expect } from "bun:test";
 import { loadAll, loadProfile } from "./load";
 
-test("all 3 role profiles validate", () => {
+test("all 3 agent profiles validate", () => {
   const all = loadAll();
   expect(Object.keys(all).sort()).toEqual(["admin", "developer", "director"]);
-  for (const role of ["developer", "director", "admin"]) {
-    expect(all[role]!.role).toBe(role);
+  for (const agent of ["developer", "director", "admin"]) {
+    expect(all[agent]!.agent).toBe(agent);
+  }
+});
+
+test("each profile has a non-empty exec_cli_alias", () => {
+  const all = loadAll();
+  for (const agent of ["developer", "director", "admin"]) {
+    expect(all[agent]!.exec_cli_alias.length).toBeGreaterThan(0);
   }
 });
 
