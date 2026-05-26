@@ -8,6 +8,7 @@ export const KIND_VALUES = [
   "reply",
   "prd",
   "prefetch",
+  "sprint",
 ] as const;
 export type Kind = (typeof KIND_VALUES)[number];
 

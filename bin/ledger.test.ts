@@ -530,6 +530,151 @@ test("decompose: rejects from terminal state", async () => {
   }
 });
 
+// ── Change 5: Decompose per-child dimensions ──────────────────────────────────
+
+test("decompose: bare string child inherits parent tier+pool, agent='agent_unset' (regression)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent task",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(db, "decompose", parent.id, "--child", "bare title")) as {
+      parent: string;
+      children: { id: string; title: string }[];
+    };
+    expect(r.children.length).toBe(1);
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { tier: string; pool: string; agent: string };
+    };
+    expect(cs.issue.tier).toBe("mvp");
+    expect(cs.issue.pool).toBe("build");
+    expect(cs.issue.agent).toBe("agent_unset");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with agent override sets agent, tier+pool inherited", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent for agent override",
+      "--tier", "trust", "--pool", "interactive")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "need a dev", agent: "developer" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    expect(r.children.length).toBe(1);
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { tier: string; pool: string; agent: string };
+    };
+    expect(cs.issue.agent).toBe("developer");
+    expect(cs.issue.tier).toBe("trust");
+    expect(cs.issue.pool).toBe("interactive");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with pool override deviates from parent pool", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent pool override",
+      "--tier", "mvp", "--pool", "interactive")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "build subtask", pool: "build" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { pool: string; tier: string };
+    };
+    expect(cs.issue.pool).toBe("build");
+    expect(cs.issue.tier).toBe("mvp");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with bad agent enum → validation error, zero rows inserted", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent bad agent",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = await runRaw(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "bad child", agent: "wizard" }),
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/wizard/);
+    // Parent should still be in its original state, no children inserted
+    const shown = (await run(db, "show", parent.id)) as { issue: { state: string; blocked_by: string | null } };
+    expect(shown.issue.state).toBe("ready");
+    expect(shown.issue.blocked_by).toBeNull();
+    const children = (await run(db, "list", "--state", "ready")) as { id: string }[];
+    // Only the parent itself should be in ready state, no children
+    const childIds = children.filter((c) => c.id !== parent.id);
+    expect(childIds.length).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: mixed batch (bare + JSON) is atomic, parent gets both child ids", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "sprint", "--type", "mvp", "--title", "sprint parent",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", "plain title",
+      "--child", JSON.stringify({ title: "json child", agent: "developer", pool: "interactive" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    expect(r.children.length).toBe(2);
+    const shown = (await run(db, "show", parent.id)) as {
+      issue: { state: string; blocked_by: string };
+    };
+    expect(shown.issue.state).toBe("blocked");
+    const blockedBy = JSON.parse(shown.issue.blocked_by) as string[];
+    expect(blockedBy).toContain(r.children[0]!.id);
+    expect(blockedBy).toContain(r.children[1]!.id);
+
+    const plain = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { agent: string; pool: string };
+    };
+    expect(plain.issue.agent).toBe("agent_unset");
+    expect(plain.issue.pool).toBe("build"); // inherited
+
+    const json = (await run(db, "show", r.children[1]!.id)) as {
+      issue: { agent: string; pool: string };
+    };
+    expect(json.issue.agent).toBe("developer");
+    expect(json.issue.pool).toBe("interactive"); // overridden
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: fanout cap still enforced with JSON children (6 → error)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const p = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "fanout-json")) as { id: string };
+    const jsonChild = JSON.stringify({ title: "x" });
+    const r = await runRaw(
+      db, "decompose", p.id,
+      "--child", jsonChild, "--child", jsonChild, "--child", jsonChild,
+      "--child", jsonChild, "--child", jsonChild, "--child", jsonChild,
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/fanout cap/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("claim + spawn-ready surface event-kind rows (ADR 0005 allowlist)", async () => {
   const { db, cleanup } = freshDb();
   try {

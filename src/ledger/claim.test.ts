@@ -8,7 +8,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate, mintId } from "./db";
-import { CLAIM_SQL, claimOnce } from "./claim";
+import { CLAIM_SQL, claimOnce, buildClaimSQL } from "./claim";
 import { SORT_KEY_SQL } from "./tier-pool-sort";
 
 function freshDb(): { path: string; db: Database; cleanup: () => void } {
@@ -129,3 +129,42 @@ function insertReadyType(
   );
   return id;
 }
+
+// ── Change 3: sprint is claimable, prd is not ────────────────────────────────
+
+test("claimOnce claims a kind='sprint' ready row", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = mintId(db, "sprint-row");
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
+       VALUES (?, 'arc-agents', 'sprint-row', '', '', 'mvp', 'ready', 'sprint', 'mvp', 'pool_unset')`,
+      [id],
+    );
+    const row = claimOnce(db, "w-sprint");
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe(id);
+  } finally {
+    cleanup();
+  }
+});
+
+test("claimOnce does NOT claim a kind='prd' ready row", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = mintId(db, "prd-row-2");
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
+       VALUES (?, 'arc-agents', 'prd-row-2', '', '', 'mvp', 'ready', 'prd', 'mvp', 'pool_unset')`,
+      [id],
+    );
+    const row = claimOnce(db, "w-prd");
+    expect(row).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("CLAIMABLE_KINDS_SQL contains sprint for claim SQL inclusion", () => {
+  expect(CLAIM_SQL).toContain("'sprint'");
+});

@@ -920,6 +920,169 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
     },
   },
+  {
+    id: "019_issue_kind_sprint",
+    // Extend issues.kind CHECK to admit 'sprint'. SQLite cannot ALTER a CHECK
+    // constraint, so we do a column-resilient table rebuild mirroring 017's pattern.
+    //
+    // Also widens the unblock_dependents trigger and adds unblock_sprint_parents so
+    // sprint parents re-ready when ALL blockers reach a terminal state
+    // (merged|failed|cancelled), not just merged. Non-sprint parents keep strict
+    // merged-only semantics.
+    //
+    // Runs OUTSIDE an explicit transaction — migrate() wraps each up in
+    // db.transaction(...)().  Do NOT open your own BEGIN/COMMIT here.
+    up: (db) => {
+      // ── Drop dependent trigger and indexes ──────────────────────────────────
+      db.exec("DROP TRIGGER IF EXISTS unblock_dependents");
+      db.exec("DROP TRIGGER IF EXISTS unblock_sprint_parents");
+      db.exec("DROP INDEX IF EXISTS idx_issues_ready");
+      db.exec("DROP INDEX IF EXISTS idx_issues_thread");
+      db.exec("DROP INDEX IF EXISTS idx_issues_parent");
+      db.exec("DROP INDEX IF EXISTS idx_issues_claimed_at");
+      db.exec("DROP INDEX IF EXISTS idx_issues_priority");
+      db.exec("DROP INDEX IF EXISTS idx_issues_paused");
+      db.exec("DROP INDEX IF EXISTS idx_issues_product");
+
+      // ── Discover actual live column set via PRAGMA ───────────────────────────
+      const allCols = db
+        .query<{ name: string; type: string; notnull: number; dflt_value: string | null; pk: number }, []>(
+          "PRAGMA table_info(issues)",
+        )
+        .all();
+
+      // ── KNOWN_COL_CHECKS: per-column CHECK constraints ───────────────────────
+      // PRAGMA table_info does NOT return inline CHECKs, so every constrained
+      // column must be listed here. Columns that already existed post-017
+      // (tier, pool, agent) are pass-through rows — they need their CHECKs
+      // re-listed here or the rebuild silently drops them.
+      const KNOWN_COL_CHECKS_019: Record<string, string> = {
+        type: `CHECK (type IN ('interactive','HITL','cron','mvp','security','quality','scale','efficiency','deferred'))`,
+        state: `CHECK (state IN ('ready','claimed','wip','blocked','review','merged','cancelled','failed'))`,
+        hitl: `CHECK (hitl IN (0,1))`,
+        // 019 change: 'sprint' added to the kind CHECK.
+        kind: `CHECK (kind IN ('task','event','reply','prd','prefetch','sprint'))`,
+        blocked_by: `CHECK (blocked_by IS NULL OR blocked_by LIKE '[%]')`,
+        paused: `CHECK (paused IN (0,1))`,
+        // Post-017 pass-through columns: CHECKs must be re-listed (PRAGMA loses them).
+        tier: `CHECK (tier IN (${sqlInList(TIER_VALUES)}))`,
+        pool: `CHECK (pool IN (${sqlInList(POOL_VALUES)}))`,
+        agent: `CHECK (agent IN (${sqlInList(AGENT_VALUES)}))`,
+        // parent_id gets REFERENCES below via special-case
+      };
+
+      // ── Build CREATE TABLE issues_new ────────────────────────────────────────
+      const colDefs: string[] = [];
+
+      for (const col of allCols) {
+        let def = `${col.name} ${col.type || "TEXT"}`;
+        if (col.pk === 1) {
+          def += " PRIMARY KEY";
+        } else {
+          if (col.notnull) def += " NOT NULL";
+          if (col.dflt_value !== null) {
+            const dflt = col.dflt_value;
+            def += dflt.includes("(") ? ` DEFAULT (${dflt})` : ` DEFAULT ${dflt}`;
+          }
+          if (KNOWN_COL_CHECKS_019[col.name]) def += ` ${KNOWN_COL_CHECKS_019[col.name]}`;
+          if (col.name === "parent_id") def += ` REFERENCES issues_new(id)`;
+        }
+        colDefs.push(def);
+      }
+
+      // Only multi-column table-level CHECKs go here.
+      const tableChecks = [
+        `CHECK (kind NOT IN ('event','reply') OR source_module IS NOT NULL)`,
+      ];
+
+      db.exec(`
+        CREATE TABLE issues_new (
+          ${colDefs.join(",\n          ")},
+          ${tableChecks.join(",\n          ")}
+        );
+      `);
+
+      // ── Straight INSERT…SELECT (no remaps — 019 only widens a CHECK) ─────────
+      const colNames = allCols.map((c) => c.name);
+      db.exec(`
+        INSERT INTO issues_new (${colNames.join(", ")})
+        SELECT ${colNames.join(", ")}
+        FROM issues;
+      `);
+
+      db.exec("DROP TABLE issues");
+      db.exec("ALTER TABLE issues_new RENAME TO issues");
+
+      // ── Recreate indexes (same set as 017) ───────────────────────────────────
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_issues_ready ON issues(state, kind, tier, pool) WHERE state='ready'",
+      );
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_thread ON issues(thread_id)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_issues_parent ON issues(parent_id)");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_issues_claimed_at ON issues(claimed_at) WHERE state='claimed'",
+      );
+      // Conditional indexes for out-of-tree columns.
+      const finalCols = new Set(
+        db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((c) => c.name),
+      );
+      if (finalCols.has("paused")) {
+        db.exec("CREATE INDEX IF NOT EXISTS idx_issues_paused ON issues(paused) WHERE paused=1");
+      }
+      if (finalCols.has("product")) {
+        db.exec(
+          "CREATE INDEX IF NOT EXISTS idx_issues_product ON issues(product) WHERE product IS NOT NULL",
+        );
+      }
+
+      // ── Recreate WIDENED trigger pair (change #4) ────────────────────────────
+      // NOTE: Future issues-table rebuilds must recreate BOTH of these triggers,
+      // not the verbatim single-trigger from migration 011/017.
+
+      // unblock_dependents: unchanged semantics for NON-sprint parents (strict merged-only).
+      // Added: AND kind != 'sprint' so sprint parents are handled by the second trigger.
+      db.exec(`
+        CREATE TRIGGER unblock_dependents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state = 'merged' AND OLD.state != 'merged'
+        BEGIN
+          UPDATE issues
+          SET state = 'ready', updated_at = strftime('%s','now')
+          WHERE state = 'blocked'
+            AND blocked_by IS NOT NULL
+            AND kind != 'sprint'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state != 'merged'
+            );
+        END;
+      `);
+
+      // unblock_sprint_parents: sprint parents re-ready when ALL blockers are terminal.
+      // Fires on any terminal child state (merged|failed|cancelled).
+      db.exec(`
+        CREATE TRIGGER unblock_sprint_parents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state IN ('merged','failed','cancelled')
+         AND OLD.state NOT IN ('merged','failed','cancelled')
+        BEGIN
+          UPDATE issues
+          SET state = 'ready', updated_at = strftime('%s','now')
+          WHERE state = 'blocked'
+            AND blocked_by IS NOT NULL
+            AND kind = 'sprint'
+            AND NOT EXISTS (
+              SELECT 1
+              FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state NOT IN ('merged','failed','cancelled')
+            );
+        END;
+      `);
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

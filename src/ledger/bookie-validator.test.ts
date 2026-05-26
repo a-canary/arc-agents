@@ -139,3 +139,14 @@ test("validateStateTransition blocks exit from terminal states", () => {
   expect(validateStateTransition("ready", "claimed")).toEqual([]);
   expect(validateStateTransition("claimed", "wip")).toEqual([]);
 });
+
+// ── Change 2: KIND_VALUES += "sprint" ────────────────────────────────────────
+
+test("KIND_VALUES includes 'sprint'", () => {
+  expect(KIND_VALUES as readonly string[]).toContain("sprint");
+});
+
+test("validateCreate: kind='sprint' returns no --kind error", () => {
+  const errs = validateCreate({ title: "ok", kind: "sprint", type: "mvp" });
+  expect(errs.some((e) => e.field === "--kind")).toBe(false);
+});

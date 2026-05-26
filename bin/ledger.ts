@@ -5,7 +5,7 @@
 import { Database } from "bun:sqlite";
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
-import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
+import { validateCreate, validateDecompose, validateStateTransition, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
@@ -192,20 +192,69 @@ switch (cmd) {
 
   case "decompose": {
     // ledger decompose <parent-id> --child "t1" --child "t2" ...
+    // Each --child value may be a bare title string (inherits parent tier+pool,
+    // agent='agent_unset') OR a JSON object {"title":..., "tier"?:..., "pool"?:..., "agent"?:...}.
     // Atomic: insert N HITL children, set parent.blocked_by=[ids], parent.state='blocked'.
+
+    type ChildSpec = { title: string; tier?: Tier; pool?: Pool; agent?: Agent };
+
     const parent = args[1];
     if (!parent || parent.startsWith("--")) die("parent id required (positional)");
-    const children: string[] = [];
+
+    const rawChildren: string[] = [];
     for (let i = 2; i < args.length; i++) {
       const a = args[i]!;
       if (a === "--child") {
         const v = args[++i];
-        if (v !== undefined) children.push(v);
+        if (v !== undefined) rawChildren.push(v);
       } else if (a.startsWith("--child=")) {
-        children.push(a.slice("--child=".length));
+        rawChildren.push(a.slice("--child=".length));
       }
     }
-    const errs = validateDecompose({ parent, children });
+
+    // Parse and validate each child spec before touching the DB (fail fast).
+    const childSpecs: ChildSpec[] = [];
+    for (const v of rawChildren) {
+      if (v.trim().startsWith("{")) {
+        // JSON child spec
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(v);
+        } catch {
+          die(`--child: invalid JSON: ${v}`);
+        }
+        const obj = parsed as Record<string, unknown>;
+        if (!obj.title || typeof obj.title !== "string") {
+          die(`--child JSON must include a "title" string field`);
+        }
+        const spec: ChildSpec = { title: obj.title as string };
+        if (obj.tier !== undefined) {
+          if (!TIER_VALUES.includes(obj.tier as Tier)) {
+            die(`--child: invalid tier '${obj.tier}' — must be one of: ${TIER_VALUES.join(", ")}`);
+          }
+          spec.tier = obj.tier as Tier;
+        }
+        if (obj.pool !== undefined) {
+          if (!POOL_VALUES.includes(obj.pool as Pool)) {
+            die(`--child: invalid pool '${obj.pool}' — must be one of: ${POOL_VALUES.join(", ")}`);
+          }
+          spec.pool = obj.pool as Pool;
+        }
+        if (obj.agent !== undefined) {
+          if (!AGENT_VALUES.includes(obj.agent as Agent)) {
+            die(`--child: invalid agent '${obj.agent}' — must be one of: ${AGENT_VALUES.join(", ")}`);
+          }
+          spec.agent = obj.agent as Agent;
+        }
+        childSpecs.push(spec);
+      } else {
+        // Bare title string — inherit tier+pool from parent, agent defaults to agent_unset.
+        childSpecs.push({ title: v });
+      }
+    }
+
+    // validateDecompose checks fanout cap and empty titles.
+    const errs = validateDecompose({ parent, children: childSpecs.map((s) => s.title) });
     if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
@@ -220,21 +269,24 @@ switch (cmd) {
     const created: { id: string; title: string }[] = [];
     db.exec("BEGIN");
     try {
-      for (const title of children) {
-        const id = mintId(db, title);
-        // ADR 0005: children inherit parent's tier+pool so a prod/interactive
+      for (const spec of childSpecs) {
+        const id = mintId(db, spec.title);
+        // ADR 0005: unset fields inherit parent's tier+pool so a prod/interactive
         // decomposition stays prod/interactive instead of dumping the subtree
-        // into the tier_unset triage backlog.
+        // into the tier_unset triage backlog. agent defaults to agent_unset.
+        const childTier = spec.tier ?? parentRow.tier;
+        const childPool = spec.pool ?? parentRow.pool;
+        const childAgent = spec.agent ?? "agent_unset";
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool)
-           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?)`,
-          [id, parentRow.project, parent, title, parentRow.tier, parentRow.pool],
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent)
+           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?, ?)`,
+          [id, parentRow.project, parent, spec.title, childTier, childPool, childAgent],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
-          [id, agent, `decomposed from ${parent}: ${title}`],
+          [id, agent, `decomposed from ${parent}: ${spec.title}`],
         );
-        created.push({ id, title });
+        created.push({ id, title: spec.title });
       }
       const blockedBy = JSON.stringify(created.map((c) => c.id));
       db.run(
@@ -545,16 +597,33 @@ switch (cmd) {
   case "tick": {
     // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr)
     // + reap expired hitl_prompts (open → timeout_locked).
+    //
+    // Two-arm unblock mirrors migration 019's trigger pair (change #4):
+    //   Arm 1 (non-sprint): re-readies when ALL blockers are merged. Strict.
+    //   Arm 2 (sprint): re-readies when ALL blockers are terminal
+    //                   (merged|failed|cancelled).
     const db = openWithMigrate(getFlag("db"));
-    const u = db.run(`
+    const u1 = db.run(`
       UPDATE issues SET state='ready', updated_at=strftime('%s','now')
       WHERE state='blocked' AND blocked_by IS NOT NULL AND blocked_by != '[]'
+        AND kind != 'sprint'
         AND NOT EXISTS (
           SELECT 1 FROM json_each(issues.blocked_by) dep
           JOIN issues b ON b.id = dep.value
           WHERE b.state != 'merged'
         )
     `);
+    const u2 = db.run(`
+      UPDATE issues SET state='ready', updated_at=strftime('%s','now')
+      WHERE state='blocked' AND blocked_by IS NOT NULL AND blocked_by != '[]'
+        AND kind = 'sprint'
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(issues.blocked_by) dep
+          JOIN issues b ON b.id = dep.value
+          WHERE b.state NOT IN ('merged','failed','cancelled')
+        )
+    `);
+    const u = { changes: u1.changes + u2.changes };
     const s = sweepStaleClaims(db);
     // Collect ids first so we can return them; the UPDATE itself fires
     // hitl_retract_losers (migrate.ts:284) which retracts pending/delivered
