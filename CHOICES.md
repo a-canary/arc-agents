@@ -69,7 +69,7 @@ Move files; subagents fix refs.
 ### G-0008: TypeScript Default
 TS over Python where reasonable. Bun runtime.
 
-### G-0009: Pool-Aware Factory Dispatch
+### G-0010: Pool-Aware Factory Dispatch
 Factory dispatches on the `pool` column (not `type`). Slot model: 4-any (any pool) + 2-interactive (`pool=interactive` fast-pass). `claimOnce(db, worker, poolFilter?)` in `src/ledger/claim.ts` builds one SQL UPDATE…RETURNING; pool clause is injected only when filter is set. `bin/worker-shell.sh` reads `ARC_CLAIM_POOL` (preferred) or `ARC_CLAIM_TYPE` (deprecated alias) to set the filter.
 
 ---
@@ -138,7 +138,7 @@ Commits use the deployer's configured git user (`git config user.name` / `user.e
 ### I-0008: Pre-Commit Diff-Review Gate
 Before `git commit`, the worker spawns an independent subagent (no shared reasoning trace) via the `/diff-review` skill that reviews the finalized diff against the task brief + touched ADRs and returns JSON `{consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts}`. Worker asks bookie to log it as a `kind=diff_review` event. `bin/ledger.ts update --state merged` refuses if no `diff_review` event exists for the issue; bookie mirrors the rule (rule #7). Surprises/gaps must be reconciled in the diff OR addressed in `evidence_md` at merge.
 
-### I-0009: triageUnset Auto-Classification
+### I-0011: triageUnset Auto-Classification
 `triageUnset(db, budget=10)` in `bin/factory.ts` runs each factory tick. Selects up to `budget` ready rows with `agent='agent_unset' OR pool='pool_unset'` ordered by SORT_KEY_SQL. Rules: agent — `source_module='arc-chat'` → `chat`; `kind='prd'` → `director`; else → `developer`. Pool — `tier IN (prod,trust,mvp)` → `build`; else → `explore`. Tier is never touched. Each triaged row gets a `kind='triaged'` event (migration 018). Escape hatch: `ARC_TRIAGE_DISABLE=1`. Budget override: `ARC_TRIAGE_BUDGET=N`.
 
 ---
