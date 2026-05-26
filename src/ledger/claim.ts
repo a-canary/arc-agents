@@ -10,7 +10,7 @@
 //      we can't collapse the two callers, but we can collapse the SQL.
 
 import type { Database } from "bun:sqlite";
-import { SORT_KEY_SQL } from "./class-urgency-sort";
+import { SORT_KEY_SQL } from "./tier-pool-sort";
 import { CLAIMABLE_KINDS_SQL } from "./kinds";
 
 export type ClaimRow = { id: string };

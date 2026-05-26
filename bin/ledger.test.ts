@@ -276,12 +276,11 @@ test("claim picks HITL before mvp via priority sort", async () => {
     const h = (await run(db, "create", "--kind", "task", "--type", "HITL", "--title", "hitl-row")) as {
       id: string;
     };
-    // ADR 0005: sort is (urgency, class, created_at, id). Pin HITL row to
-    // (BUG, interactive) so it outranks mvp deterministically — without this
-    // the test relied on alphabetical id-tiebreak luck.
+    // Migration 017: sort is (tier, pool, created_at, id). Pin HITL row to
+    // (prod, interactive) so it outranks mvp deterministically.
     const { Database } = await import("bun:sqlite");
     const raw = new Database(db);
-    raw.run("UPDATE issues SET class='BUG', urgency='interactive' WHERE id=?", [h.id]);
+    raw.run("UPDATE issues SET tier='prod', pool='interactive' WHERE id=?", [h.id]);
     raw.close();
     const claimed = (await run(db, "claim", "w1")) as { claimed: string };
     expect(claimed.claimed).toBe(h.id);
@@ -290,12 +289,10 @@ test("claim picks HITL before mvp via priority sort", async () => {
   }
 });
 
-test("create --class --urgency writes ADR 0005 fields (no longer silently class_unset)", async () => {
-  // Before this fix: every `ledger create` call silently defaulted to
-  // class='class_unset' because the INSERT omitted the column. That meant
-  // every chat-in row, every bookie-spawned task, and every seed-helper task
-  // hit the triage backlog. The CLI must accept --class/--urgency and pass
-  // them through, or the entire ADR 0005 priority model is dead on arrival.
+test("create --tier --pool writes migration-017 fields (no longer silently tier_unset)", async () => {
+  // Migration 017: class→tier, urgency→pool. CLI accepts both --class/--tier and
+  // --urgency/--pool (backwards compat aliases). The INSERT must write the new
+  // column names so the sort key works and rows don't all land in tier_unset.
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
@@ -308,26 +305,25 @@ test("create --class --urgency writes ADR 0005 fields (no longer silently class_
       "mvp",
       "--title",
       "fix the thing",
-      "--class",
-      "BUG",
-      "--urgency",
+      "--tier",
+      "trust",
+      "--pool",
       "interactive",
     )) as { id: string };
     const shown = (await run(db, "show", c.id)) as {
-      issue: { class: string; urgency: string };
+      issue: { tier: string; pool: string };
     };
-    expect(shown.issue.class).toBe("BUG");
-    expect(shown.issue.urgency).toBe("interactive");
+    expect(shown.issue.tier).toBe("trust");
+    expect(shown.issue.pool).toBe("interactive");
   } finally {
     cleanup();
   }
 });
 
-test("decompose children inherit parent's class+urgency (not class_unset)", async () => {
-  // HITL children spawned by AFK decomposition silently went to class_unset
-  // because the decompose INSERT also omitted the columns. That dumped every
-  // decomposed sub-task into triage. Children should inherit the parent's
-  // class+urgency so a BUG/interactive decomposition stays BUG/interactive.
+test("decompose children inherit parent's tier+pool (not tier_unset)", async () => {
+  // Migration 017: class→tier, urgency→pool. HITL children spawned by AFK
+  // decomposition must inherit the parent's tier+pool so a prod/interactive
+  // decomposition stays prod/interactive rather than falling to tier_unset.
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
@@ -340,9 +336,9 @@ test("decompose children inherit parent's class+urgency (not class_unset)", asyn
       "mvp",
       "--title",
       "parent",
-      "--class",
-      "BUG",
-      "--urgency",
+      "--tier",
+      "prod",
+      "--pool",
       "interactive",
     )) as { id: string };
     const dec = (await run(db, "decompose", p.id, "--child", "kid-a", "--child", "kid-b")) as {
@@ -350,10 +346,10 @@ test("decompose children inherit parent's class+urgency (not class_unset)", asyn
     };
     for (const k of dec.children) {
       const shown = (await run(db, "show", k.id)) as {
-        issue: { class: string; urgency: string };
+        issue: { tier: string; pool: string };
       };
-      expect(shown.issue.class).toBe("BUG");
-      expect(shown.issue.urgency).toBe("interactive");
+      expect(shown.issue.tier).toBe("prod");
+      expect(shown.issue.pool).toBe("interactive");
     }
   } finally {
     cleanup();

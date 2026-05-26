@@ -1,6 +1,7 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { migrate, migrateUpTo } from "./migrate";
+import { TIER_VALUES, POOL_VALUES, AGENT_VALUES } from "./schema-enums";
 
 function fresh(): Database {
   const db = new Database(":memory:");
@@ -137,6 +138,8 @@ test("009 hitl tables exist with check constraints", () => {
 });
 
 test("011 backfills (class, urgency) for all legacy type values", () => {
+  // class/urgency are renamed to tier/pool by 017; stop at 011 boundary to test
+  // the 011 backfill without 017 interfering.
   const db = new Database(":memory:");
   migrateUpTo(db, "010_expand_kind_type_for_path_b");
 
@@ -168,7 +171,8 @@ test("011 backfills (class, urgency) for all legacy type values", () => {
     );
   }
 
-  migrate(db);
+  // Apply only up through 011 so class/urgency columns are present for verification.
+  migrateUpTo(db, "011_class_urgency_schema");
 
   for (const c of cases) {
     const row = db
@@ -244,7 +248,9 @@ test("009 retract cascade flips loser deliveries on answer", () => {
 });
 
 test("012 adds webui columns", () => {
-  const db = fresh();
+  // Stop at 012 so that priority (added by 012, dropped by 017) is still present.
+  const db = new Database(":memory:");
+  migrateUpTo(db, "012_webui_columns");
   const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
   expect(cols).toContain("priority");
   expect(cols).toContain("paused");
@@ -255,18 +261,17 @@ test("012 adds webui columns", () => {
 });
 
 test("012 backfills priority from type bucket", () => {
-  const db = fresh();
+  // Stop at 012 so priority column exists (it is dropped by 017).
+  const db = new Database(":memory:");
+  migrateUpTo(db, "012_webui_columns");
   const ins = (id: string, type: string) =>
     db.run(
       `INSERT INTO issues (id, project, title, body_md, type, state, kind)
        VALUES (?, 'p', 't', 'b', ?, 'ready', 'task')`,
       [id, type],
     );
-  // Insert pre-012-style; but since fresh() ran all migrations, priority will
-  // be NULL on these new rows and only the backfill UPDATE ran during 012.
-  // Verify default-on-insert behavior: new rows have NULL priority, callers
-  // set it explicitly via bookie. Backfill applies only to rows present at
-  // migration time.
+  // Insert post-012 rows — priority defaults to NULL; backfill ran at migration
+  // time on pre-existing rows only.
   ins("p_mvp", "mvp");
   ins("p_int", "interactive");
   ins("p_def", "deferred");
@@ -277,7 +282,10 @@ test("012 backfills priority from type bucket", () => {
 });
 
 test("012 paused defaults to 0 and enforces 0/1", () => {
-  const db = fresh();
+  // Stop at 012: the paused CHECK exists inline in 012; 017 preserves it via KNOWN_COL_CHECKS.
+  // Use migrateUpTo(012) to test the migration boundary, then also verify it survives 017.
+  const db = new Database(":memory:");
+  migrateUpTo(db, "012_webui_columns");
   db.run(
     `INSERT INTO issues (id, project, title, body_md, type, state, kind)
      VALUES ('p1','p','t','b','mvp','ready','task')`,
@@ -290,8 +298,9 @@ test("012 paused defaults to 0 and enforces 0/1", () => {
 });
 
 test("012 backfill assigns priority to rows existing before the migration", () => {
-  // Simulate: stop at 011, insert legacy rows, then run 012 — the UPDATE
+  // Simulate: stop at 011, insert legacy rows, then apply only 012 — the UPDATE
   // backfill should populate priority based on type bucket.
+  // (priority is dropped by 017; test against the 012 boundary only.)
   const db = new Database(":memory:");
   migrateUpTo(db, "011_class_urgency_schema");
   db.run(
@@ -300,7 +309,7 @@ test("012 backfill assigns priority to rows existing before the migration", () =
             ('old_int','p','t','b','interactive','ready','task'),
             ('old_def','p','t','b','deferred','ready','task')`,
   );
-  migrate(db);
+  migrateUpTo(db, "012_webui_columns");
   const rows = db
     .query<{ id: string; priority: number }, []>("SELECT id, priority FROM issues ORDER BY id")
     .all();
@@ -365,4 +374,172 @@ test("015 fires from-scratch when legacy rows pre-exist", () => {
   expect(m["legacy_blocked"]?.claimed_at).toBeNull();
   expect(m["legacy_claimed"]?.claimed_by).toBe("live-w");
   expect(m["legacy_claimed"]?.claimed_at).toBe(1600000000);
+});
+
+// ─────────────────────────────────────────────────────
+// 017_class_urgency_to_tier_pool tests
+// ─────────────────────────────────────────────────────
+
+function seedPre017(db: Database): void {
+  // Insert rows in the OLD shape (class/urgency columns, no tier/pool/agent)
+  // Stop at 015 so the schema still has class/urgency.
+  const cases = [
+    { id: "r-trust",       cls: "trust",      urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-MVP",         cls: "MVP",        urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-ops",         cls: "ops",        urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-ops-i",       cls: "ops",        urgency: "interactive",  kind: "task", source_module: null },
+    { id: "r-BUG",         cls: "BUG",        urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-class_unset", cls: "class_unset",urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-interactive", cls: "class_unset",urgency: "interactive",  kind: "task", source_module: null },
+    { id: "r-deferred",    cls: "class_unset",urgency: "deferred",     kind: "task", source_module: null },
+    { id: "r-prd",         cls: "class_unset",urgency: "nominal",      kind: "prd",  source_module: null },
+    { id: "r-arc-chat",    cls: "trust",      urgency: "interactive",  kind: "event", source_module: "arc-chat" },
+    { id: "r-hygiene",     cls: "hygiene",    urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-quality",     cls: "quality",    urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-scale",       cls: "scale",      urgency: "nominal",      kind: "task", source_module: null },
+    { id: "r-efficiency",  cls: "efficiency", urgency: "nominal",      kind: "task", source_module: null },
+  ];
+  for (const c of cases) {
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind, class, urgency, source_module)
+       VALUES (?, 'p', ?, 'b', 'mvp', 'ready', ?, ?, ?, ?)`,
+      [c.id, c.id, c.kind, c.cls, c.urgency, c.source_module],
+    );
+  }
+}
+
+test("017 renames class/urgency to tier/pool and adds agent column", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "015_null_claim_on_nonclaim_state");
+  seedPre017(db);
+
+  const countBefore = (db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM issues").get())!.n;
+  migrate(db); // runs 017
+
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
+
+  // priority DROPPED
+  expect(cols).not.toContain("priority");
+  // tier, pool, agent ADDED
+  expect(cols).toContain("tier");
+  expect(cols).toContain("pool");
+  expect(cols).toContain("agent");
+  // old column names GONE
+  expect(cols).not.toContain("class");
+  expect(cols).not.toContain("urgency");
+
+  // row count preserved
+  const countAfter = (db.query<{ n: number }, []>("SELECT COUNT(*) AS n FROM issues").get())!.n;
+  expect(countAfter).toBe(countBefore);
+});
+
+test("017 every row has legal tier/pool/agent values", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "015_null_claim_on_nonclaim_state");
+  seedPre017(db);
+  migrate(db);
+
+  const rows = db.query<{ tier: string; pool: string; agent: string }, []>(
+    "SELECT tier, pool, agent FROM issues",
+  ).all();
+
+  for (const row of rows) {
+    expect(TIER_VALUES as readonly string[]).toContain(row.tier);
+    expect(POOL_VALUES as readonly string[]).toContain(row.pool);
+    expect(AGENT_VALUES as readonly string[]).toContain(row.agent);
+  }
+});
+
+test("017 class→tier remapping correctness", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "015_null_claim_on_nonclaim_state");
+  seedPre017(db);
+  migrate(db);
+
+  type Row = { id: string; tier: string; pool: string; agent: string };
+  const get = (id: string) => db.query<Row, [string]>("SELECT id, tier, pool, agent FROM issues WHERE id=?").get(id)!;
+
+  // 1:1 carries
+  expect(get("r-trust").tier).toBe("trust");
+  expect(get("r-hygiene").tier).toBe("hygiene");
+  expect(get("r-quality").tier).toBe("quality");
+  expect(get("r-scale").tier).toBe("scale");
+  expect(get("r-efficiency").tier).toBe("efficiency");
+  // case-normalized
+  expect(get("r-MVP").tier).toBe("mvp");
+  // ops → tier_unset (ops is now a pool, not a tier)
+  expect(get("r-ops").tier).toBe("tier_unset");
+  expect(get("r-ops-i").tier).toBe("tier_unset");
+  // BUG → tier_unset (no equivalent in new enum)
+  expect(get("r-BUG").tier).toBe("tier_unset");
+  // class_unset → tier_unset
+  expect(get("r-class_unset").tier).toBe("tier_unset");
+  expect(get("r-interactive").tier).toBe("tier_unset");
+  expect(get("r-deferred").tier).toBe("tier_unset");
+});
+
+test("017 urgency→pool remapping correctness", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "015_null_claim_on_nonclaim_state");
+  seedPre017(db);
+  migrate(db);
+
+  type Row = { id: string; tier: string; pool: string };
+  const get = (id: string) => db.query<Row, [string]>("SELECT id, tier, pool FROM issues WHERE id=?").get(id)!;
+
+  // urgency=interactive (non-ops class) → pool=interactive
+  expect(get("r-interactive").pool).toBe("interactive");
+  // urgency=nominal (non-ops) → pool=pool_unset
+  expect(get("r-trust").pool).toBe("pool_unset");
+  expect(get("r-MVP").pool).toBe("pool_unset");
+  expect(get("r-BUG").pool).toBe("pool_unset");
+  // urgency=deferred (non-ops) → pool=pool_unset
+  expect(get("r-deferred").pool).toBe("pool_unset");
+  // class=ops rows → pool=ops (regardless of urgency)
+  expect(get("r-ops").pool).toBe("ops");
+  expect(get("r-ops-i").pool).toBe("ops"); // ops overrides interactive urgency
+});
+
+test("017 agent backfill: kind=prd → chat, source_module=arc-chat → chat, else agent_unset", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "015_null_claim_on_nonclaim_state");
+  seedPre017(db);
+  migrate(db);
+
+  type Row = { agent: string };
+  const get = (id: string) => db.query<Row, [string]>("SELECT agent FROM issues WHERE id=?").get(id)!;
+
+  expect(get("r-prd").agent).toBe("chat");         // kind=prd
+  expect(get("r-arc-chat").agent).toBe("chat");    // source_module=arc-chat
+  expect(get("r-trust").agent).toBe("agent_unset"); // no match
+  expect(get("r-MVP").agent).toBe("agent_unset");
+});
+
+test("017 column-resilience: extra product column survives", () => {
+  // Simulate the real DB: it has a 'product' column that the 015-era fixture
+  // never creates. The dynamic PRAGMA-based column list must carry it forward.
+  const db = new Database(":memory:");
+  migrateUpTo(db, "015_null_claim_on_nonclaim_state");
+  // Manually add an out-of-tree column (simulates 016_dev_quest on live DB)
+  db.exec("ALTER TABLE issues ADD COLUMN product TEXT");
+  // Insert a row with a product value
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, class, urgency, product)
+     VALUES ('r-product', 'p', 'r-product', 'b', 'mvp', 'ready', 'task', 'trust', 'nominal', 'arc-ux')`,
+  );
+  migrate(db); // runs 017
+
+  const cols = db.query<{ name: string }, []>("PRAGMA table_info(issues)").all().map((r) => r.name);
+  expect(cols).toContain("product");
+
+  const row = db.query<{ product: string | null }, [string]>("SELECT product FROM issues WHERE id=?").get("r-product");
+  expect(row?.product).toBe("arc-ux");
+
+  // tier/pool/agent still correct
+  const full = db.query<{ tier: string; pool: string; agent: string }, [string]>(
+    "SELECT tier, pool, agent FROM issues WHERE id=?",
+  ).get("r-product")!;
+  expect(full.tier).toBe("trust");
+  expect(full.pool).toBe("pool_unset");
+  expect(full.agent).toBe("agent_unset");
 });

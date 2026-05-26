@@ -15,7 +15,7 @@
 export type ExistingRow = {
   id: string;
   title: string;
-  class: string;
+  tier: string;
   state: string;
   skill?: string | null;
 };
@@ -74,7 +74,7 @@ export function checkDuplicate(
   if (cand.length === 0) return { duplicate: false };
 
   for (const row of existing) {
-    if (row.class !== "hygiene") continue;
+    if (row.tier !== "hygiene") continue;
     if (!considerStates.includes(row.state)) continue;
     // Skill match: prefer explicit row.skill if present, otherwise infer from title prefix.
     const rowSkill = row.skill ?? inferSkillFromTitle(row.title);

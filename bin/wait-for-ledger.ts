@@ -38,14 +38,14 @@ const db = new Database(dbPath, { readonly: true });
 db.exec("PRAGMA journal_mode=WAL;");
 
 // S7: skip paused rows. ORDER BY is a no-op for COUNT but documents the
-// canonical claim order (higher priority first, oldest tiebreak). defer
-// subtracts 100, so deferred rows fall behind their neighbors.
+// canonical claim order (tier MAJOR / pool MINOR, oldest created_at tiebreak).
+// Migration 017: priority column dropped; sort uses tier/pool CASE expressions.
 const query = interviewer
   ? db.query<{ n: number }, []>(
-      "SELECT COUNT(*) AS n FROM issues WHERE kind='event' AND source_module IN ('arc-chat','arc-encounter') AND state='ready' AND claimed_by IS NULL AND paused=0 ORDER BY priority DESC, created_at ASC",
+      "SELECT COUNT(*) AS n FROM issues WHERE kind='event' AND source_module IN ('arc-chat','arc-encounter') AND state='ready' AND claimed_by IS NULL AND paused=0 ORDER BY created_at ASC",
     )
   : db.query<{ n: number }, [string]>(
-      "SELECT COUNT(*) AS n FROM issues WHERE kind=? AND state='ready' AND claimed_by IS NULL AND paused=0 ORDER BY priority DESC, created_at ASC",
+      "SELECT COUNT(*) AS n FROM issues WHERE kind=? AND state='ready' AND claimed_by IS NULL AND paused=0 ORDER BY created_at ASC",
     );
 
 const mode = interviewer ? "interviewer" : `worker:${kind}`;

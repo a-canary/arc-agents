@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
-import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
+import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
@@ -92,8 +92,8 @@ switch (cmd) {
       parent: getFlag("parent"),
       blockedBy: getFlag("blocked-by"),
       project: getFlag("project"),
-      class: getFlag("class"),
-      urgency: getFlag("urgency"),
+      tier: getFlag("tier") ?? getFlag("class"),     // accept both old --class and new --tier
+      pool: getFlag("pool") ?? getFlag("urgency"),    // accept both old --urgency and new --pool
     };
     const errs = validateCreate(input, positionalAfterVerb());
     if (errs.length > 0) {
@@ -111,30 +111,29 @@ switch (cmd) {
     const thread = getFlag("thread") ?? null;
     const sourceModule = getFlag("source-module") ?? null;
     // ADR 0005: pass through when supplied, fall back to schema defaults
-    // (class_unset / nominal) so unchanged callers stay compatible. The
-    // bookie subagent is expected to pass both explicitly going forward.
-    const cls = input.class ?? null;
-    const urgency = input.urgency ?? null;
+    // (tier_unset / pool_unset) so unchanged callers stay compatible.
+    const tier = input.tier ?? null;
+    const pool = input.pool ?? null;
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
-    if (cls !== null && urgency !== null) {
+    if (tier !== null && pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class, urgency)
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, pool)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls, urgency],
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, pool],
       );
-    } else if (cls !== null) {
+    } else if (tier !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class)
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls],
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier],
       );
-    } else if (urgency !== null) {
+    } else if (pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, urgency)
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, pool)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, urgency],
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, pool],
       );
     } else {
       db.run(
@@ -208,8 +207,8 @@ switch (cmd) {
     if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    const parentRow = db.query<{ id: string; project: string; state: string; class: string; urgency: string }, [string]>(
-      "SELECT id, project, state, class, urgency FROM issues WHERE id=?",
+    const parentRow = db.query<{ id: string; project: string; state: string; tier: string; pool: string }, [string]>(
+      "SELECT id, project, state, tier, pool FROM issues WHERE id=?",
     ).get(parent);
     if (!parentRow) die(`no such issue: ${parent}`);
     if (parentRow.state === "merged" || parentRow.state === "cancelled") {
@@ -221,13 +220,13 @@ switch (cmd) {
     try {
       for (const title of children) {
         const id = mintId(db, title);
-        // ADR 0005: children inherit parent's class+urgency so a BUG/interactive
-        // decomposition stays BUG/interactive instead of dumping the subtree
-        // into the class_unset triage backlog.
+        // ADR 0005: children inherit parent's tier+pool so a prod/interactive
+        // decomposition stays prod/interactive instead of dumping the subtree
+        // into the tier_unset triage backlog.
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, class, urgency)
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool)
            VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?)`,
-          [id, parentRow.project, parent, title, parentRow.class, parentRow.urgency],
+          [id, parentRow.project, parent, title, parentRow.tier, parentRow.pool],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
@@ -508,9 +507,9 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const existing = db
       .query<ExistingRow, []>(
-        `SELECT id, title, COALESCE(class, '') AS class, state, NULL AS skill
+        `SELECT id, title, tier, state, NULL AS skill
          FROM issues
-         WHERE class='hygiene'
+         WHERE tier='hygiene'
            AND state IN ('ready','blocked','wip','claimed')`,
       )
       .all();
@@ -529,7 +528,7 @@ switch (cmd) {
     const finalBody = body + observedNote;
     const id = mintId(db, prefixedTitle);
     db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, class)
+      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, tier)
        VALUES (?, ?, NULL, ?, ?, '', 'quality', 'ready', 'task', 'hygiene')`,
       [id, project, prefixedTitle, finalBody],
     );
@@ -537,7 +536,7 @@ switch (cmd) {
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
       [id, agent, `hygiene-emit skill=${skill}${observed ? ` observed_in=${observed}` : ""}`],
     );
-    out({ id, emitted: true, skill, state: "ready", class: "hygiene" });
+    out({ id, emitted: true, skill, state: "ready", tier: "hygiene" });
     break;
   }
 

@@ -27,10 +27,10 @@ export type Type = (typeof TYPE_VALUES)[number];
 // ADR 0005: orthogonal class + urgency replace single `type`.
 // Owned by `schema-enums.ts`; re-exported here so callers of bookie-validator
 // keep working unchanged.
-export { CLASS_VALUES, URGENCY_VALUES } from "./schema-enums";
-export type { Class, Urgency } from "./schema-enums";
-import { CLASS_VALUES, URGENCY_VALUES } from "./schema-enums";
-import type { Class, Urgency } from "./schema-enums";
+export { CLASS_VALUES, URGENCY_VALUES, TIER_VALUES, POOL_VALUES, AGENT_VALUES } from "./schema-enums";
+export type { Class, Urgency, Tier, Pool, Agent } from "./schema-enums";
+import { CLASS_VALUES, URGENCY_VALUES, TIER_VALUES, POOL_VALUES } from "./schema-enums";
+import type { Class, Urgency, Tier, Pool } from "./schema-enums";
 
 export const STATE_VALUES = [
   "ready",
@@ -53,6 +53,10 @@ export type CreateInput = {
   acceptance?: string;
   parent?: string | null;
   blockedBy?: string | null;
+  // Migration 017: tier/pool replace class/urgency
+  tier?: string;
+  pool?: string;
+  // Legacy aliases (still accepted for backwards compat; ledger.ts maps them)
   class?: string;
   urgency?: string;
 };
@@ -81,14 +85,15 @@ export function validateCreate(input: CreateInput, positional: string[] = []): V
   if (input.blockedBy && !looksLikeJsonArray(input.blockedBy)) {
     errs.push({ field: "--blocked-by", message: "must be a JSON array of issue ids, e.g. '[\"i-foo\"]'" });
   }
-  // ADR 0005: --class / --urgency are optional at the CLI layer (schema
-  // defaults class_unset / nominal for backwards compat). When provided,
-  // they must be valid enum members.
-  if (input.class !== undefined && !CLASS_VALUES.includes(input.class as Class)) {
-    errs.push({ field: "--class", message: `must be one of: ${CLASS_VALUES.join(", ")}` });
+  // ADR 0005 → Migration 017: --tier/--pool (replaces --class/--urgency).
+  // Accept both old and new flag names for backwards compat.
+  const tierVal = input.tier ?? input.class;
+  const poolVal = input.pool ?? input.urgency;
+  if (tierVal !== undefined && !TIER_VALUES.includes(tierVal as Tier) && !CLASS_VALUES.includes(tierVal as Class)) {
+    errs.push({ field: "--tier", message: `must be one of: ${TIER_VALUES.join(", ")}` });
   }
-  if (input.urgency !== undefined && !URGENCY_VALUES.includes(input.urgency as Urgency)) {
-    errs.push({ field: "--urgency", message: `must be one of: ${URGENCY_VALUES.join(", ")}` });
+  if (poolVal !== undefined && !POOL_VALUES.includes(poolVal as Pool) && !URGENCY_VALUES.includes(poolVal as Urgency)) {
+    errs.push({ field: "--pool", message: `must be one of: ${POOL_VALUES.join(", ")}` });
   }
 
   return errs;
@@ -129,11 +134,15 @@ export function validateDecompose(input: DecomposeInput): ValidationError[] {
   return errs;
 }
 
-// ADR 0005 bookie write validator. Pure function over (row, registry).
+// ADR 0005 → Migration 017 bookie write validator. Pure function over (row, registry).
 // Enforced on every bookie create/decompose write. Module-registry lookup +
-// class-rationale requirement keep the bookie as sole authority with schema.
+// tier-rationale requirement keep the bookie as sole authority with schema.
 export type BookieWriteInput = {
   kind?: string;
+  // Migration 017: tier/pool replace class/urgency
+  tier?: string;
+  pool?: string;
+  // Legacy aliases (still accepted; bookie skill should migrate to tier/pool)
   class?: string;
   urgency?: string;
   source_module?: string | null;
@@ -153,17 +162,21 @@ export function validateBookieWrite(
     errs.push({ field: "kind", message: `must be one of: ${KIND_VALUES.join(", ")}` });
   }
 
-  if (!row.class || !CLASS_VALUES.includes(row.class as Class)) {
-    errs.push({ field: "class", message: `must be one of: ${CLASS_VALUES.join(", ")}` });
-  } else if (row.class === "class_unset" && !row.triage_pending) {
+  // Accept either new (tier) or old (class) field name
+  const tierVal = row.tier ?? row.class;
+  if (!tierVal || (!TIER_VALUES.includes(tierVal as Tier) && !CLASS_VALUES.includes(tierVal as Class))) {
+    errs.push({ field: "tier", message: `must be one of: ${TIER_VALUES.join(", ")}` });
+  } else if ((tierVal === "tier_unset" || tierVal === "class_unset") && !row.triage_pending) {
     errs.push({
-      field: "class",
-      message: "class='class_unset' only allowed with --triage-pending (ADR 0005)",
+      field: "tier",
+      message: "tier='tier_unset' only allowed with --triage-pending (ADR 0005)",
     });
   }
 
-  if (!row.urgency || !URGENCY_VALUES.includes(row.urgency as Urgency)) {
-    errs.push({ field: "urgency", message: `must be one of: ${URGENCY_VALUES.join(", ")}` });
+  // Accept either new (pool) or old (urgency) field name
+  const poolVal = row.pool ?? row.urgency;
+  if (!poolVal || (!POOL_VALUES.includes(poolVal as Pool) && !URGENCY_VALUES.includes(poolVal as Urgency))) {
+    errs.push({ field: "pool", message: `must be one of: ${POOL_VALUES.join(", ")}` });
   }
 
   // source_module: required for event/reply (matches SQL CHECK). Whenever
@@ -182,8 +195,8 @@ export function validateBookieWrite(
     });
   }
 
-  // class_rationale: required on create/decompose unless class_unset+triage_pending.
-  const rationaleExempt = row.class === "class_unset" && !!row.triage_pending;
+  // class_rationale: required on create/decompose unless tier_unset+triage_pending.
+  const rationaleExempt = (tierVal === "tier_unset" || tierVal === "class_unset") && !!row.triage_pending;
   if (!rationaleExempt && !row.class_rationale) {
     errs.push({
       field: "class_rationale",

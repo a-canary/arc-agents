@@ -71,8 +71,8 @@ function createPrd(title: string) {
     "--kind", "prd",
     "--type", "mvp",
     "--title", title,
-    "--class", "MVP",
-    "--urgency", "nominal",
+    "--tier", "mvp",
+    "--pool", "ops",
     "--class-rationale", "test fixture",
   ]);
   if (r.status !== 0) throw new Error(`create prd failed: ${r.stderr}`);

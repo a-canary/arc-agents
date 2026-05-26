@@ -131,19 +131,19 @@ test("body references the skill so a worker knows what to do", async () => {
   expect(got!.body_md).toContain("ke");
 });
 
-test("inserted row carries ADR 0005 class='hygiene' + urgency='nominal' (not class_unset)", async () => {
-  // The hygiene cron knows its own classification — it is literally hygiene work.
-  // Writing class_unset would dump every cron task into the triage backlog and
-  // bypass ADR 0005 the moment a worker tries to update it via the bookie
-  // (validateBookieWrite refuses class_unset without triage_pending).
+test("inserted row carries migration-017 tier='hygiene' + pool='ops' (not tier_unset)", async () => {
+  // Migration 017: class→tier, urgency→pool. The hygiene cron knows its own
+  // classification — writing tier_unset would dump every cron task into the
+  // triage backlog and bypass ADR 0005 the moment a worker tries to update it
+  // via the bookie (validateBookieWrite refuses tier_unset without triage_pending).
   await tick();
   const db = new Database(dbPath);
   const got = db
-    .query<{ class: string; urgency: string }, []>(
-      "SELECT class, urgency FROM issues WHERE type='cron'",
+    .query<{ tier: string; pool: string }, []>(
+      "SELECT tier, pool FROM issues WHERE type='cron'",
     )
     .get();
   db.close();
-  expect(got!.class).toBe("hygiene");
-  expect(got!.urgency).toBe("nominal");
+  expect(got!.tier).toBe("hygiene");
+  expect(got!.pool).toBe("ops");
 });

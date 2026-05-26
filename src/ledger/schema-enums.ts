@@ -26,3 +26,41 @@ export type Urgency = (typeof URGENCY_VALUES)[number];
 export function sqlInList(values: readonly string[]): string {
   return values.map((v) => `'${v}'`).join(",");
 }
+
+// ─── Migration 017: tier/pool/agent enums ────────────────────────────────────
+// tier: priority-queue rank (replaces class).
+// pool: worker-lane (replaces urgency).
+// agent: profile selector (net-new column).
+
+export const TIER_VALUES = [
+  "prod",
+  "trust",
+  "mvp",
+  "quality",
+  "scale",
+  "efficiency",
+  "hygiene",
+  "tier_unset",
+] as const;
+export type Tier = (typeof TIER_VALUES)[number];
+
+export const POOL_VALUES = [
+  "interactive",
+  "ops",
+  "build",
+  "explore",
+  "pool_unset",
+] as const;
+export type Pool = (typeof POOL_VALUES)[number];
+
+export const AGENT_VALUES = [
+  "director",
+  "developer",
+  "admin",
+  "chat",
+  "triage",
+  "sprint",
+  "bookie",
+  "agent_unset",
+] as const;
+export type Agent = (typeof AGENT_VALUES)[number];

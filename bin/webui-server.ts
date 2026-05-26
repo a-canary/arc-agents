@@ -35,10 +35,10 @@ type IssueRow = {
   type: string;
   state: string;
   kind: string;
-  class: string;
-  urgency: string;
+  // Migration 017: class→tier, urgency→pool; priority column dropped
+  tier: string;
+  pool: string;
   hitl: number;
-  priority: number | null;
   paused: number;
   deferred_at: number | null;
   artifact_dir: string | null;
@@ -54,13 +54,13 @@ export function queryHitlRows(db: Database): IssueRow[] {
   // states, plus blocked parents waiting on HITL children.
   return db
     .query<IssueRow, []>(
-      `SELECT id, project, parent_id, title, type, state, kind, class, urgency,
-              hitl, priority, paused, deferred_at, artifact_dir, draft_md,
+      `SELECT id, project, parent_id, title, type, state, kind, tier, pool,
+              hitl, paused, deferred_at, artifact_dir, draft_md,
               pr_url, thread_id, blocked_by, updated_at
          FROM issues
         WHERE (type = 'HITL' OR hitl = 1)
           AND state NOT IN ('merged','cancelled','failed')
-        ORDER BY COALESCE(priority, 999) ASC, updated_at DESC`,
+        ORDER BY updated_at DESC`,
     )
     .all();
 }
@@ -70,19 +70,19 @@ export function queryAfkRows(db: Database): IssueRow[] {
   // COMPLETED_LIMIT merged. See SLICE-PLAN dag window rule.
   const inflight = db
     .query<IssueRow, []>(
-      `SELECT id, project, parent_id, title, type, state, kind, class, urgency,
-              hitl, priority, paused, deferred_at, artifact_dir, draft_md,
+      `SELECT id, project, parent_id, title, type, state, kind, tier, pool,
+              hitl, paused, deferred_at, artifact_dir, draft_md,
               pr_url, thread_id, blocked_by, updated_at
          FROM issues
         WHERE state IN ('claimed','wip','review','blocked','ready')
           AND paused = 0
-        ORDER BY COALESCE(priority, 999) ASC, updated_at DESC`,
+        ORDER BY updated_at DESC`,
     )
     .all();
   const recent = db
     .query<IssueRow, [number]>(
-      `SELECT id, project, parent_id, title, type, state, kind, class, urgency,
-              hitl, priority, paused, deferred_at, artifact_dir, draft_md,
+      `SELECT id, project, parent_id, title, type, state, kind, tier, pool,
+              hitl, paused, deferred_at, artifact_dir, draft_md,
               pr_url, thread_id, blocked_by, updated_at
          FROM issues
         WHERE state = 'merged'

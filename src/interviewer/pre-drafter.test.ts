@@ -25,7 +25,7 @@ function insertChatIn(
     id: string;
     title: string;
     body?: string;
-    priority?: number | null;
+    // Migration 017: priority column dropped; use updated_at for ordering
     updated_at?: number;
     state?: string;
     paused?: number;
@@ -33,14 +33,13 @@ function insertChatIn(
 ) {
   const now = row.updated_at ?? Math.floor(Date.now() / 1000);
   db.exec(
-    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, class, urgency, hitl, priority, paused, source_module, created_at, updated_at)
-     VALUES (?, 'arc-agents', ?, ?, '', 'interactive', ?, 'event', 'class_unset', 'interactive', 0, ?, ?, 'arc-chat', ?, ?)`,
+    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool, hitl, paused, source_module, created_at, updated_at)
+     VALUES (?, 'arc-agents', ?, ?, '', 'interactive', ?, 'event', 'tier_unset', 'interactive', 0, ?, 'arc-chat', ?, ?)`,
     [
       row.id,
       row.title,
       row.body ?? row.title,
       row.state ?? "ready",
-      row.priority ?? null,
       row.paused ?? 0,
       now,
       now,
@@ -48,15 +47,17 @@ function insertChatIn(
   );
 }
 
-test("selectTopChatIn returns chat_in rows ordered by priority then recency", () => {
+test("selectTopChatIn returns chat_in rows ordered by recency (updated_at DESC)", () => {
+  // Migration 017: priority column dropped. Ordering is updated_at DESC.
   const { db, cleanup } = freshDb();
   try {
-    insertChatIn(db, { id: "c1", title: "first", priority: 10, updated_at: 100 });
-    insertChatIn(db, { id: "c2", title: "second", priority: 5, updated_at: 100 });
-    insertChatIn(db, { id: "c3", title: "third", priority: 5, updated_at: 200 });
-    insertChatIn(db, { id: "c4", title: "fourth", priority: null, updated_at: 300 });
+    insertChatIn(db, { id: "c1", title: "oldest", updated_at: 100 });
+    insertChatIn(db, { id: "c2", title: "middle", updated_at: 200 });
+    insertChatIn(db, { id: "c3", title: "newest", updated_at: 300 });
+    insertChatIn(db, { id: "c4", title: "newest2", updated_at: 400 });
     const rows = selectTopChatIn(db, 3);
-    expect(rows.map((r) => r.id)).toEqual(["c3", "c2", "c1"]);
+    // Top 3 by updated_at DESC: c4, c3, c2
+    expect(rows.map((r) => r.id)).toEqual(["c4", "c3", "c2"]);
   } finally {
     cleanup();
   }
@@ -65,10 +66,10 @@ test("selectTopChatIn returns chat_in rows ordered by priority then recency", ()
 test("selectTopChatIn excludes terminal and paused rows", () => {
   const { db, cleanup } = freshDb();
   try {
-    insertChatIn(db, { id: "c1", title: "live", priority: 1 });
-    insertChatIn(db, { id: "c2", title: "merged", priority: 1, state: "merged" });
-    insertChatIn(db, { id: "c3", title: "paused", priority: 1, paused: 1 });
-    insertChatIn(db, { id: "c4", title: "cancelled", priority: 1, state: "cancelled" });
+    insertChatIn(db, { id: "c1", title: "live" });
+    insertChatIn(db, { id: "c2", title: "merged", state: "merged" });
+    insertChatIn(db, { id: "c3", title: "paused", paused: 1 });
+    insertChatIn(db, { id: "c4", title: "cancelled", state: "cancelled" });
     const rows = selectTopChatIn(db);
     expect(rows.map((r) => r.id)).toEqual(["c1"]);
   } finally {
@@ -82,7 +83,6 @@ test("templateGenerator produces primary + 2 alternatives", () => {
     title: "Should we ship?",
     body_md: "Should we ship the new release tonight?",
     thread_id: null,
-    priority: 1,
     updated_at: 0,
     draft_md: null,
   });
@@ -95,11 +95,14 @@ test("templateGenerator produces primary + 2 alternatives", () => {
 test("runPreDrafter populates draft_md for top-N rows only", () => {
   const { db, cleanup } = freshDb();
   try {
+    // Migration 017: priority dropped; ordering is updated_at DESC.
+    // Insert with ascending updated_at so c5 is newest (rank-1).
     for (let i = 1; i <= 5; i++) {
-      insertChatIn(db, { id: `c${i}`, title: `msg ${i}`, priority: i });
+      insertChatIn(db, { id: `c${i}`, title: `msg ${i}`, updated_at: i * 100 });
     }
     const r = runPreDrafter(db, { now: () => 1000 });
-    expect(r.generated.sort()).toEqual(["c1", "c2", "c3"]);
+    // Top-3 by updated_at DESC: c5(500), c4(400), c3(300)
+    expect(r.generated.sort()).toEqual(["c3", "c4", "c5"]);
     expect(r.unchanged).toEqual([]);
 
     const top = selectTopChatIn(db);
@@ -110,11 +113,12 @@ test("runPreDrafter populates draft_md for top-N rows only", () => {
       expect(d!.alternatives).toHaveLength(ALT_COUNT);
     }
 
+    // c1 (updated_at=100) is below the top-3 cutoff; no draft
     const beyond = db
       .query<{ draft_md: string | null }, [string]>(
         "SELECT draft_md FROM issues WHERE id = ?",
       )
-      .get("c4");
+      .get("c1");
     expect(beyond?.draft_md).toBeNull();
   } finally {
     cleanup();
@@ -124,7 +128,7 @@ test("runPreDrafter populates draft_md for top-N rows only", () => {
 test("runPreDrafter is idempotent — second call reports unchanged", () => {
   const { db, cleanup } = freshDb();
   try {
-    insertChatIn(db, { id: "c1", title: "hello", priority: 1 });
+    insertChatIn(db, { id: "c1", title: "hello" });
     const a = runPreDrafter(db, { now: () => 1000 });
     expect(a.generated).toEqual(["c1"]);
     const b = runPreDrafter(db, { now: () => 2000 });
@@ -136,29 +140,39 @@ test("runPreDrafter is idempotent — second call reports unchanged", () => {
 });
 
 test("rank change invalidates cache and triggers regeneration", () => {
+  // Migration 017: priority dropped; rank is by updated_at DESC.
+  // Only 3 rows so none gets evicted from top-3 on 1st run.
+  // On 2nd run, c4 (new) bumps in at rank-1; c1 (lowest) falls to rank-4 and is cleared.
   const { db, cleanup } = freshDb();
   try {
-    // 4 rows. c1 starts as rank-1, then we drop its priority so c2 takes over.
-    insertChatIn(db, { id: "c1", title: "alpha", priority: 1, updated_at: 100 });
-    insertChatIn(db, { id: "c2", title: "bravo", priority: 2, updated_at: 100 });
-    insertChatIn(db, { id: "c3", title: "charlie", priority: 3, updated_at: 100 });
-    insertChatIn(db, { id: "c4", title: "delta", priority: 4, updated_at: 100 });
+    // Use 4 rows. 1st run drafts top-3: c3(300), c2(200), c1(100). c0 (50) is out.
+    insertChatIn(db, { id: "c0", title: "zeta", updated_at: 50 });
+    insertChatIn(db, { id: "c1", title: "alpha", updated_at: 100 });
+    insertChatIn(db, { id: "c2", title: "bravo", updated_at: 200 });
+    insertChatIn(db, { id: "c3", title: "charlie", updated_at: 300 });
 
     runPreDrafter(db, { now: () => 1000 });
+    // After 1st run: c3/c2/c1 all have updated_at=1000; c0 still at 50.
+    // c0 has no draft_md (was not in top-3).
 
-    // Bump c4 to priority=0. New top-3: c4(0), c1(1), c2(2); c3 falls out.
-    db.run("UPDATE issues SET priority = ?, updated_at = ? WHERE id = ?", [0, 200, "c4"] as never);
+    // Bump c0 above the rest so it enters top-3 and c1 (lowest among 1000s) falls out.
+    // Since c3/c2/c1 all have updated_at=1000 and c0 gets 5000, new top-3 =
+    // c0(5000) + 2 of {c3,c2,c1}. The one at rank-4 gets cleared.
+    db.run("UPDATE issues SET updated_at = ? WHERE id = ?", [5000, "c0"] as never);
 
     const r = runPreDrafter(db, { now: () => 2000 });
-    expect(r.generated).toContain("c4");
-    expect(r.cleared).toContain("c3");
+    // c0 newly entered top-3 (no prior draft) → must be generated
+    expect(r.generated).toContain("c0");
+    // Exactly one row fell out and its draft was cleared
+    expect(r.cleared).toHaveLength(1);
 
-    const c3 = db
+    const fallen = r.cleared[0]!;
+    const row = db
       .query<{ draft_md: string | null }, [string]>(
         "SELECT draft_md FROM issues WHERE id = ?",
       )
-      .get("c3");
-    expect(c3?.draft_md).toBeNull();
+      .get(fallen);
+    expect(row?.draft_md).toBeNull();
   } finally {
     cleanup();
   }
@@ -167,7 +181,7 @@ test("rank change invalidates cache and triggers regeneration", () => {
 test("body change at same rank invalidates cache", () => {
   const { db, cleanup } = freshDb();
   try {
-    insertChatIn(db, { id: "c1", title: "hello", body: "original", priority: 1, updated_at: 100 });
+    insertChatIn(db, { id: "c1", title: "hello", body: "original", updated_at: 100 });
     runPreDrafter(db, { now: () => 1000 });
     const before = db
       .query<{ draft_md: string }, [string]>("SELECT draft_md FROM issues WHERE id = ?")
@@ -196,7 +210,7 @@ test("body change at same rank invalidates cache", () => {
 test("custom generator is honored", () => {
   const { db, cleanup } = freshDb();
   try {
-    insertChatIn(db, { id: "c1", title: "x", priority: 1 });
+    insertChatIn(db, { id: "c1", title: "x" });
     runPreDrafter(db, {
       generator: () => ({ primary: "CUSTOM", alternatives: ["A", "B", "C"] }),
       now: () => 1000,

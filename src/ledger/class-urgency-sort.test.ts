@@ -103,8 +103,11 @@ test("class_unset sinks to bottom within its urgency band", () => {
 });
 
 test("SQL fragment orders rows correctly in a live query", () => {
+  // class/urgency columns exist up through 015; 017 renames them to tier/pool.
+  // Test against the 015 schema so class-urgency-sort's SORT_KEY_SQL is valid.
+  const { migrateUpTo } = require("./migrate");
   const db = new Database(":memory:");
-  migrate(db);
+  migrateUpTo(db, "015_null_claim_on_nonclaim_state");
   const ins = (id: string, klass: string, urgency: string, created_at: number) =>
     db.run(
       `INSERT INTO issues (id, project, title, body_md, type, state, kind, class, urgency, created_at)
