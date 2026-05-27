@@ -12,6 +12,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync, mkdirSync, writeFileSync, copyFileSync, existsSync } from "fs";
 import { createHash } from "crypto";
 import { join, dirname } from "path";
+import { parseSessionJsonl, stripSignatures, stats } from "../src/replay/transcript";
 
 type Row = {
   id: string; project: string; parent_id: string|null; title: string;
@@ -145,41 +146,35 @@ function inferTerminatedAt(workerEvts: Evt[], row: Row): number {
   return ours.length ? ours[ours.length - 1]!.ts : row.updated_at;
 }
 
-function countTranscript(jsonlPath: string): { turns: number; toolCalls: any[]; subagents: any[] } {
-  let turns = 0;
+function countTranscript(jsonlPath: string): { turns: number; toolCalls: any[]; subagents: any[]; compressionRatio: number } {
+  const entries = parseSessionJsonl(jsonlPath);
+  const stripped = stripSignatures(entries);
+  const s = stats(entries);
+  // Reconstruct tool_calls and subagents in the legacy shape for fixture.json compat.
   const toolCalls: any[] = [];
   const subagents: any[] = [];
-  const txt = readFileSync(jsonlPath, "utf8");
-  let seq = 0;
-  for (const line of txt.split("\n")) {
-    if (!line) continue;
-    let m: any;
-    try { m = JSON.parse(line); } catch { continue; }
-    if (m.type === "assistant" && m.message) turns++;
-    const content = m?.message?.content;
-    if (Array.isArray(content)) {
-      for (const c of content) {
-        if (c?.type === "tool_use") {
-          const inputStr = JSON.stringify(c.input ?? {});
-          toolCalls.push({
-            seq: seq++,
-            tool: c.name,
-            input_sha256: sha(inputStr),
-            exit_code: null,
-            elapsed_ms: null,
-          });
-          if (c.name === "Agent" || c.name === "Task") {
-            subagents.push({
-              seq: seq - 1,
-              subagent_type: c.input?.subagent_type ?? null,
-              purpose: (c.input?.description ?? "").slice(0, 120),
-            });
-          }
-        }
-      }
+  for (const entry of stripped) {
+    if (entry.type !== "tool_use") continue;
+    const raw = entry.raw as Record<string, any>;
+    const name = String(raw?.name ?? "");
+    const inputStr = JSON.stringify(raw?.input ?? {});
+    if (name === "Agent" || name === "Task") {
+      subagents.push({
+        seq: toolCalls.length + subagents.length,
+        subagent_type: name,
+        purpose: (raw?.input?.description ?? "").slice(0, 120),
+      });
+    } else {
+      toolCalls.push({
+        seq: toolCalls.length,
+        tool: name,
+        input_sha256: sha(inputStr),
+        exit_code: null,
+        elapsed_ms: null,
+      });
     }
   }
-  return { turns, toolCalls, subagents };
+  return { turns: s.userTurns + s.assistantTurns, toolCalls, subagents, compressionRatio: s.compressionRatio };
 }
 
 function repoSha(): string {
@@ -267,6 +262,7 @@ function buildFixture(row: Row, sessionFile: string): void {
       turn_count: transcript.turns,
       tool_calls: transcript.toolCalls,
       subagent_invocations: transcript.subagents,
+      compression_ratio: transcript.compressionRatio,
     },
     output_diff: {
       ledger_writes: ledgerWrites,
