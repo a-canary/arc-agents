@@ -81,3 +81,19 @@ Stop. Do not guess.
 4. Document the assumption in the row's event log before acting.
 
 Confusion acted on silently compounds.
+
+---
+
+## 7. Insights — morning-brief wiring
+
+Each agent role (`~/vault/agents/<role>/`) carries an `insights/` subdirectory.
+`morning-brief.sh` (cron, 06:30 EDT) reads `insights/<date>.md` from each agent
+and includes "What each agent noticed overnight" in the daily catchup.
+
+Write one `YYYY-MM-DD.md` per session containing 3-10 bullet points: decisions made,
+blockers hit, patterns noticed, CHOICES changes. Max ~500 words. These are
+distillations, not full journals.
+
+The `scaffold/` template in `~/vault/agents/scaffold/insights/` seeds this
+convention for new agent roles. The journalist agent (future) also writes here;
+until then, agents write their own daily insight files manually or via Stop hook.
