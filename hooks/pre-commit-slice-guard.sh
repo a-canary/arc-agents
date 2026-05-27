@@ -6,6 +6,13 @@
 # "docs", "profiles"). Top-level files (CLAUDE.md, CONTEXT.md, etc.) count as
 # area "_root".
 #
+# PAIRED-AREA EXCEPTION: a single thin-vertical slice may legitimately touch two
+# top-level areas when the slice is an endpoint + its companion static asset
+# (e.g. bin/webui-server.ts + assets/webui/hitl.html for a HITL panel). This is
+# an allowed exception: bypass the guard with SLICE_GUARD_SKIP=1 git commit ...
+# The pairing is always endpoint + static served artifact, never two independent
+# concerns. Do not expand this exception to cover unrelated multi-area changes.
+#
 # Bypass: SLICE_GUARD_SKIP=1 git commit ...
 
 set -euo pipefail

@@ -41,6 +41,9 @@ Private wins where both exist. Vault never pushed.
 ### A-0005: arc- Prefix
 User-owned repos prefixed `arc-`. Third-party keeps upstream name.
 
+### A-0006: Factory Optional for Solo-GPU Projects *(candidate — 2026-05-21)*
+Factory (`bin/factory.ts`) is mandatory for multi-worker fanout but optional for projects with `max_concurrency=1` and a single physical resource (e.g. starlight-slm: one Quadro P600). For such projects, the human (or a single cron entry) spawns workers directly; the factory can be `systemctl stop` without losing functionality. Alternative if factory is desired: replace tmux-spawn with `systemd-run --user --scope` (more reliable under systemd-user env than the current `tmux new-session -d` path, which fails silently when the user manager lacks a TTY). *Surfaced when arc-factory.service entered a spawn-loop and was stopped — replacing it was unnecessary for starlight-slm's max_concurrency=1.*
+
 ---
 
 ## Design
@@ -60,6 +63,10 @@ SQL trigger flips dependents `blocked` → `ready` when all blockers merged. Pol
 ### G-0005: One Slice Per Worktree Per Commit
 Thin vertical tracer-bullets. 100k token smart-zone cap per issue.
 
+Per-commit: diff ≤ `SLICE_GUARD_MAX_LINES` (default 2000 modified-line equivalents) AND touches ≤ `SLICE_GUARD_MAX_AREAS` (default 1) top-level path segments.
+
+**Paired-area exception**: a single thin-vertical may legitimately touch two areas when the slice is an endpoint + its companion static asset (e.g. `bin/` + `assets/` for a HITL panel served by `bin/webui-server.ts`). Use `SLICE_GUARD_SKIP=1` to bypass — this is the documented mechanism, not a workaround. The pairing is always endpoint + static served artifact; it does not cover two independent concerns.
+
 ### G-0006: Two-Tier Model Policy
 Opus 4.7 for synthesis ($10/day cap). minimax-m2.7 for impl (unlimited, direct API).
 
@@ -68,6 +75,9 @@ Move files; subagents fix refs.
 
 ### G-0008: TypeScript Default
 TS over Python where reasonable. Bun runtime.
+
+### G-0009: In-Pane Interviewer When No UX Module Alive *(candidate — 2026-05-21)*
+When `arc-ux heartbeat` shows zero alive UX modules (no module heartbeat within liveness threshold), the active claude pane *is* the UX surface. The interviewer writes UX_2 prompts directly to stdout (Director report blocks) and marks deliveries as `delivered_in_pane` rather than queueing them into the broadcast-to-no-one void. Workers still emit `hitl_prompts` rows; the interviewer relays them to the active pane on its next turn. *Surfaced because arc-tui heartbeat was ~24h stale during starlight-slm intake — HITL emit would have queued with zero deliveries; opted for in-pane direct communication instead.*
 
 ### G-0010: Pool-Aware Factory Dispatch
 Factory dispatches on the `pool` column (not `type`). Slot model: 4-any (any pool) + 2-interactive (`pool=interactive` fast-pass). `claimOnce(db, worker, poolFilter?)` in `src/ledger/claim.ts` builds one SQL UPDATE…RETURNING; pool clause is injected only when filter is set. `bin/worker-shell.sh` reads `ARC_CLAIM_POOL` (preferred) or `ARC_CLAIM_TYPE` (deprecated alias) to set the filter.
@@ -137,6 +147,12 @@ Commits use the deployer's configured git user (`git config user.name` / `user.e
 
 ### I-0008: Pre-Commit Diff-Review Gate
 Before `git commit`, the worker spawns an independent subagent (no shared reasoning trace) via the `/diff-review` skill that reviews the finalized diff against the task brief + touched ADRs and returns JSON `{consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts}`. Worker asks bookie to log it as a `kind=diff_review` event. `bin/ledger.ts update --state merged` refuses if no `diff_review` event exists for the issue; bookie mirrors the rule (rule #7). Surprises/gaps must be reconciled in the diff OR addressed in `evidence_md` at merge.
+
+### I-0009: GPU-Claim Mutex in Bookie *(candidate — 2026-05-21)*
+For tasks tagged `gpu-bound` (or with `project` in a configured gpu-projects list), the bookie refuses a `claim` write while any other row matching the same tag/project is in state `wip` or `claimed`. Removes the only reason factory `N>1` is dangerous for single-GPU work like starlight-slm (Quadro P600 4GB). Cheap: one extra `EXISTS` clause in the bookie claim validator. *Surfaced while driving starlight-slm gen4 dispatch — concurrent training would OOM-livelock the box.*
+
+### I-0010: Embed Dispatch Ergonomics in Training Rows *(candidate — 2026-05-21)*
+Rows that gate human-action runs (training dispatch, long-running pipelines, hardware-bound jobs) carry structured fields in `body_md`: `command:`, `expected_wall:`, `gpu_footprint:`, `next_action_owner: human|agent`. Lets a human reading the row decide to dispatch without re-reading NEXT.md or skill docs, and lets the bookie refuse `claim` from an agent worker when `next_action_owner=human`. *Surfaced from the gen4 dispatch row originally framed as needing human action — the row body should make that explicit so agents don't speculatively claim it.*
 
 ### I-0011: triageUnset Auto-Classification
 `triageUnset(db, budget=10)` in `bin/factory.ts` runs each factory tick. Selects up to `budget` ready rows with `agent='agent_unset' OR pool='pool_unset'` ordered by SORT_KEY_SQL. Rules: agent — `source_module='arc-chat'` → `chat`; `kind='prd'` → `director`; else → `developer`. Pool — `tier IN (prod,trust,mvp)` → `build`; else → `explore`. Tier is never touched. Each triaged row gets a `kind='triaged'` event (migration 018). Escape hatch: `ARC_TRIAGE_DISABLE=1`. Budget override: `ARC_TRIAGE_BUDGET=N`.
