@@ -38,7 +38,7 @@ type AgentOverride = Pick<Template, "opening_skills" | "overlays" | "doctrine" |
 
 const AGENT_TABLE: Partial<Record<AgentKey, AgentOverride>> = {
   developer: {
-    opening_skills: ["ke-recall", "to-ledger", "triage-failed"],
+    opening_skills: ["ke-recall", "anti-sycophancy", "to-ledger", "triage-failed"],
     overlays: DEFAULT_OVERLAYS,
     doctrine: DEFAULT_DOCTRINE,
   },
