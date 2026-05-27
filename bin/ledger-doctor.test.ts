@@ -173,15 +173,21 @@ test("doctor: mergeable_worktrees scoped to --worktree-root", async () => {
       await $`git -C ${repo} add f`.quiet();
       await $`git -C ${repo} commit -q -m init`.quiet();
 
-      // Registered worktree INSIDE scan root, HEAD == main → mergeable.
+      // Two worktrees branched off main; then main advances PAST both, so each
+      // HEAD sits strictly behind the tip — the merged shape doctor reaps. This
+      // test isolates the --worktree-root SCOPING rule, so both are equally
+      // mergeable-by-state and only their location should differ.
       const inside = join(root, "arc-agents-inside");
       await $`git -C ${repo} worktree add -q ${inside} -b feat-inside`.quiet();
-
-      // Registered worktree OUTSIDE scan root, also HEAD == main. Must be
-      // excluded from mergeable_worktrees because it's not under --worktree-root.
       const outside = join(outsideRoot, "arc-agents-outside");
       await $`git -C ${repo} worktree add -q ${outside} -b feat-outside`.quiet();
+      // main moves forward; both worktrees are now behind the advanced tip.
+      writeFileSync(join(repo, "g"), "y");
+      await $`git -C ${repo} add g`.quiet();
+      await $`git -C ${repo} commit -q -m advance`.quiet();
 
+      // INSIDE the scan root → mergeable. OUTSIDE → excluded purely by scoping,
+      // even though its state would otherwise qualify.
       const out = await doctor(db, root);
       expect(out.worktree_scan_error).toBeNull();
       const paths = out.mergeable_worktrees.map((w) => w.path);
@@ -310,15 +316,30 @@ test("doctor --strict: mergeable_worktrees alone does NOT trigger non-zero exit"
       await $`git -C ${repo} add f`.quiet();
       await $`git -C ${repo} commit -q -m init`.quiet();
 
-      // Registered worktree at HEAD == main → mergeable, but tracked by git
-      // so NOT an untracked dir.
+      // A genuinely-merged worktree: branch off main, then advance main PAST it
+      // so the worktree's HEAD sits STRICTLY behind main's tip. Only this shape
+      // is mergeable — doctor reaps worktrees whose work already landed. (Tracked
+      // by git, so NOT an untracked dir.)
       const inside = join(root, "arc-agents-mergeable");
       await $`git -C ${repo} worktree add -q ${inside} -b feat-mergeable`.quiet();
+      // main moves forward; the worktree is now behind the advanced tip.
+      writeFileSync(join(repo, "g"), "y");
+      await $`git -C ${repo} add g`.quiet();
+      await $`git -C ${repo} commit -q -m advance`.quiet();
+
+      // A FRESH worktree at HEAD == main's tip must NOT be flagged mergeable —
+      // it has produced nothing to merge, and reaping it (under ARC_AUTO_PRUNE)
+      // would delete a just-booted worker's checkout out from under it. This is
+      // the exact regression the strict-ancestor guard prevents.
+      const fresh = join(root, "arc-agents-fresh");
+      await $`git -C ${repo} worktree add -q ${fresh} -b feat-fresh`.quiet();
 
       const r = await doctorExit(db, root, ["--strict"]);
       expect(r.exitCode).toBe(0);
       const out = JSON.parse(r.stdout);
-      expect(out.mergeable_worktrees.length).toBeGreaterThan(0);
+      const mergeablePaths = out.mergeable_worktrees.map((w: { path: string }) => w.path);
+      expect(mergeablePaths).toContain(inside);
+      expect(mergeablePaths).not.toContain(fresh);
       expect(out.untracked_worktree_dirs).toEqual([]);
       expect(out.phantom_claims).toEqual([]);
       expect(out.stale_claims).toEqual([]);

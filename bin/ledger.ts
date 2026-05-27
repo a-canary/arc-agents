@@ -982,16 +982,35 @@ switch (cmd) {
             });
           untrackedWorktreeDirs = fullDirs.filter((p) => !registered.has(p));
 
-          // Mergeable: registered worktree under worktreeRoot whose HEAD is an
-          // ancestor of main. Scoping to worktreeRoot keeps results aligned with
+          // Mergeable: registered worktree under worktreeRoot whose HEAD is a
+          // STRICT ancestor of main — reachable from main's tip AND not equal to
+          // it. The strictness matters: a freshly-created `worktree add … main`
+          // has HEAD == main's tip, which is trivially its own ancestor, so a
+          // plain is-ancestor check flags every just-booted worker worktree as
+          // "done" and (under ARC_AUTO_PRUNE) deletes it out from under the live
+          // worker. A merged worktree, by contrast, sits strictly behind main's
+          // advanced tip (main moved on past it). HEAD != main-tip cleanly
+          // separates merged (reap) from fresh/untouched (leave alone).
+          // Scoping to worktreeRoot keeps results aligned with
           // untrackedWorktreeDirs (same scan window) and skips the main checkout
           // + sibling worktrees outside the operator's chosen root.
           const rootPrefix = worktreeRoot.replace(/\/+$/, "") + "/";
+          // Resolve main's tip in the SAME git dir the worktrees belong to
+          // (anchor on `sample`, a known worktree of that repo). A bare
+          // `git rev-parse main` would resolve main in the doctor process's
+          // own cwd — a different repo entirely — yielding a SHA that never
+          // matches any scanned HEAD and silently disabling the guard.
+          const mainTip = spawnSync("git", ["-C", sample, "rev-parse", "main"], { encoding: "utf8" });
+          const mainTipSha = mainTip.status === 0 ? mainTip.stdout.trim() : "";
           for (const [path, branch] of registered) {
             if (!path.startsWith(rootPrefix)) continue;
             const head = spawnSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" });
             if (head.status !== 0) continue;
             const headSha = head.stdout.trim();
+            // Fresh/untouched worktree (HEAD still at main's tip) has produced
+            // nothing to merge — never reap it. Only a worktree whose HEAD has
+            // diverged-then-landed (strictly behind the advanced tip) is mergeable.
+            if (!mainTipSha || headSha === mainTipSha) continue;
             const ancestor = spawnSync(
               "git",
               ["-C", path, "merge-base", "--is-ancestor", headSha, "main"],
