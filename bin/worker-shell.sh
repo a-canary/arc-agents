@@ -28,6 +28,37 @@ reconcile_decision() {
   fi
 }
 
+# Per-worker logfile for the headless child's stdout/stderr (Gap 1: M-0002
+# observability — a stalled headless worker otherwise leaves no trail, since it
+# inherits only the tmux pane TTY). Pure: $1=worker name → path on stdout.
+# Honors XDG_CACHE_HOME, falls back to ~/.cache.
+worker_log_path() {
+  local cache="${XDG_CACHE_HOME:-}"
+  [ -z "$cache" ] && cache="${HOME}/.cache"
+  echo "${cache}/arc-workers/${1}.log"
+}
+
+# Wall-clock stall bound (seconds) for the headless child (Gap 2). pi has no
+# read/stall timeout, so a dropped upstream LLM stream epoll-hangs it forever;
+# wrapping it in `timeout` makes a wedged worker self-terminate → the post-exit
+# reconciler fires → the pool slot frees, instead of squatting until the
+# factory's 4hr reap. Pure: echoes the effective timeout on stdout.
+#
+# ARC_WORKER_STALL_TIMEOUT overrides the default, but ONLY if it's a positive
+# integer — a garbage value must fall back to the default rather than silently
+# disabling the guard (a bad arg makes `timeout` error out and skip the wrap).
+# Default 1800s: comfortably over a slow-but-live turn, far under the 14400s
+# reap so the watchdog (not the reap) frees a hung slot.
+stall_timeout_secs() {
+  local default=1800
+  local override="${ARC_WORKER_STALL_TIMEOUT:-}"
+  if [[ "$override" =~ ^[1-9][0-9]*$ ]]; then
+    echo "$override"
+  else
+    echo "$default"
+  fi
+}
+
 # Sourced by the test harness — define functions, then stop before doing any
 # real work (claim, exec, ledger writes). Production never sets this.
 if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
@@ -178,9 +209,28 @@ if [[ "$HEADLESS" != "1" ]]; then
 fi
 
 # Headless path — run as a child, capture rc, then reconcile the row.
+#
+# Two guards the interactive path doesn't need (it execs claude, which owns the
+# TTY and has its own session timeout + bookie):
+#   (1) Log capture (Gap 1): tee the child's combined stdout/stderr to a
+#       per-worker logfile so a stalled headless worker leaves a forensic trail.
+#   (2) Stall watchdog (Gap 2): wrap the child in `timeout` so a `pi` epoll-hung
+#       on a dropped upstream stream self-terminates. `timeout` SIGTERMs at the
+#       bound, then SIGKILLs after a 30s grace (-k) in case the hung child
+#       ignores SIGTERM. On expiry `timeout` exits 124 — a non-zero rc that
+#       flows through reconcile_decision exactly like any crash (commits→review,
+#       none→failed), so no special-casing is needed downstream.
+LOG_FILE="$(worker_log_path "$WORKER")"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+STALL_SECS="$(stall_timeout_secs)"
 set +e
-"${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
-AGENT_RC=$?
+# `timeout` runs the child in its own process group and kills the group on
+# expiry. PIPESTATUS[0] is the child/timeout rc (not tee's), so a full disk
+# writing the log can't mask the real exit code. `2>&1 |` merges stderr so the
+# log is the complete transcript a debugger would want.
+timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1 \
+  | tee "$LOG_FILE"
+AGENT_RC=${PIPESTATUS[0]}
 set -e
 
 # Did the agent already advance the row past the claim? If so, respect it.
