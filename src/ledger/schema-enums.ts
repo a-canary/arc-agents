@@ -1,8 +1,7 @@
 // ADR 0005 — single source of truth for the (class, urgency) enum pair.
-// Both `class-urgency-sort.ts` and `bookie-validator.ts` re-export from here so
-// the SQL CHECK list, the runtime validators, and the comparator's RANK maps
-// cannot drift. Migration 011 also generates its CHECK lists from these arrays
-// (see `migrate.ts` 011_class_urgency_schema).
+// `bookie-validator.ts` re-exports from here so the SQL CHECK list and the
+// runtime validators cannot drift. Migration 011 also generates its CHECK
+// lists from these arrays (see `migrate.ts` 011_class_urgency_schema).
 
 export const CLASS_VALUES = [
   "BUG",

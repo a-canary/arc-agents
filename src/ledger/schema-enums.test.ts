@@ -7,24 +7,18 @@ import {
   AGENT_VALUES,
 } from "./schema-enums";
 import {
-  CLASS_VALUES as CUS_CLASS,
-  URGENCY_VALUES as CUS_URGENCY,
-} from "./class-urgency-sort";
-import {
   CLASS_VALUES as BV_CLASS,
   URGENCY_VALUES as BV_URGENCY,
 } from "./bookie-validator";
 
-// Drift-guard. ADR 0005 enum is owned by schema-enums.ts; both adapter
-// modules must re-export the SAME array object — not a structural copy —
-// so a future edit to one site cannot silently diverge.
-test("CLASS_VALUES is referentially identical across all three modules", () => {
-  expect(CUS_CLASS).toBe(SE_CLASS);
+// Drift-guard. ADR 0005 enum is owned by schema-enums.ts; the
+// bookie-validator adapter must re-export the SAME array object —
+// not a structural copy — so a future edit to one site cannot silently diverge.
+test("CLASS_VALUES is referentially identical across schema-enums and bookie-validator", () => {
   expect(BV_CLASS).toBe(SE_CLASS);
 });
 
-test("URGENCY_VALUES is referentially identical across all three modules", () => {
-  expect(CUS_URGENCY).toBe(SE_URGENCY);
+test("URGENCY_VALUES is referentially identical across schema-enums and bookie-validator", () => {
   expect(BV_URGENCY).toBe(SE_URGENCY);
 });
 
