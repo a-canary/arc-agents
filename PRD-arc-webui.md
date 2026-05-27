@@ -85,7 +85,7 @@ Additive columns to `issues`:
 - `priority INT NOT NULL DEFAULT 0` — sort key for ready queue
 - `paused INT NOT NULL DEFAULT 0` — boolean; paused rows hidden from DAG, skipped by waiter
 - `deferred_at INT` — unix ts of last defer; presence indicates deferred state
-- `artifact_dir TEXT` — filesystem path to per-row artifacts (charts, screenshots, prototypes, drafts)
+- `artifact_dir TEXT` — optional pointer to module-internal rendered byproducts directory; canonical artifact source is content-addressable vault path per ADR 0006 §2
 - `draft_md TEXT` — interviewer-cached draft for chat_in rows in current top-3
 
 `parent_id` already exists per slice-tavern request; no change required.
@@ -122,11 +122,12 @@ Applies pause/defer rules to ready set. `paused=1` hidden. Deferred rows scored 
 - **Defer:** `deferred_at=now()`, `priority -= 100`. Row stays visible in DAG marked as deferred. Waiter sees it as lower priority. If new tasks arrive at `priority=0`, deferred-at -100 sits below them; as more arrive, eventually deferred row resurfaces if no normal-priority work remains.
 
 ### Pre-draft policy
-- Interviewer agent loops: on each tick, identify top-3 chat_in / encounter_reply rows by priority. For each row missing `draft_md` (or with stale draft after rank change), generate draft + 2–3 alternatives. Write to `draft_md` and `artifact_dir/alternatives.json`.
+- Interviewer agent loops: on each tick, identify top-3 chat_in / encounter_reply rows by priority. For each row missing `draft_md` (or with stale draft after rank change), generate draft + 2–3 alternatives. Write to `draft_md` only (alternatives are inline in the `draft_md` JSON payload — no separate file I/O). S8 (pre-drafter) writes nothing to the filesystem for alternatives.
 - On user submitting a reply: write `chat_out` row, mark source row resolved, interviewer drafts top-4 (which becomes new top-3) on next tick.
 
 ### Artifact storage
-- Per-row `artifact_dir`: `~/vault/arc-webui/artifacts/<row-id>/`.
+- Artifact bytes live at `~/vault/artifacts/<sha256>.<ext>` (content-addressable) per ADR 0006 §2. Artifacts >4KB are stored in the vault; small inline data (alternatives JSON, etc.) stays in `draft_md`.
+- `artifact_dir` column: optional pointer to a directory of rendered artifact byproducts (e.g. rasterized PNGs from a mermaid source). This is module-internal; the canonical source is the content-addressable vault path in `payload.artifacts[]`.
 - Contents: free-form files (PNG, MP4, MD, HTML, JSON). UI renders by extension.
 - Galleries with >10 files lazy-load thumbnails first, full content on tap.
 

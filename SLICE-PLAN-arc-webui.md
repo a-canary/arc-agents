@@ -12,7 +12,7 @@ AFK = artifact-keyed DAG of ledger state with tech-tree navigation.
 - **Drafts:** pre-draft top-3 chat_in; cache on row; regenerate on rank change
 - **Defer:** rejoin queue at `priority - 100`
 - **Pause:** `state=paused`, hidden from DAG, waiter skips
-- **Artifacts:** filepath on row; viewable in arc-webui
+- **Artifacts:** content-addressable per ADR 0006 (`~/vault/artifacts/<sha256>.<ext>`); `artifact_dir` column is optional UI convenience only (rendered byproducts, not canonical source)
 - **DAG window:** in-flight + hitl_blocked + pending + last 10 completed (or 1-deep completed parents of in-flight)
 - **Layout:** Sugiyama-style layered, in-flight center, completed left, pending right; cache, invalidate on topology change
 - **Hover:** 10-word status
