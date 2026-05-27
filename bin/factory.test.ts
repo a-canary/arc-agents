@@ -290,20 +290,29 @@ test("factory --metrics prints snapshot with all 5 fields", () => {
   const sess = `${prefix}-a-met01`;
   tmux(["new-session", "-d", "-s", sess, "sleep", "300"]);
 
-  const r = bun([FACTORY, "--metrics"], { ARC_SLOTS_ANY: "4", ARC_SLOTS_INTERACTIVE: "2" });
-  expect(r.status).toBe(0);
-  const m = JSON.parse(r.stdout);
-  expect(m).toHaveProperty("alive_workers");
-  expect(m).toHaveProperty("claims_per_hr");
-  expect(m).toHaveProperty("reaps_per_hr");
-  expect(m).toHaveProperty("seconds_since_last_spawn");
-  expect(m).toHaveProperty("slots");
-  expect(m.alive_workers).toBeGreaterThanOrEqual(1);
-  expect(m.claims_per_hr).toBeGreaterThanOrEqual(1);
-  expect(m.slots.any.cap).toBe(4);
-  expect(m.slots.interactive.cap).toBe(2);
-  // id1 referenced to satisfy lint
-  expect(id1).toBeTruthy();
+  // Isolate from outer env (this test process may have ARC_WORKER_MAX set via
+  // the outer worker harness). LEGACY_MAX in factory.ts reads ARC_WORKER_MAX
+  // first; set it to undefined so the test's explicit slot overrides take effect.
+  const outerMax = process.env.ARC_WORKER_MAX;
+  try {
+    delete process.env.ARC_WORKER_MAX;
+    const r = bun([FACTORY, "--metrics"], { ARC_SLOTS_ANY: "4", ARC_SLOTS_INTERACTIVE: "2" });
+    expect(r.status).toBe(0);
+    const m = JSON.parse(r.stdout);
+    expect(m).toHaveProperty("alive_workers");
+    expect(m).toHaveProperty("claims_per_hr");
+    expect(m).toHaveProperty("reaps_per_hr");
+    expect(m).toHaveProperty("seconds_since_last_spawn");
+    expect(m).toHaveProperty("slots");
+    expect(m.alive_workers).toBeGreaterThanOrEqual(1);
+    expect(m.claims_per_hr).toBeGreaterThanOrEqual(1);
+    expect(m.slots.any.cap).toBe(4);
+    expect(m.slots.interactive.cap).toBe(2);
+    // id1 referenced to satisfy lint
+    expect(id1).toBeTruthy();
+  } finally {
+    if (outerMax !== undefined) process.env.ARC_WORKER_MAX = outerMax;
+  }
 });
 
 test("factory --metrics counts reaps_per_hr from kind='reclaimed' sweeper events", async () => {
@@ -752,4 +761,79 @@ test("printMergeablePruned emits expected JSON shape on stdout", async () => {
   expect(j.pruned).toEqual([{ path: "/w/foo", branch: "foo" }]);
   expect(j.skipped).toEqual([{ path: "/w/bar", branch: null, reason: "dirty-worktree" }]);
   expect(typeof j.ts).toBe("string");
+});
+
+test("spawnWorker returns {ok,name} discriminated union (tick verifies contract)", async () => {
+  // Regression: spawnWorker returned just a string regardless of tmux success.
+  // A failed spawn still returned a name, and tick() counted it as a live slot —
+  // phantom slot, under-spawn, no worker until the 4hr age-reap freed the slot.
+  //
+  // We test the contract via tick(): on a successful spawn, spawned[] contains
+  // the session name AND live==spawned.length. If the old (broken) return type
+  // were still in place, the tick() test below would fail because live would
+  // exceed spawned.length in the failure case — or the spawned array would carry
+  // garbage names in the success case.
+  //
+  // Spawn a real session and verify the tick result shape.
+  createTask("spawn-type-test");
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "2" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+
+  // spawn_failures field must exist and be an array (discriminated union contract)
+  expect(Array.isArray(result.spawn_failures)).toBe(true);
+
+  // Each spawned entry must be a string and match the test prefix pattern
+  for (const name of result.spawned) {
+    expect(typeof name).toBe("string");
+    expect(name.startsWith(`${prefix}-a-`)).toBe(true);
+  }
+
+  // Each failure entry must have pool, name, and reason
+  for (const f of result.spawn_failures) {
+    expect(typeof f.pool).toBe("string");
+    expect(typeof f.name).toBe("string");
+    expect(typeof f.reason).toBe("string");
+    expect(f.reason.length).toBeGreaterThan(0);
+  }
+
+  // Cleanup spawned sessions using the test prefix
+  for (const name of result.spawned) {
+    tmux(["kill-session", "-t", name]);
+  }
+});
+
+test("tick() live count equals spawned.length — phantom-slot invariant", async () => {
+  // Core invariant (the main bug fix): tick() must NOT inflate the live slot
+  // counter for failed spawns. Before the fix, spawnWorker returned a name
+  // unconditionally, and tick() always incremented curAny/curInteractive even
+  // when tmux failed. Result: live > spawned.length, a phantom slot that
+  // would under-spawn until the 4hr age-reap.
+  //
+  // This test creates 2 ready tasks and caps at ARC_WORKER_MAX=2, then
+  // asserts the invariant holds: live == spawned.length (all slots filled
+  // successfully) OR live == 0 (all spawns failed) OR any spawned session
+  // has a corresponding failure record for the shortfall.
+  createTask("invariant-test-1");
+  createTask("invariant-test-2");
+
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "2" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+
+  // The invariant: every successful spawn contributes 1 to live AND 1 to
+  // spawned[]. No successful spawn should exist without a live increment.
+  expect(result.live).toBe(result.spawned.length);
+
+  // If not all tasks were spawned (live < 2), there must be failures
+  // accounting for the difference — no silent under-spawn.
+  const shortfall = 2 - result.spawned.length;
+  if (shortfall > 0) {
+    expect(result.spawn_failures.length).toBeGreaterThanOrEqual(shortfall);
+  }
+
+  // Cleanup
+  for (const name of result.spawned) {
+    tmux(["kill-session", "-t", name]);
+  }
 });

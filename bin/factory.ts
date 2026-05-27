@@ -303,7 +303,13 @@ function shortId(): string {
   return Math.random().toString(36).slice(2, 8);
 }
 
-export function spawnWorker(pool: "any" | "interactive" = "any"): string {
+// Return type reflects spawn outcome so the caller can decide whether to count
+// the slot as live. A failed spawn leaves the slot free — the while loop will
+// retry it on the next tick (or the one after that), instead of silently
+// under-spawning until the 4hr age-reap frees the phantom slot.
+export type SpawnResult = { ok: true; name: string } | { ok: false; name: string; reason: string };
+
+export function spawnWorker(pool: "any" | "interactive" = "any"): SpawnResult {
   // Embed pool in session name so listWorkers can re-derive pool membership without
   // a sidecar registry. `-i-` = interactive fast-pass; `-a-` = any pool.
   const infix = pool === "interactive" ? "i" : "a";
@@ -317,8 +323,15 @@ export function spawnWorker(pool: "any" | "interactive" = "any"): string {
   const env = pool === "interactive"
     ? { ...process.env, ARC_CLAIM_POOL: "interactive", ARC_CLAIM_TYPE: "interactive" }
     : process.env;
-  spawnSync("tmux", ["new-session", "-d", "-s", name, "bash", SHELL, name], { env });
-  return name;
+  const r = spawnSync("tmux", ["new-session", "-d", "-s", name, "bash", SHELL, name], { env });
+  if (r.status === 0) return { ok: true, name };
+  // Non-zero tmux exit — do NOT return a fake name and do NOT count this slot as live.
+  // Surface the failure so the caller can retry on the next tick instead of waiting
+  // for the 4hr age-reap. Common failure modes: no tmux server (not running / socket
+  // unreachable under systemd), session name collision (shouldn't happen with shortId),
+  // permission denied.
+  const err = (String(r.stderr ?? "") + String(r.stdout ?? "")).trim().slice(0, 200);
+  return { ok: false, name, reason: err || `tmux exit ${r.status}` };
 }
 
 export type TickResult = {
@@ -330,6 +343,7 @@ export type TickResult = {
   ready: number;
   unclaimable_ready: number;
   spawned: string[];
+  spawn_failures: { pool: string; name: string; reason: string }[];
   triaged: string[];
   pools: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
 };
@@ -373,28 +387,44 @@ export function tick(): TickResult {
   const nonInteractiveReady = allReady.filter((r) => !interactiveIds.has(r.id));
 
   const spawned: string[] = [];
+  const spawnFailures: { pool: string; name: string; reason: string }[] = [];
   let curInteractive = liveInteractive;
   let curAny = liveAny;
 
   // Phase 1: fill fast-pass slots with interactive work.
   let iIdx = 0;
   while (curInteractive < SLOTS_INTERACTIVE && iIdx < interactiveReady.length) {
-    spawned.push(spawnWorker("interactive"));
-    curInteractive++;
+    const result = spawnWorker("interactive");
+    if (result.ok) {
+      spawned.push(result.name);
+      curInteractive++;
+    } else {
+      spawnFailures.push({ pool: "interactive", name: result.name, reason: result.reason });
+    }
     iIdx++;
   }
 
   // Phase 2: fill general slots — interactive overflow first (still highest priority),
   // then non-interactive in priority order.
   while (curAny < SLOTS_ANY && iIdx < interactiveReady.length) {
-    spawned.push(spawnWorker("any"));
-    curAny++;
+    const result = spawnWorker("any");
+    if (result.ok) {
+      spawned.push(result.name);
+      curAny++;
+    } else {
+      spawnFailures.push({ pool: "any", name: result.name, reason: result.reason });
+    }
     iIdx++;
   }
   let nIdx = 0;
   while (curAny < SLOTS_ANY && nIdx < nonInteractiveReady.length) {
-    spawned.push(spawnWorker("any"));
-    curAny++;
+    const result = spawnWorker("any");
+    if (result.ok) {
+      spawned.push(result.name);
+      curAny++;
+    } else {
+      spawnFailures.push({ pool: "any", name: result.name, reason: result.reason });
+    }
     nIdx++;
   }
 
@@ -407,6 +437,7 @@ export function tick(): TickResult {
     ready: allReady.length,
     unclaimable_ready: unclaimable,
     spawned,
+    spawn_failures: spawnFailures,
     triaged,
     pools: {
       any: { live: curAny, cap: SLOTS_ANY },
@@ -695,6 +726,8 @@ async function loop(): Promise<void> {
   let lastOrphansLog = 0;
   let lastMergeable = 0;
   let lastMergeableLog = 0;
+  let lastSpawnFailures = 0;
+  let lastSpawnFailuresLog = 0;
   // eslint-disable-next-line no-constant-condition
   while (true) {
     try {
@@ -704,6 +737,32 @@ async function loop(): Promise<void> {
         console.log(JSON.stringify({ ts: new Date().toISOString(), ...r }));
       }
       const now = Math.floor(Date.now() / 1000);
+
+      // spawn_failures warn: when tmux new-session fails the factory silently
+      // under-spawns (phantom slot, not counted by listWorkers). Emit on edge
+      // (0→N) and every 5 min while failures persist so the operator sees the
+      // gap immediately and on every quiet tick without being spammed.
+      const sfEdge = r.spawn_failures.length > 0 && lastSpawnFailures === 0;
+      const sfHeartbeat = r.spawn_failures.length > 0 && now - lastSpawnFailuresLog >= 300;
+      if (sfEdge || sfHeartbeat) {
+        console.log(JSON.stringify({
+          ts: new Date(now * 1000).toISOString(),
+          warn: "spawn_failures",
+          count: r.spawn_failures.length,
+          failures: r.spawn_failures,
+          hint: "tmux new-session failed — factory under-spawning until 4hr age-reap. Check tmux server is running: tmux list-sessions",
+        }));
+        lastSpawnFailuresLog = now;
+      }
+      if (r.spawn_failures.length === 0 && lastSpawnFailures > 0) {
+        console.log(JSON.stringify({
+          ts: new Date(now * 1000).toISOString(),
+          info: "spawn_failures_cleared",
+          prior_count: lastSpawnFailures,
+        }));
+      }
+      lastSpawnFailures = r.spawn_failures.length;
+
       const edge = r.unclaimable_ready > 0 && lastUnclaimable === 0;
       const heartbeat = r.unclaimable_ready > 0 && now - lastUnclaimableLog >= 300;
       if (edge || heartbeat) {
@@ -716,6 +775,12 @@ async function loop(): Promise<void> {
         lastUnclaimableLog = now;
       }
       lastUnclaimable = r.unclaimable_ready;
+
+      // Also emit spawn_failures in the verbose tick line so the JSON blob carries
+      // the full state even on non-edge ticks (operators watching the JSON stream).
+      if (r.spawn_failures.length > 0) {
+        console.log(JSON.stringify({ ts: new Date(now * 1000).toISOString(), spawn_failures: r.spawn_failures }));
+      }
 
       const orph = auditOrphans();
       const orphEdge = orph.pids.length > 0 && lastOrphans === 0;
