@@ -45,6 +45,43 @@ test("loadConfig throws when an alias command is missing {prompt}", () => {
   }
 });
 
+test("loadConfig rejects a `claude --model` alias naming a non-Claude (provider) model", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const bad = {
+      exec_cli_alias: {
+        // The exact pre-b66589e regression: a provider model routed through
+        // interactive `claude`, which dies on spawn ("model may not exist").
+        "minimax-build": "claude --model minimax-m2.7 --effort high {prompt}",
+      },
+      pool_caps: { default: 4 },
+      default_alias: "minimax-build",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
+    expect(() => loadConfig(dir)).toThrow("not a known Claude model");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig allows provider models via `pi -p --provider` and real claude models", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const ok = {
+      exec_cli_alias: {
+        "opus-max": "claude --model opus --effort max {prompt}",
+        "minimax-build": "pi -p --provider minimax --model MiniMax-M2.7 {prompt}",
+      },
+      pool_caps: { default: 4 },
+      default_alias: "opus-max",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(ok));
+    expect(() => loadConfig(dir)).not.toThrow();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("resolveAlias throws when default_alias is missing from map", () => {
   const cfg = {
     exec_cli_alias: { "opus-max": "claude --model opus {prompt}" },

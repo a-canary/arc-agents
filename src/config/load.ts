@@ -19,8 +19,28 @@ export const ConfigSchema = z
           message: `alias command must contain {prompt} exactly once (found ${count}): "${cmd}"`,
         });
       }
+      // Guard the worker-spawn engine discriminator (worker-shell.sh): a
+      // template invoking `claude` is run interactively, so its `--model` must
+      // be a real Claude model alias. Routing a provider model (e.g. minimax)
+      // through `claude --model` makes every spawned worker die on arrival
+      // ("model may not exist") with no other guard — provider models belong
+      // behind `pi -p --provider`. Surfaced by the dream failure-mining run
+      // over 2026-05-27 worker sessions (5/7 dead on `claude --model minimax-m2.7`).
+      const claudeModel = cmd.match(/^claude\b[^]*?--model[= ]+(\S+)/)?.[1];
+      if (claudeModel && !CLAUDE_MODELS.has(claudeModel)) {
+        ctx.addIssue({
+          code: z.ZodIssueCode.custom,
+          path: ["exec_cli_alias", alias],
+          message: `alias "${alias}" runs \`claude --model ${claudeModel}\`, which is not a known Claude model (${[...CLAUDE_MODELS].join(", ")}). Provider models must run via \`pi -p --provider …\`, not \`claude --model\`.`,
+        });
+      }
     }
   });
+
+// Known Claude model aliases accepted by `claude --model`. A `claude` exec
+// alias may only name one of these; anything else (provider models, typos)
+// must route through `pi -p --provider`.
+const CLAUDE_MODELS = new Set(["opus", "sonnet", "haiku"]);
 
 export type Config = z.infer<typeof ConfigSchema>;
 
