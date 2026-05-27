@@ -6,6 +6,9 @@ node_modules/
 *.tsbuildinfo
 .DS_Store
 bun.lockb
+__pycache__/
+*.pyc
+*.pyo
 
 # Claude session/state — never commit
 .claude/worktrees/
