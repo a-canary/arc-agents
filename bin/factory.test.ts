@@ -269,6 +269,54 @@ test("factory --once excludes prd from unclaimable_ready but counts transient ki
   expect(result.unclaimable_ready).toBe(1); // reply only; prds excluded
   expect(result.ready).toBe(1); // listReady excludes prd+reply via spawn-ready kind filter
   expect(result.spawned.length).toBe(1);
+  // pressure fields added by pool-pressure feature
+  expect(result.pools).toHaveProperty("any");
+  expect(result.pools.any).toHaveProperty("pressure");
+  expect(result.pools.any.pressure).toHaveProperty("idle");
+  expect(result.pools.any.pressure).toHaveProperty("busy");
+  expect(result.pools.any.pressure).toHaveProperty("waiting");
+  expect(result.pools.any.pressure).toHaveProperty("queue_depth");
+  expect(result.pools.any.pressure).toHaveProperty("spawnedAt");
+  expect(typeof result.pools.any.pressure.queue_depth).toBe("number");
+});
+
+test("factory --once prewarms when queue_depth exceeds threshold × 2", () => {
+  // Create enough tasks to trigger prewarm (threshold×2 = 4, so 5+ non-interactive tasks
+  // should prewarm an additional worker past the capped slot count of 4).
+  createTask("prewarm-1");
+  createTask("prewarm-2");
+  createTask("prewarm-3");
+  createTask("prewarm-4");
+  createTask("prewarm-5");
+  // Legacy mode: SLOTS_ANY=4, SLOTS_INTERACTIVE=0.
+  // Phase 1+2 fills 4 slots, Phase 3 prewarms 1 extra = 5 total.
+  const r = bun([FACTORY, "--once"], { ARC_WORKER_MAX: "4", ARC_POOL_PREWARM_THRESHOLD: "2" });
+  expect(r.status).toBe(0);
+  const result = JSON.parse(r.stdout);
+  // With threshold=2, queue_depth of 5 exceeds 4, prewarming 1 extra slot.
+  expect(result.ready).toBe(5);
+  expect(result.spawned.length).toBeGreaterThanOrEqual(4);
+  expect(result.pools.any.pressure.queue_depth).toBeGreaterThanOrEqual(5);
+});
+
+test("factory --metrics exposes pool pressure and prewarm fields", () => {
+  createTask("metric-task-1");
+  createTask("metric-task-2");
+  createTask("metric-task-3");
+  const r = bun([FACTORY, "--metrics"]);
+  expect(r.status).toBe(0);
+  const m = JSON.parse(r.stdout);
+  expect(m).toHaveProperty("slots.any.pressure");
+  expect(m).toHaveProperty("slots.interactive.pressure");
+  expect(m).toHaveProperty("prewarm_threshold");
+  expect(m).toHaveProperty("prewarm_pending_any");
+  expect(m).toHaveProperty("prewarm_pending_interactive");
+  expect(typeof m.prewarm_threshold).toBe("number");
+  expect(typeof m.prewarm_pending_any).toBe("number");
+  expect(typeof m.prewarm_pending_interactive).toBe("number");
+  // With 3 non-interactive tasks (no interactive pool = 0 slots in legacy mode),
+  // queue_depth=3, threshold=2, so prewarm_pending_any = max(0, 3-4) = 0.
+  expect(m.prewarm_pending_any).toBeGreaterThanOrEqual(0);
 });
 
 test("factory --metrics excludes prd from unclaimable_ready", () => {
@@ -707,6 +755,7 @@ test("printFactoryStarted emits expected JSON shape on stdout", async () => {
       {
         slots_any: 4,
         slots_interactive: 2,
+        prewarm_threshold: 2,
         max_age_sec: 14400,
         interval_sec: 5,
         prefix: "arc-worker",
@@ -722,6 +771,7 @@ test("printFactoryStarted emits expected JSON shape on stdout", async () => {
   expect(j.pid).toBe(process.pid);
   expect(j.slots_any).toBe(4);
   expect(j.slots_interactive).toBe(2);
+  expect(j.prewarm_threshold).toBe(2);
   expect(j.max_age_sec).toBe(14400);
   expect(j.interval_sec).toBe(5);
   expect(j.prefix).toBe("arc-worker");

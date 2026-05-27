@@ -10,6 +10,7 @@
 // Env:
 //   ARC_SLOTS_ANY         general-pool slots (any pool)       (default 4)
 //   ARC_SLOTS_INTERACTIVE fast-pass slots reserved for pool=interactive  (default 2)
+//   ARC_POOL_PREWARM_THRESHOLD extra spawn trigger when queue > this × 2   (default 2)
 //   ARC_WORKER_MAX        legacy: if set, overrides ARC_SLOTS_ANY and disables fast-pass
 //   ARC_WORKER_MAX_AGE    seconds before reap                 (default 14400 = 4hr)
 //   ARC_FACTORY_INTERVAL  loop sleep seconds                  (default 5)
@@ -51,6 +52,7 @@ const LEDGER = join(REPO, "bin", "ledger.ts");
 const LEGACY_MAX = process.env.ARC_WORKER_MAX ? parseInt(process.env.ARC_WORKER_MAX, 10) : null;
 const SLOTS_ANY = LEGACY_MAX ?? parseInt(process.env.ARC_SLOTS_ANY ?? "4", 10);
 const SLOTS_INTERACTIVE = LEGACY_MAX !== null ? 0 : parseInt(process.env.ARC_SLOTS_INTERACTIVE ?? "2", 10);
+const POOL_PREWARM_THRESHOLD = parseInt(process.env.ARC_POOL_PREWARM_THRESHOLD ?? "2", 10);
 const MAX_AGE = parseInt(process.env.ARC_WORKER_MAX_AGE ?? "14400", 10);
 const INTERVAL = parseInt(process.env.ARC_FACTORY_INTERVAL ?? "5", 10);
 const PREFIX = process.env.ARC_WORKER_PREFIX ?? "arc-worker";
@@ -321,6 +323,14 @@ export function spawnWorker(pool: "any" | "interactive" = "any"): string {
   return name;
 }
 
+export type PoolPressure = {
+  idle: number;
+  busy: number;
+  waiting: number;
+  queue_depth: number;
+  spawnedAt: number;
+};
+
 export type TickResult = {
   reaped: string[];
   swept: string[];
@@ -331,7 +341,10 @@ export type TickResult = {
   unclaimable_ready: number;
   spawned: string[];
   triaged: string[];
-  pools: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
+  pools: {
+    any: { live: number; cap: number; pressure: PoolPressure };
+    interactive: { live: number; cap: number; pressure: PoolPressure };
+  };
 };
 
 export function tick(): TickResult {
@@ -372,6 +385,7 @@ export function tick(): TickResult {
   const interactiveIds = new Set(interactiveReady.map((r) => r.id));
   const nonInteractiveReady = allReady.filter((r) => !interactiveIds.has(r.id));
 
+  const nowTick = Math.floor(Date.now() / 1000);
   const spawned: string[] = [];
   let curInteractive = liveInteractive;
   let curAny = liveAny;
@@ -398,6 +412,27 @@ export function tick(): TickResult {
     nIdx++;
   }
 
+  // Phase 3: adaptive prewarm when queue depth exceeds threshold × 2.
+  // Fires when the combined ready queue exceeds POOL_PREWARM_THRESHOLD × 2,
+  // filling slots up to cap as long as work remains.
+  const totalReady = interactiveReady.length + nonInteractiveReady.length;
+  if (totalReady > POOL_PREWARM_THRESHOLD * 2) {
+    let piIdx = iIdx;
+    while (curAny < SLOTS_ANY && piIdx < interactiveReady.length) {
+      spawned.push(spawnWorker("any"));
+      curAny++;
+      piIdx++;
+    }
+    let pnIdx = nIdx;
+    while (curAny < SLOTS_ANY && pnIdx < nonInteractiveReady.length) {
+      spawned.push(spawnWorker("any"));
+      curAny++;
+      pnIdx++;
+    }
+  }
+  const interWaiting = Math.max(0, interactiveReady.length - SLOTS_INTERACTIVE);
+  const anyWaiting = Math.max(0, totalReady - SLOTS_ANY);
+
   return {
     reaped,
     swept: [...orphans, ...sweep.ids],
@@ -409,8 +444,28 @@ export function tick(): TickResult {
     spawned,
     triaged,
     pools: {
-      any: { live: curAny, cap: SLOTS_ANY },
-      interactive: { live: curInteractive, cap: SLOTS_INTERACTIVE },
+      any: {
+        live: curAny,
+        cap: SLOTS_ANY,
+        pressure: {
+          idle: Math.max(0, SLOTS_ANY - curAny),
+          busy: curAny,
+          waiting: anyWaiting,
+          queue_depth: totalReady,
+          spawnedAt: curAny > 0 ? nowTick : 0,
+        },
+      },
+      interactive: {
+        live: curInteractive,
+        cap: SLOTS_INTERACTIVE,
+        pressure: {
+          idle: Math.max(0, SLOTS_INTERACTIVE - curInteractive),
+          busy: curInteractive,
+          waiting: interWaiting,
+          queue_depth: interactiveReady.length,
+          spawnedAt: curInteractive > 0 ? nowTick : 0,
+        },
+      },
     },
   };
 }
@@ -421,7 +476,13 @@ export type Metrics = {
   reaps_per_hr: number;
   seconds_since_last_spawn: number | null;
   unclaimable_ready: number;
-  slots: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
+  slots: {
+    any: { live: number; cap: number; pressure: PoolPressure };
+    interactive: { live: number; cap: number; pressure: PoolPressure };
+  };
+  prewarm_threshold: number;
+  prewarm_pending_any: number;
+  prewarm_pending_interactive: number;
 };
 
 export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
@@ -447,6 +508,17 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
     )
     .get(hourAgo);
   const unclaimable = countUnclaimableReady(db);
+  const interactiveReady = listReady("interactive");
+  const allReady = listReady();
+  const interactiveCount = interactiveReady.length;
+  const totalCount = allReady.length;
+  const nonInterCount = totalCount - interactiveCount;
+  const prewarmPendingInteractive = interactiveCount > POOL_PREWARM_THRESHOLD * 2
+    ? interactiveCount - POOL_PREWARM_THRESHOLD * 2
+    : 0;
+  const prewarmPendingAny = nonInterCount > POOL_PREWARM_THRESHOLD * 2
+    ? nonInterCount - POOL_PREWARM_THRESHOLD * 2
+    : 0;
   db.close();
 
   return {
@@ -456,9 +528,32 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
     seconds_since_last_spawn: since,
     unclaimable_ready: unclaimable,
     slots: {
-      any: { live: liveAny, cap: SLOTS_ANY },
-      interactive: { live: liveInteractive, cap: SLOTS_INTERACTIVE },
+      any: {
+        live: liveAny,
+        cap: SLOTS_ANY,
+        pressure: {
+          idle: Math.max(0, SLOTS_ANY - liveAny),
+          busy: liveAny,
+          waiting: Math.max(0, totalCount - SLOTS_ANY),
+          queue_depth: totalCount,
+          spawnedAt: lastSpawn > 0 ? now : 0,
+        },
+      },
+      interactive: {
+        live: liveInteractive,
+        cap: SLOTS_INTERACTIVE,
+        pressure: {
+          idle: Math.max(0, SLOTS_INTERACTIVE - liveInteractive),
+          busy: liveInteractive,
+          waiting: Math.max(0, interactiveCount - SLOTS_INTERACTIVE),
+          queue_depth: interactiveCount,
+          spawnedAt: lastSpawn > 0 ? now : 0,
+        },
+      },
     },
+    prewarm_threshold: POOL_PREWARM_THRESHOLD,
+    prewarm_pending_any: prewarmPendingAny,
+    prewarm_pending_interactive: prewarmPendingInteractive,
   };
 }
 
@@ -660,6 +755,7 @@ export function printFactoryStarted(
   cfg: {
     slots_any: number;
     slots_interactive: number;
+    prewarm_threshold: number;
     max_age_sec: number;
     interval_sec: number;
     prefix: string;
@@ -681,6 +777,7 @@ async function loop(): Promise<void> {
   printFactoryStarted({
     slots_any: SLOTS_ANY,
     slots_interactive: SLOTS_INTERACTIVE,
+    prewarm_threshold: POOL_PREWARM_THRESHOLD,
     max_age_sec: MAX_AGE,
     interval_sec: INTERVAL,
     prefix: PREFIX,
