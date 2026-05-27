@@ -9,6 +9,31 @@
 # subagent. Reads stay direct. See .claude/agents/bookie.md.
 set -euo pipefail
 
+# Headless reconcile decision (pure: stdin args → "review"|"failed" on stdout).
+# Extracted so it can be unit-tested by sourcing this script with
+# ARC_WORKER_SHELL_SOURCE_ONLY=1 (which returns before any claim/exec).
+#
+# Rule: committed work ALWAYS advances to `review`, regardless of the agent's
+# exit code — a non-zero exit with real commits is salvageable, not a failure.
+# The exit code only decides the outcome when there are no commits: a clean
+# exit with nothing committed is still `failed` (the agent produced nothing to
+# review and the row must leave `claimed`).
+#   $1 = agent exit code (deliberately NOT consulted once commits>0), $2 = commits ahead of main
+reconcile_decision() {
+  local commits="$2"
+  if [[ "$commits" -gt 0 ]]; then
+    echo review
+  else
+    echo failed
+  fi
+}
+
+# Sourced by the test harness — define functions, then stop before doing any
+# real work (claim, exec, ledger writes). Production never sets this.
+if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
+  return 0
+fi
+
 # systemd --user services inherit a stripped PATH (no ~/.bun/bin), so the
 # factory's spawned tmux subshell can't resolve `bun` and dies with exit 127
 # before the claim runs. Restore the user's bun install dir if missing.
@@ -168,13 +193,16 @@ if [[ "$POST_STATE" != "claimed" && "$POST_STATE" != "wip" && -n "$POST_STATE" ]
 fi
 
 # Reconcile from worktree evidence. Commits on worker/<id> ahead of main mean
-# the agent produced work even if it never called the bookie → advance to
-# `review` so a human/merger can pick it up. No commits (or the agent errored)
-# → `failed` with evidence, so the row leaves `claimed` and is NOT recycled.
+# the agent produced work — advance to `review` so a human/merger can pick it
+# up, EVEN IF the agent exited non-zero (a crash after committing real work is
+# salvageable, not a failure). Only when there are no commits does the exit
+# code matter, and then it's always `failed`: the row leaves `claimed` with
+# evidence and is NOT recycled.
 COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count main..HEAD 2>/dev/null || echo 0)"
-if [[ "$AGENT_RC" -eq 0 && "$COMMITS_AHEAD" -gt 0 ]]; then
+DECISION="$(reconcile_decision "$AGENT_RC" "$COMMITS_AHEAD")"
+if [[ "$DECISION" == "review" ]]; then
   HEAD_SHA="$(git -C "$WT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  EVIDENCE="headless reconcile: agent exited 0 with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review."
+  EVIDENCE="headless reconcile: agent exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
   bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state review --evidence "$EVIDENCE" >/dev/null 2>&1 || true
 else
   EVIDENCE="headless reconcile: agent exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH}; no advanceable work, marked failed (was ${POST_STATE:-claimed})."
