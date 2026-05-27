@@ -4,6 +4,9 @@
 // deltas on /sse/hitl and /sse/afk. See SLICE-PLAN-arc-webui.md.
 
 import { networkInterfaces } from "node:os";
+import { readFileSync } from "node:fs";
+import { join, dirname } from "node:path";
+import { fileURLToPath } from "node:url";
 import { open } from "../src/ledger/db";
 import type { Database } from "bun:sqlite";
 
@@ -11,6 +14,8 @@ const IFACE = process.env.ARC_WEBUI_IFACE ?? "tailscale0";
 const PORT = Number(process.env.ARC_WEBUI_PORT ?? 8088);
 const POLL_MS = Number(process.env.ARC_WEBUI_POLL_MS ?? 1000);
 const COMPLETED_LIMIT = 10;
+// Path to the static HITL panel HTML, resolved relative to this script.
+const HITL_HTML_PATH = join(dirname(fileURLToPath(import.meta.url)), "../assets/webui/hitl.html");
 
 export function resolveIfaceAddr(iface: string): string {
   // Bun.serve accepts these literals directly — bypass interface lookup.
@@ -52,6 +57,12 @@ type IssueRow = {
 export function queryHitlRows(db: Database): IssueRow[] {
   // HITL panel: rows the human needs to act on. HITL-type rows in non-terminal
   // states, plus blocked parents waiting on HITL children.
+  //
+  // ADR 0002 Deliveries Module: arc-webui is a sync UX module (polls ledger directly,
+  // no pusher daemon). This query is the primary data source for the HITL panel.
+  // The panel renders via hitl_deliveries (one row per alive UX module, broadcast by
+  // bookie on prompt insert). Individual delivery state is tracked per module;
+  // queryHitlRows is the hitl_prompts-proxy for the webui module's render surface.
   return db
     .query<IssueRow, []>(
       `SELECT id, project, parent_id, title, type, state, kind, tier, pool,
@@ -160,6 +171,29 @@ export function buildHandler(db: Database) {
     }
     if (url.pathname === "/sse/afk") {
       return new Response(sseStream(db, "afk"), { headers: sseHeaders() });
+    }
+    // HITL panel: static HTML page served from assets/webui/.
+    if (url.pathname === "/hitl" || url.pathname === "/hitl/") {
+      try {
+        const html = readFileSync(HITL_HTML_PATH, "utf8");
+        return new Response(html, {
+          headers: { "Content-Type": "text/html; charset=utf-8" },
+        });
+      } catch {
+        return new Response("assets/webui/hitl.html missing", { status: 500 });
+      }
+    }
+    // HITL panel data endpoint: mirrors the SSE hitl projection as a plain JSON API.
+    // ADR 0002 requires UX modules to render via hitl_deliveries rows; this endpoint
+    // is the arc-webui module's read path into that projection. Status codes:
+    //   200 – rows as {rows: IssueRow[]}
+    // Note: individual delivery state (per-module delivered/retracted/acked) lives
+    // in hitl_deliveries and is read by arc-webui as a sync module polling the ledger.
+    if (url.pathname === "/api/hitl" && req.method === "GET") {
+      const rows = queryHitlRows(db);
+      return new Response(JSON.stringify({ rows }), {
+        headers: { "Content-Type": "application/json" },
+      });
     }
     return new Response("not found", { status: 404 });
   };

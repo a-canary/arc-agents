@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
@@ -11,10 +11,17 @@ import {
   sseStream,
 } from "./webui-server";
 
+// Must match the content buildHandler reads so /hitl tests pass.
+const HITL_HTML_CONTENT = "<!doctype html><title>HITL test</title><body>test</body>";
+
+// freshDb also stamps hitl.html so all handler tests find a real file at
+// HITL_HTML_PATH (resolved relative to bin/).
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "webui-server-"));
   const db = openWithMigrate(join(dir, "t.db"));
-  return { db, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+  mkdirSync(join(dir, "assets", "webui"), { recursive: true });
+  writeFileSync(join(dir, "assets", "webui", "hitl.html"), HITL_HTML_CONTENT);
+  return { dir, db, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
 }
 
 function insertIssue(
@@ -118,6 +125,52 @@ test("handler /health returns ok", async () => {
     expect(res.status).toBe(200);
     const body = await res.json();
     expect(body.ok).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /hitl returns static HTML when file present", async () => {
+  const { dir, db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/hitl"));
+    expect(res.status).toBe(200);
+    const body = await res.text();
+    expect(body).toContain("HITL");
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /api/hitl returns JSON rows from issue projection", async () => {
+  const { dir, db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    insertIssue(db, { id: "h1", title: "hitl row", type: "HITL", state: "ready" });
+    insertIssue(db, { id: "h2", title: "merged hitl", type: "HITL", state: "merged" });
+    insertIssue(db, { id: "plain", title: "plain", type: "mvp", state: "ready" });
+    const res = handler(new Request("http://x/api/hitl"));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { rows: unknown[] };
+    expect(Array.isArray(body.rows)).toBe(true);
+    const ids = (body.rows as { id: string }[]).map((r) => r.id);
+    expect(ids).toContain("h1");
+    expect(ids).not.toContain("h2"); // merged excluded
+    expect(ids).not.toContain("plain"); // not HITL-type
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /api/hitl returns nothing when no HITL rows", async () => {
+  const { dir, db, cleanup } = freshDb();
+  try {
+    const handler = buildHandler(db);
+    const res = handler(new Request("http://x/api/hitl"));
+    expect(res.status).toBe(200);
+    const body = await res.json() as { rows: unknown[] };
+    expect((body.rows as unknown[]).length).toBe(0);
   } finally {
     cleanup();
   }
