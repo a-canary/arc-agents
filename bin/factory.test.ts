@@ -1,10 +1,18 @@
 // E2E: factory spawns ephemeral workers that claim from the ledger and exit.
 // Fake CLAUDE_BIN=/bin/true so no real claude is invoked — we verify the
 // spawn lifecycle, claim atomicity, and reap behavior, not model output.
+//
+// Engine note (two-tier policy G-0006): an agent-less test row resolves to
+// default_alias=minimax-build → `pi -p ...`, a HEADLESS engine. worker-shell.sh
+// discriminates on the `-p` flag and runs headless workers as a child (not
+// exec'd), so the boot-the-real-shell tests below must shadow a CONTROLLABLE
+// fake `pi` onto PATH — CLAUDE_BIN only substitutes argv[0] when it is "claude".
+// The fake `pi` self-reports a terminal state via the ledger, exercising the
+// real reconciler's stand-down path (a self-reporting agent always wins).
 
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, chmodSync } from "node:fs";
+import { mkdtempSync, mkdirSync, rmSync, writeFileSync, chmodSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -16,6 +24,7 @@ const LEDGER = join(REPO, "bin", "ledger.ts");
 let workDir: string;
 let dbPath: string;
 let fakeClaude: string;
+let fakeBinDir: string;
 let prefix: string;
 
 function bun(args: string[], env: Record<string, string> = {}) {
@@ -44,6 +53,34 @@ beforeEach(() => {
   fakeClaude = join(workDir, "fake-claude");
   writeFileSync(fakeClaude, "#!/bin/sh\nexit 0\n");
   chmodSync(fakeClaude, 0o755);
+
+  // Controllable fake `pi` (the headless engine an agent-less row resolves to).
+  // It self-reports `review` via the ledger using the env worker-shell.sh
+  // exports (ARC_TASK_ID + ARC_LEDGER_DB), then exits 0 — modelling a headless
+  // worker that DID reach a terminal-ish state on its own. `review` is the
+  // non-terminal advance that preserves claimed_by (a terminal state like
+  // `failed` releases the claim, nulling claimed_by). Because POST_STATE is no
+  // longer `claimed`/`wip`, the post-#16 reconciler stands down and the agent's
+  // own report wins. Placed on a bin dir we prepend to PATH for the boot tests.
+  fakeBinDir = join(workDir, "bin");
+  mkdirSync(fakeBinDir, { recursive: true });
+  const fakePi = join(fakeBinDir, "pi");
+  writeFileSync(
+    fakePi,
+    [
+      "#!/usr/bin/env bash",
+      "echo \"FAKE_PI_RAN argc=$# task=${ARC_TASK_ID:-none}\"",
+      "if [[ -n \"${ARC_TASK_ID:-}\" ]]; then",
+      "  DBF=()",
+      "  [[ -n \"${ARC_LEDGER_DB:-}\" ]] && DBF=(--db \"$ARC_LEDGER_DB\")",
+      `  bun ${JSON.stringify(LEDGER)} update "$ARC_TASK_ID" "\${DBF[@]}" --state review --evidence "fake pi self-report" >/dev/null 2>&1 || true`,
+      "fi",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fakePi, 0o755);
+
   prefix = `arctest-${Math.random().toString(36).slice(2, 8)}`;
 
   // Init ledger
@@ -322,7 +359,12 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
   // before the claim ran. Shell must restore the bun dir itself.
   const id = createTask("path-strip");
   const shell = join(REPO, "bin", "worker-shell.sh");
-  const strippedPath = "/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin";
+  // Stripped PATH (as systemd --user delivers it) PLUS our fake-pi bin dir —
+  // the agent-less row resolves to the `pi -p` headless engine, so `pi` must
+  // resolve for the boot to reach the agent. The claim itself still depends on
+  // worker-shell.sh self-restoring ~/.bun/bin for `bun`, which is what this
+  // regression guards.
+  const strippedPath = `${fakeBinDir}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
   const env: Record<string, string> = {
     HOME: process.env.HOME ?? "",
     USER: process.env.USER ?? "",
@@ -333,10 +375,14 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
   const r = spawnSync("bash", [shell, "w-stripped"], { encoding: "utf8", env });
   expect(r.status).toBe(0);
   expect(r.stderr).not.toContain("bun: command not found");
+  // The claim ran (the row was assigned to this worker) — that is the bun-on-
+  // stripped-PATH contract. The fake headless agent then self-reported
+  // `review`, so the row advanced off `claimed` (not stuck, not recycled) while
+  // keeping claimed_by. The reconciler saw the non-claimed state and stood down.
   const show = bun([LEDGER, "show", id]);
   const issue = JSON.parse(show.stdout).issue;
-  expect(issue.state).toBe("claimed");
   expect(issue.claimed_by).toBe("w-stripped");
+  expect(issue.state).toBe("review");
 });
 
 test("auditOrphans detects long-running wait-for-ledger.ts processes", async () => {
@@ -461,20 +507,25 @@ test("auditMergeableWorktrees works when PATH does not contain bun", async () =>
 test("worker-shell.sh claims atomically: only one of two parallel shells wins for one task", () => {
   const id = createTask("solo");
   const shell = join(REPO, "bin", "worker-shell.sh");
-  const env = { ...process.env, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude };
+  // Prepend the fake-pi bin dir: the winner resolves to the `pi -p` headless
+  // engine and must find a controllable `pi` rather than the real (blocking)
+  // one. The fake self-reports terminal and exits, so the winner returns fast.
+  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude };
   // Run two shells in parallel; both attempt claim, exactly one should succeed.
   const r1 = spawnSync("bash", [shell, "w1"], { encoding: "utf8", env });
   const r2 = spawnSync("bash", [shell, "w2"], { encoding: "utf8", env });
-  // Each exits 0; one will exec fake-claude (which exits 0), the other prints claimed=null and exits 0.
+  // Each exits 0; one wins the claim and runs the fake headless agent, the
+  // other prints claimed=null and exits 0.
   const outs = [r1.stdout, r2.stdout].join("");
-  // Exactly one race-lost message expected (the other shell exec'd claude with no stdout).
+  // Exactly one race-lost message expected (G-0002: one UPDATE...RETURNING wins).
   const lost = (outs.match(/race-lost-or-empty/g) ?? []).length;
   expect(lost).toBe(1);
-  // Verify the task is claimed in the ledger.
+  // Exactly one winner held the row: it was claimed by w1 or w2, and the fake
+  // headless agent advanced it to `review` (never recycled to `ready`).
   const show = bun([LEDGER, "show", id]);
   const issue = JSON.parse(show.stdout).issue;
-  expect(issue.state).toBe("claimed");
   expect(["w1", "w2"]).toContain(issue.claimed_by);
+  expect(issue.state).toBe("review");
 });
 
 // --- reapMergeableWorktrees regression tests --------------------------------
