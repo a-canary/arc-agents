@@ -1,5 +1,5 @@
-.private/
 .local/
+.private/
 .scratch/
 node_modules/
 *.log
@@ -24,6 +24,9 @@ bun.lockb
 *.db
 *.db-shm
 *.db-wal
+__pycache__/
+*.pyc
+*.pyo
 *.sqlite
 *.sqlite3
 .env
