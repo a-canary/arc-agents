@@ -169,6 +169,39 @@ test("no-parent-repo: existing dir that isn't a git worktree leaves the row alon
   expect(row?.branch).toBe("phantom");
 });
 
+test("main-worktree guard: skips repo root, clears row, never shells worktree remove", () => {
+  const db = setupDb();
+  // Point a merged row at the *main* worktree (the repo dir itself), which is
+  // exactly the operational bug that caused the spawn-storm: git worktree
+  // remove on the main worktree always fails, so the row sat unreaped forever.
+  insertMergedIssue(db, "iss-main", repoDir, "main");
+
+  const reaped = reapWorktrees(db);
+
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("skipped-main-worktree");
+
+  // Row cleared so the reaper never visits it again.
+  const row = db
+    .query<{ worktree_path: string | null; branch: string | null }, []>(
+      "SELECT worktree_path, branch FROM issues WHERE id='iss-main'",
+    )
+    .get();
+  expect(row?.worktree_path).toBeNull();
+  expect(row?.branch).toBeNull();
+
+  // Repo dir + branch still exist — we did NOT shell `git worktree remove`.
+  expect(existsSync(repoDir)).toBe(true);
+  expect(git(repoDir, ["branch", "--list", "main"]).out).toContain("main");
+
+  const ev = db
+    .query<{ payload_md: string }, []>(
+      "SELECT payload_md FROM issue_events WHERE issue_id='iss-main' AND kind='note'",
+    )
+    .get();
+  expect(ev?.payload_md).toContain('"outcome":"skipped-main-worktree"');
+});
+
 test("idempotent: second call is a no-op once the row is cleared", () => {
   const db = setupDb();
   insertMergedIssue(db, "iss-twice", worktreeDir, BRANCH);

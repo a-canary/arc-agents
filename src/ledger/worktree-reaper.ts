@@ -31,7 +31,12 @@ export type ReapedWorktree = {
   issue_id: string;
   worktree_path: string | null;
   branch: string | null;
-  outcome: "removed" | "missing" | "git-remove-failed" | "no-parent-repo";
+  outcome:
+    | "removed"
+    | "missing"
+    | "git-remove-failed"
+    | "no-parent-repo"
+    | "skipped-main-worktree";
   detail?: string;
 };
 
@@ -44,6 +49,21 @@ function git(cwd: string, args: string[]): { ok: boolean; out: string } {
 // any worktree path. `git -C <wt> rev-parse --git-common-dir` returns the
 // common .git dir; its parent is the parent repo. Returns null if the path
 // is not part of any git worktree.
+// True when the path is the *main* working tree of its repo (as opposed to a
+// linked worktree under .git/worktrees/). For the main worktree git-dir and
+// git-common-dir resolve to the same path; for linked worktrees git-dir lives
+// under git-common-dir/worktrees/<name>. We compare the absolute forms so
+// relative-vs-absolute output from git doesn't fool the check.
+function isMainWorktree(worktreePath: string): boolean {
+  const gd = git(worktreePath, ["rev-parse", "--git-dir"]);
+  const gc = git(worktreePath, ["rev-parse", "--git-common-dir"]);
+  if (!gd.ok || !gc.ok) return false;
+  const a = spawnSync("realpath", [gd.out], { encoding: "utf8", cwd: worktreePath });
+  const b = spawnSync("realpath", [gc.out], { encoding: "utf8", cwd: worktreePath });
+  if (a.status !== 0 || b.status !== 0) return false;
+  return a.stdout.trim() === b.stdout.trim();
+}
+
 function findParentRepo(worktreePath: string): string | null {
   const r = git(worktreePath, ["rev-parse", "--git-common-dir"]);
   if (!r.ok) return null;
@@ -90,6 +110,36 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
       // detached, or git data corruption. Surfaces as a persistent row that
       // future detect-leaks work can handle.
       reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "no-parent-repo" });
+      continue;
+    }
+
+    // Main-worktree guard. `git worktree remove` on the main worktree always
+    // fails ("is a main working tree"), and without this guard the row stays
+    // visit-able forever — every factory tick logs another failure. Clear the
+    // columns so it's not retried, and never shell out to remove the repo root.
+    if (isMainWorktree(wt)) {
+      db.run(
+        `UPDATE issues SET worktree_path=NULL, branch=NULL, updated_at=strftime('%s','now') WHERE id=?`,
+        [row.id],
+      );
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worktree-reaper', ?)`,
+        [
+          row.id,
+          JSON.stringify({
+            event: "worktree-reaped",
+            outcome: "skipped-main-worktree",
+            worktree_path: wt,
+            branch: br,
+          }),
+        ],
+      );
+      reaped.push({
+        issue_id: row.id,
+        worktree_path: wt,
+        branch: br,
+        outcome: "skipped-main-worktree",
+      });
       continue;
     }
 
