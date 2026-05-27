@@ -1,15 +1,23 @@
-// Worktree reaper: removes the git worktree + branch for issues that have
-// reached state=merged with a worktree_path still recorded on the row.
+// Worktree reaper: removes the git worktree + branch for issues that are done
+// with their worktree and have a worktree_path still recorded on the row.
 //
-// Scope is intentionally narrow (merged only, not failed/cancelled/blocked):
-//   - merged is unambiguously safe — work is in main, worktree is scratch.
-//   - failed/cancelled may still hold uncommitted evidence the human wants.
-//   - blocked decomposition parents need their worktree until children resolve.
+// Three triggers (Aaron's reap policy, 2026-05-27):
+//   (a) prune-after-merge   — state=merged rows: work is in main, worktree is
+//       scratch, always safe to remove.
+//   (b) prune-after-triage  — state IN (failed,cancelled) rows: the triage/
+//       reconcile flow has finished with them. Remove ONLY if the worktree has
+//       zero commits ahead of main (nothing to salvage). A failed/cancelled
+//       row WITH commits is PRESERVED (outcome=has-commits) so the human can
+//       decide salvage. blocked is still excluded — decomposition parents need
+//       their worktree until children resolve.
+//   (c) 7-day backstop      — backstopPurgeWorktrees() below: a disk-scan for
+//       orphan worktrees that no live row references (the pre-startup sweep
+//       nulled/cancelled their rows, so (a)/(b) can never reach them).
 //
-// Cheap-sweep-on-tick: this runs as part of factory tick(). The work it does is
-// proportional to the number of merged-with-worktree rows since last sweep,
-// which is ~0 most ticks. After successful reap the worktree_path/branch
-// columns are nulled so the row is not visited again.
+// Cheap-sweep-on-tick: reapWorktrees() runs as part of factory tick(). The work
+// it does is proportional to the number of merged/failed/cancelled-with-worktree
+// rows since last sweep, which is ~0 most ticks. After successful reap the
+// worktree_path/branch columns are nulled so the row is not visited again.
 //
 // We can't emit a new event kind without a schema migration (issue_events.kind
 // has a CHECK constraint), so reap is logged as kind='note' with an agent tag.
@@ -23,7 +31,8 @@
 //     leave-it-alone signal and just log.
 
 import { spawnSync } from "node:child_process";
-import { existsSync } from "node:fs";
+import { existsSync, readdirSync, statSync } from "node:fs";
+import { join } from "node:path";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
 
@@ -31,7 +40,9 @@ export type ReapedWorktree = {
   issue_id: string;
   worktree_path: string | null;
   branch: string | null;
-  outcome: "removed" | "missing" | "git-remove-failed" | "no-parent-repo";
+  // has-commits: a failed/cancelled row whose worktree has unmerged commits —
+  // preserved for human salvage, row untouched.
+  outcome: "removed" | "missing" | "git-remove-failed" | "no-parent-repo" | "has-commits";
   detail?: string;
 };
 
@@ -56,18 +67,53 @@ function findParentRepo(worktreePath: string): string | null {
   return abs.endsWith("/.git") ? abs.slice(0, -5) : abs;
 }
 
+// Count commits on the worktree's HEAD that are NOT reachable from main —
+// i.e. unmerged work. 0 means the branch is fully merged (or never diverged):
+// nothing to salvage. Any git failure (detached, no main, corrupt) is treated
+// as "has commits" (return >0) so we err on the side of PRESERVING — we never
+// remove a worktree we can't prove is safe.
+function commitsAheadOfMain(worktreePath: string): number {
+  const r = git(worktreePath, ["rev-list", "--count", "main..HEAD"]);
+  if (!r.ok) return 1;
+  const n = parseInt(r.out.trim(), 10);
+  return Number.isFinite(n) ? n : 1;
+}
+
+// Count commits on main NOT reachable from the worktree's HEAD (`HEAD..main`).
+// >0 means main has advanced past HEAD (work integrated/superseded). On any
+// git failure return 0 — the caller only treats >0 as a removal fast-path, so
+// failing closed here just defers to the age gate (the conservative branch).
+function behindMain(worktreePath: string): number {
+  const r = git(worktreePath, ["rev-list", "--count", "HEAD..main"]);
+  if (!r.ok) return 0;
+  const n = parseInt(r.out.trim(), 10);
+  return Number.isFinite(n) ? n : 0;
+}
+
 export function reapWorktrees(db: Db): ReapedWorktree[] {
+  // (a) merged + (b) failed/cancelled. blocked stays excluded (decomposition
+  // parents). ready/wip/claimed/review are live — never reaped here.
   const rows = db
     .query(
-      `SELECT id, worktree_path, branch FROM issues
-       WHERE state='merged' AND worktree_path IS NOT NULL`,
+      `SELECT id, state, worktree_path, branch FROM issues
+       WHERE state IN ('merged','failed','cancelled') AND worktree_path IS NOT NULL`,
     )
-    .all() as { id: string; worktree_path: string; branch: string | null }[];
+    .all() as { id: string; state: string; worktree_path: string; branch: string | null }[];
 
   const reaped: ReapedWorktree[] = [];
   for (const row of rows) {
     const wt = row.worktree_path;
     const br = row.branch;
+
+    // (b) commit-guard: a failed/cancelled worktree with unmerged commits is
+    // preserved for human salvage. merged rows skip this — their work is
+    // already in main, so the worktree is scratch regardless of "ahead" count.
+    // The guard runs only when the dir still exists (commitsAheadOfMain needs
+    // a live worktree); a missing dir falls through to the cleanup below.
+    if (row.state !== "merged" && existsSync(wt) && commitsAheadOfMain(wt) > 0) {
+      reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "has-commits" });
+      continue;
+    }
 
     // Path already gone — just clear the columns so we don't revisit.
     if (!existsSync(wt)) {
@@ -121,4 +167,120 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
     reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "removed" });
   }
   return reaped;
+}
+
+// ---------------------------------------------------------------------------
+// Trigger (c): 7-day backstop purge (disk-scan).
+//
+// The row-driven reapWorktrees() can only see worktrees still recorded on a
+// ledger row. The 2026-05-27 pre-startup sweep cancelled/deleted ~751 rows,
+// orphaning their on-disk worktrees — unreachable by any row query. This
+// backstop disk-scans the worktrees root and removes ONLY dirs that are
+// provably safe:
+//   - branch fully merged to main (0 commits ahead) → pure scratch, removed
+//     regardless of age; OR
+//   - aged past maxAgeSec AND no live ledger row references it AND 0 commits
+//     ahead of main.
+// It NEVER removes a dir with unmerged commits (Aaron: "delete nothing" for
+// commit-bearing orphans), and NEVER removes a dir a live ledger row still
+// references (the row-driven reaper owns those).
+//
+// SECURITY: same as above — array argv only, `git -C`, no shell. The scan is
+// scoped to `worktreesRoot`; we readdir one level and only touch direct
+// children that git recognizes as worktrees of `parentRepo`.
+
+export type BackstopOutcome =
+  | "removed"
+  | "kept-has-commits"
+  | "kept-live-row"
+  | "kept-too-young"
+  | "not-a-worktree";
+
+export type BackstopResult = {
+  worktree_path: string;
+  outcome: BackstopOutcome;
+  detail?: string;
+};
+
+export type BackstopOpts = {
+  worktreesRoot: string;
+  parentRepo: string;
+  maxAgeSec: number;
+  now?: number; // unix seconds; defaults to wall clock (overridable for tests)
+};
+
+export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResult[] {
+  const { worktreesRoot, parentRepo, maxAgeSec } = opts;
+  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const results: BackstopResult[] = [];
+
+  if (!existsSync(worktreesRoot)) return results;
+
+  // Build the set of worktree paths a live ledger row still references, so we
+  // skip them (let reapWorktrees own row-tracked dirs). We include ALL states:
+  // a row in any state is a signal the dir is still "owned".
+  const tracked = new Set<string>();
+  const trackedRows = db
+    .query(`SELECT worktree_path FROM issues WHERE worktree_path IS NOT NULL`)
+    .all() as { worktree_path: string }[];
+  for (const r of trackedRows) tracked.add(r.worktree_path);
+
+  let entries: string[];
+  try {
+    entries = readdirSync(worktreesRoot);
+  } catch {
+    return results;
+  }
+
+  for (const name of entries) {
+    const dir = join(worktreesRoot, name);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(dir);
+    } catch {
+      continue;
+    }
+    if (!st.isDirectory()) continue;
+
+    // Confirm git actually manages this as a worktree before touching it.
+    if (!findParentRepo(dir)) {
+      results.push({ worktree_path: dir, outcome: "not-a-worktree" });
+      continue;
+    }
+
+    // A live ledger row owns it — defer to the row-driven reaper.
+    if (tracked.has(dir)) {
+      results.push({ worktree_path: dir, outcome: "kept-live-row" });
+      continue;
+    }
+
+    // Unmerged commits → never auto-remove (preserve for salvage).
+    if (commitsAheadOfMain(dir) > 0) {
+      results.push({ worktree_path: dir, outcome: "kept-has-commits" });
+      continue;
+    }
+
+    // 0 commits ahead is ambiguous, so consult how far main is AHEAD of this
+    // worktree's HEAD (`HEAD..main`):
+    //   - >0 : main advanced past HEAD → the work was integrated (or the branch
+    //          was superseded). Scratch — removable regardless of age.
+    //   - ==0: HEAD == main (a pristine fork point that never diverged). Apply
+    //          the age gate — only remove once it's older than maxAgeSec, so we
+    //          don't yank a worktree a worker just created.
+    const behind = behindMain(dir);
+    const ageSec = now - Math.floor(st.mtimeMs / 1000);
+    if (behind === 0 && ageSec < maxAgeSec) {
+      results.push({ worktree_path: dir, outcome: "kept-too-young" });
+      continue;
+    }
+
+    const rm = git(parentRepo, ["worktree", "remove", "-f", "-f", dir]);
+    if (!rm.ok) {
+      results.push({ worktree_path: dir, outcome: "kept-too-young", detail: `git-remove-failed: ${rm.out}` });
+      continue;
+    }
+    results.push({ worktree_path: dir, outcome: "removed" });
+  }
+
+  return results;
 }

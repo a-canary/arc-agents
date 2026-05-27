@@ -30,7 +30,19 @@ let prefix: string;
 function bun(args: string[], env: Record<string, string> = {}) {
   return spawnSync("bun", args, {
     encoding: "utf8",
-    env: { ...process.env, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude, ARC_WORKER_PREFIX: prefix, ...env },
+    // ARC_BACKSTOP_DISABLE: the 7-day backstop disk-scans ~/worktrees against the
+    // real prod repo on its first tick (lastBackstop=0). Off by default in tests
+    // so no `factory --once` subprocess ever touches live worktrees; the
+    // backstop's own behavior is covered in worktree-reaper.test.ts with a
+    // throwaway root. A test can re-enable it via the per-call env override.
+    env: {
+      ...process.env,
+      ARC_LEDGER_DB: dbPath,
+      CLAUDE_BIN: fakeClaude,
+      ARC_WORKER_PREFIX: prefix,
+      ARC_BACKSTOP_DISABLE: "1",
+      ...env,
+    },
   });
 }
 

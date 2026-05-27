@@ -35,7 +35,12 @@ import { fileURLToPath } from "node:url";
 import { openWithMigrate } from "../src/ledger/db";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
 import { CLAIMABLE_KINDS_SQL, PARKED_KINDS_SQL } from "../src/ledger/kinds";
-import { reapWorktrees, type ReapedWorktree } from "../src/ledger/worktree-reaper";
+import {
+  reapWorktrees,
+  backstopPurgeWorktrees,
+  type ReapedWorktree,
+  type BackstopResult,
+} from "../src/ledger/worktree-reaper";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
@@ -50,6 +55,17 @@ const MAX_AGE = parseInt(process.env.ARC_WORKER_MAX_AGE ?? "14400", 10);
 const INTERVAL = parseInt(process.env.ARC_FACTORY_INTERVAL ?? "5", 10);
 const PREFIX = process.env.ARC_WORKER_PREFIX ?? "arc-worker";
 const DB_FLAG = process.env.ARC_LEDGER_DB ? ["--db", process.env.ARC_LEDGER_DB] : [];
+
+// Trigger (c): 7-day backstop disk-scan over the worktrees root. It's expensive
+// (readdir + a couple of `git rev-list` per dir), so we don't run it every 5s
+// tick — gate it to BACKSTOP_INTERVAL (default 30min). ARC_WORKTREES_ROOT
+// defaults to ~/worktrees (where worker-shell.sh isolates each worker).
+const WORKTREES_ROOT =
+  process.env.ARC_WORKTREES_ROOT ?? join(process.env.HOME ?? "", "worktrees");
+const BACKSTOP_MAX_AGE = parseInt(process.env.ARC_BACKSTOP_MAX_AGE ?? `${7 * 86400}`, 10);
+const BACKSTOP_INTERVAL = parseInt(process.env.ARC_BACKSTOP_INTERVAL ?? "1800", 10);
+const BACKSTOP_DISABLE = process.env.ARC_BACKSTOP_DISABLE === "1";
+let lastBackstop = 0;
 
 type Session = { name: string; created: number };
 
@@ -309,6 +325,7 @@ export type TickResult = {
   reaped: string[];
   swept: string[];
   worktrees: ReapedWorktree[];
+  backstop: BackstopResult[];
   live: number;
   ready: number;
   unclaimable_ready: number;
@@ -325,6 +342,19 @@ export function tick(): TickResult {
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
   const worktrees = reapWorktrees(db);
+  // (c) 7-day backstop: periodic disk-scan for orphan worktrees with no live row.
+  // Interval-gated so the readdir + per-dir git calls don't run every 5s tick.
+  const nowSec = Math.floor(Date.now() / 1000);
+  let backstop: BackstopResult[] = [];
+  if (!BACKSTOP_DISABLE && nowSec - lastBackstop >= BACKSTOP_INTERVAL) {
+    lastBackstop = nowSec;
+    backstop = backstopPurgeWorktrees(db, {
+      worktreesRoot: WORKTREES_ROOT,
+      parentRepo: REPO,
+      maxAgeSec: BACKSTOP_MAX_AGE,
+      now: nowSec,
+    });
+  }
   const triaged = triageUnset(db);
   const unclaimable = countUnclaimableReady(db);
   db.close();
@@ -372,6 +402,7 @@ export function tick(): TickResult {
     reaped,
     swept: [...orphans, ...sweep.ids],
     worktrees,
+    backstop,
     live: curAny + curInteractive,
     ready: allReady.length,
     unclaimable_ready: unclaimable,
@@ -668,7 +699,8 @@ async function loop(): Promise<void> {
   while (true) {
     try {
       const r = tick();
-      if (r.reaped.length || r.spawned.length || r.swept.length) {
+      const backstopRemoved = r.backstop.filter((b) => b.outcome === "removed").length;
+      if (r.reaped.length || r.spawned.length || r.swept.length || backstopRemoved) {
         console.log(JSON.stringify({ ts: new Date().toISOString(), ...r }));
       }
       const now = Math.floor(Date.now() / 1000);
