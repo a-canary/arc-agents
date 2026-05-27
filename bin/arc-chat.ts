@@ -122,8 +122,8 @@ switch (cmd) {
   case "help": {
     process.stdout.write(`arc-chat — chat surface for the ephemeral interviewer (ADR 0003)
 
-  post <message> [--thread T]    write chat_in row; returns thread_id (new if omitted)
-  tail --thread T [--once]       stream chat_out rows for thread
+  post <message> [--thread T]    write event row; returns thread_id (new if omitted)
+  tail --thread T [--once]       stream reply rows for thread
   threads [--limit N]            list recent threads
 
 env: ARC_LEDGER_DB to override ledger path

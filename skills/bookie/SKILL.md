@@ -15,7 +15,7 @@ Agents do NOT write to `~/vault/ledger.db` directly. They invoke bookie with row
 
 ## Enums
 
-- `kind`: `task`, `chat_in`, `encounter_reply`, `prd`
+- `kind`: `task`, `event`, `reply`, `prd`, `prefetch`
 - `type` (priority order — claim picks lowest first): `HITL`, `cron`, `mvp`, `security`, `quality`, `scale`, `efficiency`, `deferred`
 - `state` (terminal: `merged`, `cancelled`): `ready`, `claimed`, `wip`, `blocked`, `review`, `merged`, `cancelled`, `failed`
 

@@ -27,7 +27,7 @@ Do **not** spawn for in-scope, low-risk, reversible work — just do it.
 Child spec schema:
 ```json
 {
-  "kind": "task" | "encounter_reply",
+  "kind": "task" | "event",
   "type": "HITL" | "mvp" | "cron" | "security" | "quality" | "scale" | "efficiency" | "deferred",
   "title": "<short title>",
   "body": "<markdown, optional>",

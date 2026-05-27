@@ -5,7 +5,7 @@
 //
 // Modes:
 //   --kind <kind>       worker: kind=<kind> (e.g. task)
-//   --interviewer       interviewer: kind IN ('chat_in','encounter_reply')
+//   --interviewer       interviewer: kind='event' AND source_module IN ('arc-chat','arc-encounter')
 //
 // Optional:
 //   --interval <sec>    poll interval, default 3

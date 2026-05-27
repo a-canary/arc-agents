@@ -98,7 +98,4 @@ Active renames or convention-residues where the old name still appears somewhere
 
 `- **old-name → new-name** (decided: ADR-NNNN or CHOICES tier) — residue: <where old name still appears>. *expires: YYYY-MM-DD (7d from decision)*`
 
-Current drift:
 
-- **encounter_reply → event** (decided: ADR-0005) — residue: `encounter_mode`/`encounter_timeout_at`/`encounter_default_resolution` columns on `issues` (see `src/ledger/migrate.ts`); `wait-for-ledger --interviewer` doc string; skills/to-ledger, skills/spawn, skills/bookie kind lists. *expires: 2026-05-26 (7d from ADR-0005)*
-- **chat_in / chat_out → event / reply with source_module** (decided: ADR-0005) — residue: `bin/arc-chat.ts` usage and code comments; `bin/ledger.ts:444` thread-replay comment; `bin/wait-for-ledger.ts` `--interviewer` filter mentions `chat_in`. *expires: 2026-05-26 (7d from ADR-0005)*
