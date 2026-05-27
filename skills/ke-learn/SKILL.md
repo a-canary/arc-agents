@@ -1,11 +1,11 @@
 ---
 name: ke-learn
-description: "Write a new knowledge entry to ~/vault/ke/<scope>/ and update the FTS5 index. One file per insight. Stop-hook on dev/director sessions."
+description: "Write a new knowledge entry into ~/vault/ke/<scope>/ and embed it into the Qdrant index via ke-tool ingest. One file per insight. Stop-skill on dev/director/admin sessions."
 ---
 
 # ke-learn — Knowledge Entry Write
 
-Append-only writer for `~/vault/ke/`. Auto-run by role profile `stop` hook to distill the session.
+Writer for `~/vault/ke/`, backed by the Qdrant collection `ke`. Auto-run by role profile `stop_skills` to distill the session.
 
 ## When to write
 
@@ -19,14 +19,14 @@ If the session produced nothing surprising, write nothing.
 
 ## File format
 
-Path: `~/vault/ke/<scope>/<YYYY-MM-DD>-<kebab-slug>.md`
+Write the note with this frontmatter (`ke ingest` reads `title`, `tags`, `summary`):
 
 ```
 ---
-date: 2026-05-14
-scope: fixes
-tags: [ledger, sqlite, fts5]
-source: session-<short-id>
+title: <one-line headline>
+tags: [ledger, sqlite, qdrant]
+summary: <one-sentence gist — used as the search-result blurb>
+created: 2026-05-24
 ---
 
 # <one-line headline>
@@ -40,13 +40,18 @@ source: session-<short-id>
 
 ## Procedure
 
-1. `bun ~/repos/arc-agents/bin/ke.ts learn --scope <scope> --title "<headline>" --body "<md>" [--tags "a,b"]`.
-2. CLI writes file, then runs `INSERT INTO ke(path, body) VALUES(?, ?)` to update FTS index.
-3. Returns the new file path.
+1. Write the note to a temp file (e.g. `/tmp/ke-learn-<slug>.md`) with the frontmatter above.
+2. Ingest it — this moves it into `~/vault/ke/<scope>/`, embeds it, and upserts to Qdrant:
+   ```
+   bun ~/repos/ke/bin/ke-tool.ts ingest /tmp/ke-learn-<slug>.md --topic <scope>
+   ```
+3. The CLI prints the final `Written: <scope>/<slug>.md` path. Omit `--topic` to let it auto-classify from content.
+
+Requires Qdrant on `:6333` (`docker run -d --name qdrant -p 6333:6333 qdrant/qdrant`). If ingest reports a connection error, start it and retry.
 
 ## Anti-patterns
 
 - Don't write narrative session logs — those go to handoff, not KE.
 - Don't write per-commit notes — git log is the source.
 - Don't write "TODO" entries — KE is for what was learned, not what is pending.
-- Don't duplicate — `ke-recall` first; if a close match exists, append refs to it instead.
+- Don't duplicate — run `ke-recall` first; if a close match exists, append refs to it and re-ingest instead of creating a new note.
