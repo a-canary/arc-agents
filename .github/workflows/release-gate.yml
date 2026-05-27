@@ -1,0 +1,39 @@
+name: Release Gate
+
+on:
+  pull_request:
+    branches:
+      - main
+      - release/**
+  push:
+    branches:
+      - main
+      - release/**
+
+jobs:
+  release-gate:
+    name: Release Gate
+    runs-on: ubuntu-latest
+    # Only block merge on PRs targeting main or release/* — skip on direct push to main
+    if: github.event_name == 'push' || github.event.pull_request.head.ref != github.event.pull_request.base.ref
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v1
+        with:
+          bun-version: latest
+
+      - name: Install deps
+        run: bun install --frozen-lockfile
+
+      - name: Typecheck
+        run: bun run typecheck
+
+      - name: Test
+        run: bun test
+        timeout-minutes: 5
+
+  # Future: extend to run cc plugin tests when cc/ workspace is added.
+  # When multiple plugin suites exist, matrix over ${{ matrix.suite }}
+  # and set 'cc-plugin-tests' job with `working-directory: plugins/${{ matrix.suite }}`.
