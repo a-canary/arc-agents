@@ -20,6 +20,17 @@ RestartSec=5
 StartLimitBurst=0
 StandardOutput=append:/home/aaron/.cache/arc-factory.log
 StandardError=append:/home/aaron/.cache/arc-factory.log
+# Memory cap: factory itself is lightweight (supervisor + tmux manager ~<100MB RSS);
+# workers run as child tmux sessions under this cgroup. Bounding the cgroup
+# prevents a runaway worker from triggering a system-wide OOM that kills
+# unrelated services (hermes-gateway, pi-bridge, etc.).
+# Root cause: OOMs #7-#15 showed workers (vitest ~3.8GB, training ~3GB,
+# hermes-gateway ~1.2GB) competing for memory with no per-service cap —
+# the global OOM killer then chose victims unpredictably. MemoryMax=2G makes
+# cgroup OOM the fallback instead of system OOM, isolating the blast radius.
+# Swap exhaustion (Docker/Immich ~1.8GB) is a separate concern: consider
+# reducing swap or offloading Docker to a separate slice if MemoryMax triggers.
+MemoryMax=2147483648
 
 [Install]
 WantedBy=default.target
