@@ -140,6 +140,12 @@ test("validateStateTransition blocks exit from terminal states", () => {
   expect(validateStateTransition("claimed", "wip")).toEqual([]);
 });
 
+test("validateStateTransition: failed→cancelled is allowed (failed is not terminal)", () => {
+  expect(validateStateTransition("failed", "cancelled")).toEqual([]);
+  expect(validateStateTransition("failed", "ready")).toEqual([]);
+  expect(validateStateTransition("failed", "wip")).toEqual([]);
+});
+
 // ── Change 2: KIND_VALUES += "sprint" ────────────────────────────────────────
 
 test("KIND_VALUES includes 'sprint'", () => {
