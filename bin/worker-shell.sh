@@ -14,6 +14,21 @@ set -euo pipefail
 # before the claim runs. Restore the user's bun install dir if missing.
 command -v bun >/dev/null 2>&1 || export PATH="${HOME}/.bun/bin:${PATH}"
 
+# Same stripped-PATH hazard for the headless engine `pi` (two-tier policy
+# G-0006: agent-less rows resolve to `pi -p ...`). `node` is on the systemd
+# PATH (/usr/local/bin) but its npm-global bin dir — which holds `pi` — is not,
+# so the headless child died `pi: command not found` (exit 127) and every
+# headless worker got reconciled to `failed`. Derive that dir from node's own
+# location (version-agnostic, no hardcoded path) and restore it if `pi` is
+# missing. No-op when pi is already resolvable (e.g. interactive shells).
+if ! command -v pi >/dev/null 2>&1; then
+  _node_bin="$(command -v node 2>/dev/null || true)"
+  if [ -n "$_node_bin" ]; then
+    _node_global_bin="$(dirname "$_node_bin")/../lib/node_modules/node/bin"
+    [ -x "${_node_global_bin}/pi" ] && export PATH="${_node_global_bin}:${PATH}"
+  fi
+fi
+
 WORKER="${1:?worker name required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
 LEDGER_BIN="${REPO}/bin/ledger.ts"
