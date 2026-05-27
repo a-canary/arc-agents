@@ -5,10 +5,11 @@ import { test, expect, beforeEach, afterEach } from "bun:test";
 import { spawnSync } from "node:child_process";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
+import { join } from "node:path";
 
-const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
+// Resolve the repo root once at load time, then use absolute paths throughout.
+// Using dynamic __dirname inside the test makes spawn paths resolve to /tmp.
+const REPO = join(process.cwd());
 const HOOK = join(REPO, "hooks", "stop.sh");
 const LEDGER = join(REPO, "bin", "ledger.ts");
 
@@ -85,4 +86,17 @@ test("passes through when stop_hook_active is true (avoids infinite loop)", () =
   const r = runHook({ ARC_TASK_ID: c.id }, '{"stop_hook_active": true}');
   expect(r.status).toBe(0);
   expect(r.stdout.trim()).toBe("");
+});
+
+test("block reason mentions hygiene skills and hygiene-emit command", () => {
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger(["update", c.id, "--state", "wip"]);
+  const r = runHook({ ARC_TASK_ID: c.id });
+  expect(r.status).toBe(0);
+  const payload = JSON.parse(r.stdout);
+  expect(payload.decision).toBe("block");
+  expect(payload.reason).toMatch(/improve-architecture/);
+  expect(payload.reason).toMatch(/trash-retired-files/);
+  expect(payload.reason).toMatch(/analyse-recent-sessions/);
+  expect(payload.reason).toMatch(/hygiene-emit/);
 });
