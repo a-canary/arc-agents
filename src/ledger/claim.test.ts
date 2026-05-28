@@ -8,8 +8,8 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate, mintId } from "./db";
-import { CLAIM_SQL, claimOnce } from "./claim";
-import { SORT_KEY_SQL } from "./class-urgency-sort";
+import { CLAIM_SQL, claimOnce, buildClaimSQL } from "./claim";
+import { SORT_KEY_SQL } from "./tier-pool-sort";
 
 function freshDb(): { path: string; db: Database; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "claim-test-"));
@@ -28,14 +28,14 @@ function freshDb(): { path: string; db: Database; cleanup: () => void } {
 function insertReady(
   db: Database,
   title: string,
-  cls: string,
-  urgency: string,
+  tier: string,
+  pool: string,
 ): string {
   const id = mintId(db, title);
   db.run(
-    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, class, urgency)
+    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
      VALUES (?, 'arc-agents', ?, '', '', 'mvp', 'ready', 'task', ?, ?)`,
-    [id, title, cls, urgency],
+    [id, title, tier, pool],
   );
   return id;
 }
@@ -50,12 +50,12 @@ test("CLAIM_SQL contains the canonical UPDATE...RETURNING shape with SORT_KEY_SQ
   expect(CLAIM_SQL).toContain(SORT_KEY_SQL.trim().split("\n")[0]!.trim());
 });
 
-test("claimOnce picks the highest-priority ready row (BUG/interactive over MVP/nominal)", () => {
+test("claimOnce picks the highest-priority ready row (prod/interactive over mvp/pool_unset)", () => {
   const { db, cleanup } = freshDb();
   try {
-    insertReady(db, "low-priority", "MVP", "nominal");
-    const winner = insertReady(db, "high-priority", "BUG", "interactive");
-    insertReady(db, "mid", "ops", "nominal");
+    insertReady(db, "low-priority", "mvp", "pool_unset");
+    const winner = insertReady(db, "high-priority", "prod", "interactive");
+    insertReady(db, "mid", "tier_unset", "pool_unset");
 
     const row = claimOnce(db, "w-test");
     expect(row).not.toBeNull();
@@ -89,8 +89,8 @@ test("claimOnce returns null when ready rows are all wrong kind", () => {
     // 'prd' kind is not in the ('task','event') allowlist
     const id = mintId(db, "prd-row");
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, class, urgency)
-       VALUES (?, 'arc-agents', 'prd-row', '', '', 'mvp', 'ready', 'prd', 'MVP', 'nominal')`,
+      `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
+       VALUES (?, 'arc-agents', 'prd-row', '', '', 'mvp', 'ready', 'prd', 'mvp', 'pool_unset')`,
       [id],
     );
     expect(claimOnce(db, "w-none")).toBeNull();
@@ -99,16 +99,16 @@ test("claimOnce returns null when ready rows are all wrong kind", () => {
   }
 });
 
-test("claimOnce with typeFilter restricts to a single type (fast-pass pool)", () => {
+test("claimOnce with poolFilter restricts to a single pool (fast-pass pool)", () => {
   const { db, cleanup } = freshDb();
   try {
-    // MVP/nominal mvp-typed row outranks the HITL row on class. But with
-    // typeFilter='HITL' the mvp row must be ignored.
-    insertReadyType(db, "mvp-row", "mvp", "MVP", "nominal");
-    const hitl = insertReadyType(db, "hitl-row", "HITL", "ops", "nominal");
+    // build/mvp row outranks the interactive row on tier. But with
+    // poolFilter='interactive' the build row must be ignored.
+    insertReadyType(db, "build-row", "mvp", "mvp", "build");
+    const interactive = insertReadyType(db, "interactive-row", "mvp", "tier_unset", "interactive");
 
-    const row = claimOnce(db, "w-fast", "HITL");
-    expect(row?.id).toBe(hitl);
+    const row = claimOnce(db, "w-fast", "interactive");
+    expect(row?.id).toBe(interactive);
   } finally {
     cleanup();
   }
@@ -118,14 +118,53 @@ function insertReadyType(
   db: Database,
   title: string,
   type: string,
-  cls: string,
-  urgency: string,
+  tier: string,
+  pool: string,
 ): string {
   const id = mintId(db, title);
   db.run(
-    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, class, urgency)
+    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
      VALUES (?, 'arc-agents', ?, '', '', ?, 'ready', 'task', ?, ?)`,
-    [id, title, type, cls, urgency],
+    [id, title, type, tier, pool],
   );
   return id;
 }
+
+// ── Change 3: sprint is claimable, prd is not ────────────────────────────────
+
+test("claimOnce claims a kind='sprint' ready row", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = mintId(db, "sprint-row");
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
+       VALUES (?, 'arc-agents', 'sprint-row', '', '', 'mvp', 'ready', 'sprint', 'mvp', 'pool_unset')`,
+      [id],
+    );
+    const row = claimOnce(db, "w-sprint");
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe(id);
+  } finally {
+    cleanup();
+  }
+});
+
+test("claimOnce does NOT claim a kind='prd' ready row", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = mintId(db, "prd-row-2");
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
+       VALUES (?, 'arc-agents', 'prd-row-2', '', '', 'mvp', 'ready', 'prd', 'mvp', 'pool_unset')`,
+      [id],
+    );
+    const row = claimOnce(db, "w-prd");
+    expect(row).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("CLAIMABLE_KINDS_SQL contains sprint for claim SQL inclusion", () => {
+  expect(CLAIM_SQL).toContain("'sprint'");
+});

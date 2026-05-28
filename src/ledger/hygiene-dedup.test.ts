@@ -42,7 +42,7 @@ describe("checkDuplicate", () => {
   const ready = (id: string, title: string, extra: Partial<ExistingRow> = {}): ExistingRow => ({
     id,
     title,
-    class: "hygiene",
+    tier: "hygiene",
     state: "ready",
     skill: null,
     ...extra,
@@ -100,8 +100,8 @@ describe("checkDuplicate", () => {
     expect(r.duplicate).toBe(false);
   });
 
-  test("non-hygiene class → ignored", () => {
-    const rows = [ready("i-8", "clarify-docs: x", { class: "mvp" })];
+  test("non-hygiene tier → ignored", () => {
+    const rows = [ready("i-8", "clarify-docs: x", { tier: "mvp" })];
     const r = checkDuplicate("clarify-docs", "clarify-docs: x", rows);
     expect(r.duplicate).toBe(false);
   });

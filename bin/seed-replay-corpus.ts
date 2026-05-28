@@ -16,7 +16,7 @@ import { join, dirname } from "path";
 type Row = {
   id: string; project: string; parent_id: string|null; title: string;
   body_md: string|null; type: string; state: string; kind: string;
-  class: string; claimed_by: string; claimed_at: number; updated_at: number;
+  tier: string; claimed_by: string; claimed_at: number; updated_at: number;
   worktree_path: string|null; branch: string|null; pr_url: string|null;
   evidence_md: string|null; thread_id: string|null;
 };
@@ -232,7 +232,7 @@ function buildFixture(row: Row, sessionFile: string): void {
       task_id: row.id,
       task_kind: row.kind,
       task_type: row.type,
-      task_class: row.class,
+      task_class: row.tier,
       worker_id: row.claimed_by,
       claimed_at: row.claimed_at,
       terminated_at: terminatedAt,

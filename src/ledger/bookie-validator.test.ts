@@ -86,12 +86,13 @@ const CASES: Case[] = [
     expectField: null,
   },
   { name: "bad kind", row: { kind: "weird", class: "MVP", urgency: "nominal", class_rationale: "x" }, expectField: "kind" },
-  { name: "bad class", row: { kind: "task", class: "huge", urgency: "nominal", class_rationale: "x" }, expectField: "class" },
-  { name: "bad urgency", row: { kind: "task", class: "MVP", urgency: "asap", class_rationale: "x" }, expectField: "urgency" },
+  // Migration 017: validator emits field="tier"/"pool" even when old aliases are used
+  { name: "bad class", row: { kind: "task", class: "huge", urgency: "nominal", class_rationale: "x" }, expectField: "tier" },
+  { name: "bad urgency", row: { kind: "task", class: "MVP", urgency: "asap", class_rationale: "x" }, expectField: "pool" },
   {
     name: "class_unset without triage_pending",
     row: { kind: "task", class: "class_unset", urgency: "nominal", class_rationale: "x" },
-    expectField: "class",
+    expectField: "tier",
   },
   {
     name: "missing source_module on event",
@@ -137,4 +138,15 @@ test("validateStateTransition blocks exit from terminal states", () => {
   expect(validateStateTransition("cancelled", "ready").length).toBeGreaterThan(0);
   expect(validateStateTransition("ready", "claimed")).toEqual([]);
   expect(validateStateTransition("claimed", "wip")).toEqual([]);
+});
+
+// ── Change 2: KIND_VALUES += "sprint" ────────────────────────────────────────
+
+test("KIND_VALUES includes 'sprint'", () => {
+  expect(KIND_VALUES as readonly string[]).toContain("sprint");
+});
+
+test("validateCreate: kind='sprint' returns no --kind error", () => {
+  const errs = validateCreate({ title: "ok", kind: "sprint", type: "mvp" });
+  expect(errs.some((e) => e.field === "--kind")).toBe(false);
 });

@@ -89,4 +89,33 @@ describe("loadThreadContext", () => {
     expect(out).toContain("kept event");
     expect(out).not.toContain("skipped prefetch");
   });
+
+  it("replays arc-sprint handoff events as [handoff]", () => {
+    const db = freshDb();
+    insert(db, { id: "i-001", kind: "event", title: "sprint handoff", body_md: "what I tried: foo", thread_id: "t-sprint", source_module: "arc-sprint" });
+    insert(db, { id: "i-002", kind: "event", title: "current sprint", thread_id: "t-sprint", source_module: "arc-sprint" });
+    const out = loadThreadContext(db, "t-sprint", "i-002");
+    expect(out).toContain("[handoff] what I tried: foo");
+    expect(out).not.toContain("[user] what I tried");
+  });
+
+  it("disjoint union: chat + sprint events both appear with correct speakers", () => {
+    const db = freshDb();
+    insert(db, { id: "i-001", kind: "event", title: "chat msg", body_md: "chat message body", thread_id: "t-union", source_module: "arc-chat" });
+    insert(db, { id: "i-002", kind: "event", title: "sprint handoff", body_md: "sprint handoff body", thread_id: "t-union", source_module: "arc-sprint" });
+    insert(db, { id: "i-003", kind: "event", title: "current", thread_id: "t-union", source_module: "arc-chat" });
+    const out = loadThreadContext(db, "t-union", "i-003");
+    expect(out).toContain("[user] chat message body");
+    expect(out).toContain("[handoff] sprint handoff body");
+    // oldest first: chat (i-001) before sprint (i-002)
+    expect(out.indexOf("[user] chat message body")).toBeLessThan(out.indexOf("[handoff] sprint handoff body"));
+  });
+
+  it("arc-sprint reply (kind=reply) is NOT replayed", () => {
+    const db = freshDb();
+    insert(db, { id: "i-001", kind: "reply", title: "sprint reply", body_md: "sprint reply body", thread_id: "t-sreply", source_module: "arc-sprint" });
+    insert(db, { id: "i-002", kind: "event", title: "current", thread_id: "t-sreply", source_module: "arc-sprint" });
+    const out = loadThreadContext(db, "t-sreply", "i-002");
+    expect(out).not.toContain("sprint reply body");
+  });
 });

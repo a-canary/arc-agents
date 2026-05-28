@@ -18,6 +18,10 @@ async function run(db: string, ...args: string[]): Promise<unknown> {
   return JSON.parse(r.stdout.toString());
 }
 
+async function runRawNoDb(...args: string[]) {
+  return await $`bun ${cli} ${args}`.quiet().nothrow();
+}
+
 async function runRaw(db: string, ...args: string[]) {
   return await $`bun ${cli} ${args} --db ${db}`.quiet().nothrow();
 }
@@ -272,12 +276,11 @@ test("claim picks HITL before mvp via priority sort", async () => {
     const h = (await run(db, "create", "--kind", "task", "--type", "HITL", "--title", "hitl-row")) as {
       id: string;
     };
-    // ADR 0005: sort is (urgency, class, created_at, id). Pin HITL row to
-    // (BUG, interactive) so it outranks mvp deterministically — without this
-    // the test relied on alphabetical id-tiebreak luck.
+    // Migration 017: sort is (tier, pool, created_at, id). Pin HITL row to
+    // (prod, interactive) so it outranks mvp deterministically.
     const { Database } = await import("bun:sqlite");
     const raw = new Database(db);
-    raw.run("UPDATE issues SET class='BUG', urgency='interactive' WHERE id=?", [h.id]);
+    raw.run("UPDATE issues SET tier='prod', pool='interactive' WHERE id=?", [h.id]);
     raw.close();
     const claimed = (await run(db, "claim", "w1")) as { claimed: string };
     expect(claimed.claimed).toBe(h.id);
@@ -286,12 +289,10 @@ test("claim picks HITL before mvp via priority sort", async () => {
   }
 });
 
-test("create --class --urgency writes ADR 0005 fields (no longer silently class_unset)", async () => {
-  // Before this fix: every `ledger create` call silently defaulted to
-  // class='class_unset' because the INSERT omitted the column. That meant
-  // every chat-in row, every bookie-spawned task, and every seed-helper task
-  // hit the triage backlog. The CLI must accept --class/--urgency and pass
-  // them through, or the entire ADR 0005 priority model is dead on arrival.
+test("create --tier --pool writes migration-017 fields (no longer silently tier_unset)", async () => {
+  // Migration 017: class→tier, urgency→pool. CLI accepts both --class/--tier and
+  // --urgency/--pool (backwards compat aliases). The INSERT must write the new
+  // column names so the sort key works and rows don't all land in tier_unset.
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
@@ -304,26 +305,25 @@ test("create --class --urgency writes ADR 0005 fields (no longer silently class_
       "mvp",
       "--title",
       "fix the thing",
-      "--class",
-      "BUG",
-      "--urgency",
+      "--tier",
+      "trust",
+      "--pool",
       "interactive",
     )) as { id: string };
     const shown = (await run(db, "show", c.id)) as {
-      issue: { class: string; urgency: string };
+      issue: { tier: string; pool: string };
     };
-    expect(shown.issue.class).toBe("BUG");
-    expect(shown.issue.urgency).toBe("interactive");
+    expect(shown.issue.tier).toBe("trust");
+    expect(shown.issue.pool).toBe("interactive");
   } finally {
     cleanup();
   }
 });
 
-test("decompose children inherit parent's class+urgency (not class_unset)", async () => {
-  // HITL children spawned by AFK decomposition silently went to class_unset
-  // because the decompose INSERT also omitted the columns. That dumped every
-  // decomposed sub-task into triage. Children should inherit the parent's
-  // class+urgency so a BUG/interactive decomposition stays BUG/interactive.
+test("decompose children inherit parent's tier+pool (not tier_unset)", async () => {
+  // Migration 017: class→tier, urgency→pool. HITL children spawned by AFK
+  // decomposition must inherit the parent's tier+pool so a prod/interactive
+  // decomposition stays prod/interactive rather than falling to tier_unset.
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
@@ -336,9 +336,9 @@ test("decompose children inherit parent's class+urgency (not class_unset)", asyn
       "mvp",
       "--title",
       "parent",
-      "--class",
-      "BUG",
-      "--urgency",
+      "--tier",
+      "prod",
+      "--pool",
       "interactive",
     )) as { id: string };
     const dec = (await run(db, "decompose", p.id, "--child", "kid-a", "--child", "kid-b")) as {
@@ -346,10 +346,10 @@ test("decompose children inherit parent's class+urgency (not class_unset)", asyn
     };
     for (const k of dec.children) {
       const shown = (await run(db, "show", k.id)) as {
-        issue: { class: string; urgency: string };
+        issue: { tier: string; pool: string };
       };
-      expect(shown.issue.class).toBe("BUG");
-      expect(shown.issue.urgency).toBe("interactive");
+      expect(shown.issue.tier).toBe("prod");
+      expect(shown.issue.pool).toBe("interactive");
     }
   } finally {
     cleanup();
@@ -525,6 +525,151 @@ test("decompose: rejects from terminal state", async () => {
     const r = await runRaw(db, "decompose", p.id, "--child", "x");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toMatch(/terminal/);
+  } finally {
+    cleanup();
+  }
+});
+
+// ── Change 5: Decompose per-child dimensions ──────────────────────────────────
+
+test("decompose: bare string child inherits parent tier+pool, agent='agent_unset' (regression)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent task",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(db, "decompose", parent.id, "--child", "bare title")) as {
+      parent: string;
+      children: { id: string; title: string }[];
+    };
+    expect(r.children.length).toBe(1);
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { tier: string; pool: string; agent: string };
+    };
+    expect(cs.issue.tier).toBe("mvp");
+    expect(cs.issue.pool).toBe("build");
+    expect(cs.issue.agent).toBe("agent_unset");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with agent override sets agent, tier+pool inherited", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent for agent override",
+      "--tier", "trust", "--pool", "interactive")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "need a dev", agent: "developer" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    expect(r.children.length).toBe(1);
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { tier: string; pool: string; agent: string };
+    };
+    expect(cs.issue.agent).toBe("developer");
+    expect(cs.issue.tier).toBe("trust");
+    expect(cs.issue.pool).toBe("interactive");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with pool override deviates from parent pool", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent pool override",
+      "--tier", "mvp", "--pool", "interactive")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "build subtask", pool: "build" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { pool: string; tier: string };
+    };
+    expect(cs.issue.pool).toBe("build");
+    expect(cs.issue.tier).toBe("mvp");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with bad agent enum → validation error, zero rows inserted", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent bad agent",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = await runRaw(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "bad child", agent: "wizard" }),
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/wizard/);
+    // Parent should still be in its original state, no children inserted
+    const shown = (await run(db, "show", parent.id)) as { issue: { state: string; blocked_by: string | null } };
+    expect(shown.issue.state).toBe("ready");
+    expect(shown.issue.blocked_by).toBeNull();
+    const children = (await run(db, "list", "--state", "ready")) as { id: string }[];
+    // Only the parent itself should be in ready state, no children
+    const childIds = children.filter((c) => c.id !== parent.id);
+    expect(childIds.length).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: mixed batch (bare + JSON) is atomic, parent gets both child ids", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "sprint", "--type", "mvp", "--title", "sprint parent",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", "plain title",
+      "--child", JSON.stringify({ title: "json child", agent: "developer", pool: "interactive" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    expect(r.children.length).toBe(2);
+    const shown = (await run(db, "show", parent.id)) as {
+      issue: { state: string; blocked_by: string };
+    };
+    expect(shown.issue.state).toBe("blocked");
+    const blockedBy = JSON.parse(shown.issue.blocked_by) as string[];
+    expect(blockedBy).toContain(r.children[0]!.id);
+    expect(blockedBy).toContain(r.children[1]!.id);
+
+    const plain = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { agent: string; pool: string };
+    };
+    expect(plain.issue.agent).toBe("agent_unset");
+    expect(plain.issue.pool).toBe("build"); // inherited
+
+    const json = (await run(db, "show", r.children[1]!.id)) as {
+      issue: { agent: string; pool: string };
+    };
+    expect(json.issue.agent).toBe("developer");
+    expect(json.issue.pool).toBe("interactive"); // overridden
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: fanout cap still enforced with JSON children (6 → error)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const p = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "fanout-json")) as { id: string };
+    const jsonChild = JSON.stringify({ title: "x" });
+    const r = await runRaw(
+      db, "decompose", p.id,
+      "--child", jsonChild, "--child", jsonChild, "--child", jsonChild,
+      "--child", jsonChild, "--child", jsonChild, "--child", jsonChild,
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/fanout cap/);
   } finally {
     cleanup();
   }
@@ -945,6 +1090,69 @@ test("update --state merged accepts after diff_review event logged", async () =>
     await stubDiffReview(db, c.id);
     const r = await runRaw(db, "update", c.id, "--state", "merged", "--evidence", "x");
     expect(r.exitCode).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+// ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
+
+test("alias-cmd opus-max prints opus command containing {prompt}", async () => {
+  const r = await runRawNoDb("alias-cmd", "opus-max");
+  expect(r.exitCode).toBe(0);
+  const out = r.stdout.toString().trim();
+  expect(out).toContain("--model opus");
+  expect(out).toContain("{prompt}");
+});
+
+test("alias-cmd <unknown> falls back to default_alias command", async () => {
+  const r = await runRawNoDb("alias-cmd", "nonexistent-alias-xyz");
+  expect(r.exitCode).toBe(0);
+  // The default is minimax-build — just verify we get a non-empty command with {prompt}
+  const out = r.stdout.toString().trim();
+  expect(out.length).toBeGreaterThan(0);
+  expect(out).toContain("{prompt}");
+});
+
+test("render-prompt: sprint row emits sprint frame text and agent-keyed header", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    // Create a sprint row via CLI
+    const c = (await run(db, "create", "--kind", "sprint", "--type", "deferred", "--title", "test sprint")) as { id: string };
+    // Set agent=sprint, pool=build directly — the create verb doesn't expose --agent
+    // for the issues.agent column (only for issue_events.agent).
+    const directDb = new Database(db);
+    directDb.run("UPDATE issues SET agent='sprint', pool='build' WHERE id=?", [c.id]);
+    directDb.close();
+    const r = await $`bun ${cli} render-prompt ${c.id} --worker arc-worker-test --db ${db}`.quiet();
+    expect(r.exitCode).toBe(0);
+    const prompt = r.stdout.toString();
+    // Header must use agent= and pool=, not type=
+    const firstLine = prompt.split("\n")[0]!;
+    expect(firstLine).toContain("agent=sprint");
+    expect(firstLine).toContain("pool=build");
+    expect(firstLine).not.toContain("type=");
+    // Sprint frame distinctive text
+    expect(prompt).toContain("re-entrant");
+  } finally {
+    cleanup();
+  }
+});
+
+test("resolve-alias on DB without agent column returns default alias name", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "no-agent-col")) as { id: string };
+    // In PR-1 the issues table has no `agent` column — resolve-alias must fall back.
+    const r = await $`bun ${cli} resolve-alias ${c.id} --db ${db}`.quiet();
+    expect(r.exitCode).toBe(0);
+    const out = r.stdout.toString().trim();
+    // Should be the default_alias name (a non-empty string, not a full command)
+    expect(out.length).toBeGreaterThan(0);
+    expect(out).not.toContain(" "); // alias name has no spaces
+    // TODO(PR-2): assert agent-column path once migration 016 lands
   } finally {
     cleanup();
   }

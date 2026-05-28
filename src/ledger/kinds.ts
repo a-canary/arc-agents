@@ -1,7 +1,7 @@
 // Single source of truth for issue-kind categorisation.
 //
 // The schema's CHECK constraint (src/ledger/migrate.ts) admits:
-//   task, event, reply, prd, prefetch
+//   task, event, reply, prd, prefetch, sprint
 //
 // `CLAIMABLE_KINDS` is the set the factory's atomic claim accepts. Any new
 // kind defaults to NON-claimable unless explicitly added here — safer than
@@ -13,8 +13,10 @@
 // excluded from the `unclaimable_ready` warn so they don't generate
 // log-spam — the warn is meant to surface stuck transient artifacts like
 // `reply` / `prefetch` rows, not parked product docs.
+//
+// CLAIMABLE: task, event, sprint.
 
-export const CLAIMABLE_KINDS = ["task", "event"] as const;
+export const CLAIMABLE_KINDS = ["task", "event", "sprint"] as const;
 export type ClaimableKind = (typeof CLAIMABLE_KINDS)[number];
 
 export const PARKED_KINDS = ["prd"] as const;

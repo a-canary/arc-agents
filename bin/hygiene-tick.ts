@@ -103,12 +103,12 @@ const title = `hygiene: ${repo} — /${skill}`;
 const body = `Run \`/${skill}\` against the \`${repo}\` repo as part of the rotating hygiene cron.\n`;
 const id = `${seq}-${mintId(db, title)}`;
 
-// ADR 0005: hygiene cron rows self-classify. class='hygiene' so workers can
-// update them via the bookie without tripping the class_unset+triage_pending
-// guard; urgency='nominal' matches the legacy `type='cron'` priority slot.
+// Migration 017: class→tier, urgency→pool. Hygiene cron rows self-classify:
+// tier='hygiene' so workers can update them via the bookie without tripping
+// the tier_unset+triage_pending guard; pool='ops' matches cron scheduling slot.
 db.run(
-  `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, class, urgency)
-   VALUES (?, ?, ?, ?, '', 'cron', 'ready', 'task', 'hygiene', 'nominal')`,
+  `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
+   VALUES (?, ?, ?, ?, '', 'cron', 'ready', 'task', 'hygiene', 'ops')`,
   [id, repo, title, body],
 );
 db.run(

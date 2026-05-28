@@ -2,10 +2,11 @@
 // Ledger CLI. Flag-only create per PRD-v1 §4; positional args are rejected.
 // JSON to stdout when not a TTY; table otherwise.
 
+import { Database } from "bun:sqlite";
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
-import { validateCreate, validateDecompose, validateStateTransition, type CreateInput } from "../src/ledger/bookie-validator";
-import { SORT_KEY_SQL } from "../src/ledger/class-urgency-sort";
+import { validateCreate, validateDecompose, validateStateTransition, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
+import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
 import { sweepStaleClaims } from "../src/ledger/claim-stale-sweeper";
@@ -15,6 +16,8 @@ import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
+import { loadConfig as loadAppConfig, resolveAlias } from "../src/config/load";
+import { loadProfile } from "../src/profiles/load";
 
 const KNOWN_HYGIENE_SKILLS = [
   "clarify-docs",
@@ -89,8 +92,8 @@ switch (cmd) {
       parent: getFlag("parent"),
       blockedBy: getFlag("blocked-by"),
       project: getFlag("project"),
-      class: getFlag("class"),
-      urgency: getFlag("urgency"),
+      tier: getFlag("tier") ?? getFlag("class"),     // accept both old --class and new --tier
+      pool: getFlag("pool") ?? getFlag("urgency"),    // accept both old --urgency and new --pool
     };
     const errs = validateCreate(input, positionalAfterVerb());
     if (errs.length > 0) {
@@ -108,30 +111,29 @@ switch (cmd) {
     const thread = getFlag("thread") ?? null;
     const sourceModule = getFlag("source-module") ?? null;
     // ADR 0005: pass through when supplied, fall back to schema defaults
-    // (class_unset / nominal) so unchanged callers stay compatible. The
-    // bookie subagent is expected to pass both explicitly going forward.
-    const cls = input.class ?? null;
-    const urgency = input.urgency ?? null;
+    // (tier_unset / pool_unset) so unchanged callers stay compatible.
+    const tier = input.tier ?? null;
+    const pool = input.pool ?? null;
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
-    if (cls !== null && urgency !== null) {
+    if (tier !== null && pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class, urgency)
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, pool)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls, urgency],
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, pool],
       );
-    } else if (cls !== null) {
+    } else if (tier !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, class)
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, cls],
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier],
       );
-    } else if (urgency !== null) {
+    } else if (pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, urgency)
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, pool)
          VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, urgency],
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, pool],
       );
     } else {
       db.run(
@@ -149,16 +151,17 @@ switch (cmd) {
   }
 
   case "claim": {
-    // ledger claim <worker> [--type X]
-    // --type restricts the claim to a single priority class (used by fast-pass
+    // ledger claim <worker> [--pool X] [--type X (deprecated alias)]
+    // --pool restricts the claim to a single pool lane (used by fast-pass
     // interactive pool so a reserved slot doesn't burn on backlog work).
+    // --type is kept as a deprecated alias for one transition window.
     // SQL lives in src/ledger/claim.ts so the bash bootstrap in
     // worker-shell.sh and this CLI share one canonical UPDATE...RETURNING.
     const worker = args[1] ?? die("worker required");
     if (worker.startsWith("--")) die("worker required (positional)");
-    const typeFilter = getFlag("type");
+    const poolFilter = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const row = claimOnce(db, worker, typeFilter);
+    const row = claimOnce(db, worker, poolFilter);
     if (!row) {
       out({ claimed: null });
       break;
@@ -179,34 +182,84 @@ switch (cmd) {
     // directly — it pipes this text into sqlite3 instead. Keeping the
     // SQL in one place preserves G-0002's single-statement guarantee.
     //
-    // `--type-filter` emits the variant with `AND type=?2` baked in, so
+    // `--pool-filter` emits the variant with `AND pool=?2` baked in, so
     // bash callers don't have to rewrite the SQL post-hoc.
-    const withTypeFilter = args.includes("--type-filter");
-    process.stdout.write(withTypeFilter ? buildClaimSQL(true) : CLAIM_SQL);
+    // `--type-filter` is kept as a deprecated alias.
+    const withPoolFilter = args.includes("--pool-filter") || args.includes("--type-filter");
+    process.stdout.write(withPoolFilter ? buildClaimSQL(true) : CLAIM_SQL);
     break;
   }
 
   case "decompose": {
     // ledger decompose <parent-id> --child "t1" --child "t2" ...
+    // Each --child value may be a bare title string (inherits parent tier+pool,
+    // agent='agent_unset') OR a JSON object {"title":..., "tier"?:..., "pool"?:..., "agent"?:...}.
     // Atomic: insert N HITL children, set parent.blocked_by=[ids], parent.state='blocked'.
+
+    type ChildSpec = { title: string; tier?: Tier; pool?: Pool; agent?: Agent };
+
     const parent = args[1];
     if (!parent || parent.startsWith("--")) die("parent id required (positional)");
-    const children: string[] = [];
+
+    const rawChildren: string[] = [];
     for (let i = 2; i < args.length; i++) {
       const a = args[i]!;
       if (a === "--child") {
         const v = args[++i];
-        if (v !== undefined) children.push(v);
+        if (v !== undefined) rawChildren.push(v);
       } else if (a.startsWith("--child=")) {
-        children.push(a.slice("--child=".length));
+        rawChildren.push(a.slice("--child=".length));
       }
     }
-    const errs = validateDecompose({ parent, children });
+
+    // Parse and validate each child spec before touching the DB (fail fast).
+    const childSpecs: ChildSpec[] = [];
+    for (const v of rawChildren) {
+      if (v.trim().startsWith("{")) {
+        // JSON child spec
+        let parsed: unknown;
+        try {
+          parsed = JSON.parse(v);
+        } catch {
+          die(`--child: invalid JSON: ${v}`);
+        }
+        const obj = parsed as Record<string, unknown>;
+        if (!obj.title || typeof obj.title !== "string") {
+          die(`--child JSON must include a "title" string field`);
+        }
+        const spec: ChildSpec = { title: obj.title as string };
+        if (obj.tier !== undefined) {
+          if (!TIER_VALUES.includes(obj.tier as Tier)) {
+            die(`--child: invalid tier '${obj.tier}' — must be one of: ${TIER_VALUES.join(", ")}`);
+          }
+          spec.tier = obj.tier as Tier;
+        }
+        if (obj.pool !== undefined) {
+          if (!POOL_VALUES.includes(obj.pool as Pool)) {
+            die(`--child: invalid pool '${obj.pool}' — must be one of: ${POOL_VALUES.join(", ")}`);
+          }
+          spec.pool = obj.pool as Pool;
+        }
+        if (obj.agent !== undefined) {
+          if (!AGENT_VALUES.includes(obj.agent as Agent)) {
+            die(`--child: invalid agent '${obj.agent}' — must be one of: ${AGENT_VALUES.join(", ")}`);
+          }
+          spec.agent = obj.agent as Agent;
+        }
+        childSpecs.push(spec);
+      } else {
+        // Bare title string — inherit tier+pool from parent, agent defaults to agent_unset.
+        childSpecs.push({ title: v });
+      }
+    }
+
+    // validateDecompose checks fanout cap and empty titles.
+    const errs = validateDecompose({ parent, children: childSpecs.map((s) => s.title) });
     if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    const parentRow = db.query<{ id: string; project: string; state: string; class: string; urgency: string }, [string]>(
-      "SELECT id, project, state, class, urgency FROM issues WHERE id=?",
+    const parentRow = db.query<{ id: string; project: string; state: string; tier: string; pool: string }, [string]>(
+      "SELECT id, project, state, tier, pool FROM issues WHERE id=?",
     ).get(parent);
     if (!parentRow) die(`no such issue: ${parent}`);
     if (parentRow.state === "merged" || parentRow.state === "cancelled") {
@@ -216,21 +269,24 @@ switch (cmd) {
     const created: { id: string; title: string }[] = [];
     db.exec("BEGIN");
     try {
-      for (const title of children) {
-        const id = mintId(db, title);
-        // ADR 0005: children inherit parent's class+urgency so a BUG/interactive
-        // decomposition stays BUG/interactive instead of dumping the subtree
-        // into the class_unset triage backlog.
+      for (const spec of childSpecs) {
+        const id = mintId(db, spec.title);
+        // ADR 0005: unset fields inherit parent's tier+pool so a prod/interactive
+        // decomposition stays prod/interactive instead of dumping the subtree
+        // into the tier_unset triage backlog. agent defaults to agent_unset.
+        const childTier = spec.tier ?? parentRow.tier;
+        const childPool = spec.pool ?? parentRow.pool;
+        const childAgent = spec.agent ?? "agent_unset";
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, class, urgency)
-           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?)`,
-          [id, parentRow.project, parent, title, parentRow.class, parentRow.urgency],
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent)
+           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?, ?)`,
+          [id, parentRow.project, parent, spec.title, childTier, childPool, childAgent],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
-          [id, agent, `decomposed from ${parent}: ${title}`],
+          [id, agent, `decomposed from ${parent}: ${spec.title}`],
         );
-        created.push({ id, title });
+        created.push({ id, title: spec.title });
       }
       const blockedBy = JSON.stringify(created.map((c) => c.id));
       db.run(
@@ -505,9 +561,9 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const existing = db
       .query<ExistingRow, []>(
-        `SELECT id, title, COALESCE(class, '') AS class, state, NULL AS skill
+        `SELECT id, title, tier, state, NULL AS skill
          FROM issues
-         WHERE class='hygiene'
+         WHERE tier='hygiene'
            AND state IN ('ready','blocked','wip','claimed')`,
       )
       .all();
@@ -526,7 +582,7 @@ switch (cmd) {
     const finalBody = body + observedNote;
     const id = mintId(db, prefixedTitle);
     db.run(
-      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, class)
+      `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, tier)
        VALUES (?, ?, NULL, ?, ?, '', 'quality', 'ready', 'task', 'hygiene')`,
       [id, project, prefixedTitle, finalBody],
     );
@@ -534,23 +590,40 @@ switch (cmd) {
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
       [id, agent, `hygiene-emit skill=${skill}${observed ? ` observed_in=${observed}` : ""}`],
     );
-    out({ id, emitted: true, skill, state: "ready", class: "hygiene" });
+    out({ id, emitted: true, skill, state: "ready", tier: "hygiene" });
     break;
   }
 
   case "tick": {
     // Backstop sweep: cascade-unblock + reclaim stale claims (>2hr)
     // + reap expired hitl_prompts (open → timeout_locked).
+    //
+    // Two-arm unblock mirrors migration 019's trigger pair (change #4):
+    //   Arm 1 (non-sprint): re-readies when ALL blockers are merged. Strict.
+    //   Arm 2 (sprint): re-readies when ALL blockers are terminal
+    //                   (merged|failed|cancelled).
     const db = openWithMigrate(getFlag("db"));
-    const u = db.run(`
+    const u1 = db.run(`
       UPDATE issues SET state='ready', updated_at=strftime('%s','now')
       WHERE state='blocked' AND blocked_by IS NOT NULL AND blocked_by != '[]'
+        AND kind != 'sprint'
         AND NOT EXISTS (
           SELECT 1 FROM json_each(issues.blocked_by) dep
           JOIN issues b ON b.id = dep.value
           WHERE b.state != 'merged'
         )
     `);
+    const u2 = db.run(`
+      UPDATE issues SET state='ready', updated_at=strftime('%s','now')
+      WHERE state='blocked' AND blocked_by IS NOT NULL AND blocked_by != '[]'
+        AND kind = 'sprint'
+        AND NOT EXISTS (
+          SELECT 1 FROM json_each(issues.blocked_by) dep
+          JOIN issues b ON b.id = dep.value
+          WHERE b.state NOT IN ('merged','failed','cancelled')
+        )
+    `);
+    const u = { changes: u1.changes + u2.changes };
     const s = sweepStaleClaims(db);
     // Collect ids first so we can return them; the UPDATE itself fires
     // hitl_retract_losers (migrate.ts:284) which retracts pending/delivered
@@ -581,12 +654,13 @@ switch (cmd) {
   }
 
   case "spawn-ready": {
-    const type = getFlag("type");
+    // --pool X: filter by pool column (preferred). --type X: deprecated alias.
+    const pool = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
     const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
-      type ? "AND type=?" : ""
+      pool ? "AND pool=?" : ""
     } ORDER BY ${SORT_KEY_SQL}`;
-    out(type ? db.query(sql).all(type) : db.query(sql).all());
+    out(pool ? db.query(sql).all(pool) : db.query(sql).all());
     break;
   }
 
@@ -597,8 +671,8 @@ switch (cmd) {
     const worker = getFlag("worker") ?? "unknown";
     const db = openWithMigrate(getFlag("db"));
     const row = db
-      .query<{ kind: string; type: string; thread_id: string | null }, [string]>(
-        `SELECT kind, type, thread_id FROM issues WHERE id=?`,
+      .query<{ kind: string; agent: string; pool: string; thread_id: string | null }, [string]>(
+        `SELECT kind, agent, pool, thread_id FROM issues WHERE id=?`,
       )
       .get(id);
     if (!row) die(`no issue ${id}`);
@@ -609,7 +683,8 @@ switch (cmd) {
     process.stdout.write(
       renderSystemPrompt({
         kind: row.kind,
-        type: row.type,
+        agent: row.agent,
+        pool: row.pool,
         worker,
         task: id,
         thread_id: row.thread_id ?? undefined,
@@ -907,16 +982,35 @@ switch (cmd) {
             });
           untrackedWorktreeDirs = fullDirs.filter((p) => !registered.has(p));
 
-          // Mergeable: registered worktree under worktreeRoot whose HEAD is an
-          // ancestor of main. Scoping to worktreeRoot keeps results aligned with
+          // Mergeable: registered worktree under worktreeRoot whose HEAD is a
+          // STRICT ancestor of main — reachable from main's tip AND not equal to
+          // it. The strictness matters: a freshly-created `worktree add … main`
+          // has HEAD == main's tip, which is trivially its own ancestor, so a
+          // plain is-ancestor check flags every just-booted worker worktree as
+          // "done" and (under ARC_AUTO_PRUNE) deletes it out from under the live
+          // worker. A merged worktree, by contrast, sits strictly behind main's
+          // advanced tip (main moved on past it). HEAD != main-tip cleanly
+          // separates merged (reap) from fresh/untouched (leave alone).
+          // Scoping to worktreeRoot keeps results aligned with
           // untrackedWorktreeDirs (same scan window) and skips the main checkout
           // + sibling worktrees outside the operator's chosen root.
           const rootPrefix = worktreeRoot.replace(/\/+$/, "") + "/";
+          // Resolve main's tip in the SAME git dir the worktrees belong to
+          // (anchor on `sample`, a known worktree of that repo). A bare
+          // `git rev-parse main` would resolve main in the doctor process's
+          // own cwd — a different repo entirely — yielding a SHA that never
+          // matches any scanned HEAD and silently disabling the guard.
+          const mainTip = spawnSync("git", ["-C", sample, "rev-parse", "main"], { encoding: "utf8" });
+          const mainTipSha = mainTip.status === 0 ? mainTip.stdout.trim() : "";
           for (const [path, branch] of registered) {
             if (!path.startsWith(rootPrefix)) continue;
             const head = spawnSync("git", ["-C", path, "rev-parse", "HEAD"], { encoding: "utf8" });
             if (head.status !== 0) continue;
             const headSha = head.stdout.trim();
+            // Fresh/untouched worktree (HEAD still at main's tip) has produced
+            // nothing to merge — never reap it. Only a worktree whose HEAD has
+            // diverged-then-landed (strictly behind the advanced tip) is mergeable.
+            if (!mainTipSha || headSha === mainTipSha) continue;
             const ancestor = spawnSync(
               "git",
               ["-C", path, "merge-base", "--is-ancestor", headSha, "main"],
@@ -1047,6 +1141,60 @@ switch (cmd) {
     break;
   }
 
+  case "resolve-alias": {
+    // resolve-alias <issueId> [--db <path>]
+    // Pure read: looks up the issue's agent field (if the column exists), loads
+    // its profile to get exec_cli_alias, and prints the alias NAME on stdout.
+    // If the agent column does not exist yet (pre-migration) or the value is
+    // absent/null/"agent_unset", falls back to config.default_alias.
+    // This makes the verb forward-compatible: always falls back in PR-1, will
+    // work automatically once the agent DB column lands in a later PR.
+    const issueId = positionalAfterVerb()[0] ?? die("issue id required");
+    // Pure read on the hot worker-spawn path: open read-only so this never
+    // triggers a migration write (worker-shell.sh's bootstrap claim is the
+    // only ledger write permitted to bypass the bookie).
+    const dbPath = getFlag("db") ?? process.env.ARC_LEDGER_DB ?? `${process.env.HOME}/vault/ledger.db`;
+    const db = new Database(dbPath, { readonly: true });
+    const appCfg = loadAppConfig();
+
+    // Check whether the `agent` column exists on the issues table.
+    const columns = db
+      .query<{ name: string }, []>("PRAGMA table_info(issues)")
+      .all()
+      .map((r) => r.name);
+    const hasAgentCol = columns.includes("agent");
+
+    let aliasName = appCfg.default_alias;
+    if (hasAgentCol) {
+      const row = db
+        .query<{ agent: string | null }, [string]>("SELECT agent FROM issues WHERE id=?")
+        .get(issueId);
+      if (!row) die(`no such issue: ${issueId}`);
+      const agentVal = row.agent;
+      if (agentVal && agentVal !== "agent_unset") {
+        try {
+          const profile = loadProfile(agentVal);
+          aliasName = profile.exec_cli_alias;
+        } catch {
+          // Profile not found — fall back to default_alias silently.
+          aliasName = appCfg.default_alias;
+        }
+      }
+    }
+    process.stdout.write(aliasName + "\n");
+    break;
+  }
+
+  case "alias-cmd": {
+    // alias-cmd <aliasName>
+    // Pure read: prints the full command string for the given alias (with
+    // {prompt} placeholder intact) to stdout.
+    const aliasName = positionalAfterVerb()[0] ?? die("alias name required");
+    const appCfg = loadAppConfig();
+    process.stdout.write(resolveAlias(aliasName, appCfg) + "\n");
+    break;
+  }
+
   case undefined:
   case "-h":
   case "--help":
@@ -1103,6 +1251,10 @@ switch (cmd) {
                                        rows whose state is terminal or non-claim
                                        (the doctor phantom_claims backlog).
                                        Default dry-run; --apply writes.
+
+  resolve-alias <issueId> [--db <path>]   pure read: print alias NAME for issue's agent
+  alias-cmd <aliasName>                   pure read: print full command string for alias
+                                          (includes {prompt} placeholder)
 
   global flags: --db <path>
 

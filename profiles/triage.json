@@ -1,0 +1,10 @@
+{
+  "agent": "triage",
+  "context_summary": "Drains *_unset ledger rows. Batch-claims rows missing agent/pool, reads payload + parent/sibling context, assigns {tier,pool,agent} via bookie. Cheap by default; escalates only on genuinely large/ambiguous payloads. The agent-actor backstop to factory's pure-SQL triageUnset heuristic.",
+  "context_files": ["roles/AGENTS.md", "CLAUDE.md", "CONTEXT.md", "CHOICES.md"],
+  "boot_skills": ["ke-recall", "triage-assign"],
+  "stop_skills": ["ke-learn"],
+  "exec_cli_alias": "minimax-build",
+  "max_concurrency": 1,
+  "worktree": false
+}

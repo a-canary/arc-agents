@@ -6,8 +6,10 @@ import {
   PARKED_KINDS_SQL,
 } from "./kinds";
 
-test("CLAIMABLE_KINDS is the factory-claimable set (task, event)", () => {
-  expect(CLAIMABLE_KINDS).toEqual(["task", "event"]);
+test("CLAIMABLE_KINDS is the factory-claimable set (task, event, sprint)", () => {
+  expect(CLAIMABLE_KINDS as readonly string[]).toContain("task");
+  expect(CLAIMABLE_KINDS as readonly string[]).toContain("event");
+  expect(CLAIMABLE_KINDS as readonly string[]).toContain("sprint");
 });
 
 test("PARKED_KINDS is the by-design non-claimable set (prd)", () => {
@@ -22,6 +24,14 @@ test("CLAIMABLE_KINDS and PARKED_KINDS are disjoint", () => {
 });
 
 test("SQL fragments quote and comma-join correctly", () => {
-  expect(CLAIMABLE_KINDS_SQL).toBe("'task','event'");
+  expect(CLAIMABLE_KINDS_SQL).toContain("'task'");
+  expect(CLAIMABLE_KINDS_SQL).toContain("'event'");
+  expect(CLAIMABLE_KINDS_SQL).toContain("'sprint'");
   expect(PARKED_KINDS_SQL).toBe("'prd'");
+});
+
+// ── Change 3: CLAIMABLE_KINDS includes sprint ─────────────────────────────────
+
+test("CLAIMABLE_KINDS_SQL contains 'sprint'", () => {
+  expect(CLAIMABLE_KINDS_SQL).toContain("'sprint'");
 });

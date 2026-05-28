@@ -5,9 +5,10 @@
 // Cache is invalidated (re-written) when a row's rank crosses the threshold,
 // or when the source body changes.
 //
-// Schema note: post-migration, what the slice plan calls "chat_in" rows are
-// modeled as `kind='event' AND urgency='interactive' AND source_module='arc-chat'`.
-// See src/ledger/migrate.ts (chat_in → event remap).
+// Schema note: post-migration 017, what the slice plan calls "chat_in" rows
+// are modeled as `kind='event' AND pool='interactive' AND source_module='arc-chat'`.
+// Migration 017 renamed urgency→pool; priority column was dropped.
+// See src/ledger/migrate.ts (chat_in → event remap, class/urgency→tier/pool).
 //
 // The actual draft text comes from an injectable `DraftGenerator`. The default
 // generator is template-based so the scaffold can land before S5's LLM hookup.
@@ -25,7 +26,7 @@ export type ChatInRow = {
   title: string;
   body_md: string;
   thread_id: string | null;
-  priority: number | null;
+  // Migration 017: priority column dropped; sort by updated_at DESC
   updated_at: number;
   draft_md: string | null;
 };
@@ -68,16 +69,19 @@ export const templateGenerator: DraftGenerator = (row) => {
 };
 
 export function selectTopChatIn(db: Database, n: number = TOP_N): ChatInRow[] {
+  // Migration 017: urgency→pool, priority column dropped.
+  // Sort: most recently updated first (interactive chat_in rows are ephemeral;
+  // recency is a better proxy than the old priority integer was).
   return db
     .query<ChatInRow, [number]>(
-      `SELECT id, title, body_md, thread_id, priority, updated_at, draft_md
+      `SELECT id, title, body_md, thread_id, updated_at, draft_md
          FROM issues
         WHERE kind = 'event'
-          AND urgency = 'interactive'
+          AND pool = 'interactive'
           AND source_module = 'arc-chat'
           AND state NOT IN ('merged','cancelled','failed')
           AND paused = 0
-        ORDER BY COALESCE(priority, 999) ASC, updated_at DESC
+        ORDER BY updated_at DESC
         LIMIT ?`,
     )
     .all(n);
@@ -151,7 +155,7 @@ export function runPreDrafter(
     .query<{ id: string }, []>(
       `SELECT id FROM issues
         WHERE kind = 'event'
-          AND urgency = 'interactive'
+          AND pool = 'interactive'
           AND source_module = 'arc-chat'
           AND draft_md IS NOT NULL
           AND state NOT IN ('merged','cancelled','failed')`,

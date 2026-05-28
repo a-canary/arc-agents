@@ -6,103 +6,161 @@ import { renderSystemPrompt, resolveTemplate } from "./templates";
 
 const REPO_ROOT = join(dirname(fileURLToPath(import.meta.url)), "..", "..");
 
-const TEMPLATE_COMBOS: Array<[string, string]> = [
-  ["task", "interactive"],
-  ["task", "HITL"],
-  ["task", "cron"],
-  ["task", "mvp"],
-  ["task", "security"],
-  ["task", "quality"],
-  ["task", "scale"],
-  ["task", "efficiency"],
-  ["task", "deferred"],
-  ["event", "interactive"],
-  ["reply", "interactive"],
-  ["prefetch", "interactive"],
-  ["prd", "mvp"],
-  ["task", "__unknown__"],
+// All real agent keys from AGENT_TABLE + DEFAULT (via "nope")
+const AGENT_COMBOS: Array<[string, string]> = [
+  ["developer", "build"],
+  ["developer", "interactive"],
+  ["developer", "ops"],
+  ["director", "interactive"],
+  ["director", "build"],
+  ["admin", "build"],
+  ["chat", "interactive"],
+  ["triage", "explore"],
+  ["sprint", "build"],
+  ["sprint", "interactive"],
+  ["bookie", "build"],
+  ["agent_unset", "build"],
+  ["nope", "build"], // unknown agent → DEFAULT
 ];
 
 const EXTERNAL_SKILLS = new Set(["grill-with-docs", "choose-wisely"]);
 
-describe("resolveTemplate", () => {
-  it("picks interactive frame for reply/interactive", () => {
-    expect(resolveTemplate("reply", "interactive").frame).toBe("interactive");
+describe("resolveTemplate (agent-keyed)", () => {
+  it("sprint agent → sprint frame regardless of pool", () => {
+    expect(resolveTemplate("sprint", "build").frame).toBe("sprint");
+    expect(resolveTemplate("sprint", "interactive").frame).toBe("sprint");
   });
 
-  it("picks intake frame for event/interactive with grill+choose skills", () => {
-    const t = resolveTemplate("event", "interactive");
+  it("sprint opening_skills contains sprint-supervise", () => {
+    expect(resolveTemplate("sprint", "build").opening_skills).toContain("sprint-supervise");
+  });
+
+  it("director → intake frame with grill+choose skills", () => {
+    const t = resolveTemplate("director", "interactive");
     expect(t.frame).toBe("intake");
     expect(t.opening_skills).toContain("grill-with-docs");
     expect(t.opening_skills).toContain("choose-wisely");
   });
 
-  it("falls back to afk default for unknown combos", () => {
-    const t = resolveTemplate("task", "wat-is-this");
+  it("chat → intake frame", () => {
+    expect(resolveTemplate("chat", "interactive").frame).toBe("intake");
+  });
+
+  it("developer + pool=interactive → interactive frame (pool drives human-presence)", () => {
+    expect(resolveTemplate("developer", "interactive").frame).toBe("interactive");
+  });
+
+  it("developer + pool=build → afk frame", () => {
+    expect(resolveTemplate("developer", "build").frame).toBe("afk");
+  });
+
+  it("triage + pool=explore → afk frame + triage-assign skill", () => {
+    const t = resolveTemplate("triage", "explore");
+    expect(t.frame).toBe("afk");
+    expect(t.opening_skills).toContain("triage-assign");
+  });
+
+  it("unknown agent falls back to afk default with ke-recall only", () => {
+    const t = resolveTemplate("nope", "build");
     expect(t.frame).toBe("afk");
     expect(t.opening_skills).toEqual(["ke-recall"]);
   });
 
-  it("task/mvp includes triage-failed", () => {
-    expect(resolveTemplate("task", "mvp").opening_skills).toContain("triage-failed");
+  it("sprint overrides pool=interactive: still sprint frame, not interactive", () => {
+    expect(resolveTemplate("sprint", "interactive").frame).toBe("sprint");
+    expect(resolveTemplate("sprint", "interactive").frame).not.toBe("interactive");
   });
 });
 
-describe("opening_skills resolve to skills/<name>/SKILL.md", () => {
-  for (const [kind, type] of TEMPLATE_COMBOS) {
-    it(`${kind}/${type}: every opening skill has a SKILL.md or is external`, () => {
-      const t = resolveTemplate(kind, type);
+describe("opening_skills resolve to skills/<name>/SKILL.md or are external", () => {
+  for (const [agent, pool] of AGENT_COMBOS) {
+    it(`${agent}/${pool}: every opening skill has a SKILL.md or is external`, () => {
+      const t = resolveTemplate(agent, pool);
       for (const name of t.opening_skills) {
         if (EXTERNAL_SKILLS.has(name)) continue;
         const path = join(REPO_ROOT, "skills", name, "SKILL.md");
         if (!existsSync(path)) {
-          throw new Error(`opening skill "${name}" referenced by ${kind}/${type} missing at ${path}`);
+          throw new Error(`opening skill "${name}" referenced by ${agent}/${pool} missing at ${path}`);
         }
       }
     });
   }
 });
 
-describe("renderSystemPrompt", () => {
+it("skills/prd-to-issues/SKILL.md exists", () => {
+  expect(existsSync(join(REPO_ROOT, "skills", "prd-to-issues", "SKILL.md"))).toBe(true);
+});
+
+describe("renderSystemPrompt (agent-keyed)", () => {
   const base = { worker: "arc-worker-i-abc", task: "i-xyz" };
 
   it("includes caveman + bookie + author overlays", () => {
-    const p = renderSystemPrompt({ ...base, kind: "task", type: "interactive" });
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
     expect(p).toContain("Reply terse");
     expect(p).toContain("bookie subagent");
     expect(p).toContain("git config user.name");
   });
 
   it("never hardcodes a username", () => {
-    const p = renderSystemPrompt({ ...base, kind: "task", type: "mvp" });
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
     expect(p).not.toContain("a-canary");
     expect(p).not.toContain("aaron");
   });
 
-  it("leading line carries kind+type+worker+task", () => {
-    const p = renderSystemPrompt({ ...base, kind: "event", type: "interactive" });
-    expect(p.split("\n")[0]).toContain("kind=event");
-    expect(p.split("\n")[0]).toContain("type=interactive");
-    expect(p.split("\n")[0]).toContain("worker=arc-worker-i-abc");
-    expect(p.split("\n")[0]).toContain("task=i-xyz");
+  it("leading line carries kind, agent, pool, worker, task", () => {
+    const p = renderSystemPrompt({ ...base, kind: "sprint", agent: "sprint", pool: "build" });
+    const first = p.split("\n")[0]!;
+    expect(first).toContain("kind=sprint");
+    expect(first).toContain("agent=sprint");
+    expect(first).toContain("pool=build");
+    expect(first).toContain("worker=arc-worker-i-abc");
+    expect(first).toContain("task=i-xyz");
+    // must NOT contain old type= key
+    expect(first).not.toContain("type=");
   });
 
-  it("opening-skills line omitted when none", () => {
-    const p = renderSystemPrompt({ ...base, kind: "reply", type: "interactive" });
-    expect(p).not.toContain("Opening skills");
+  it("leading line does NOT contain type=", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "ops" });
+    expect(p.split("\n")[0]).not.toContain("type=");
   });
 
-  it("opening-skills line present when configured", () => {
-    const p = renderSystemPrompt({ ...base, kind: "task", type: "mvp" });
+  it("opening-skills line present for developer (ke-recall)", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
     expect(p).toContain("Opening skills");
     expect(p).toContain("/ke-recall");
+  });
+
+  it("opening-skills line present and contains triage-failed for developer", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
     expect(p).toContain("/triage-failed");
   });
 
-  it("includes AGENTS.md doctrine (Evidence-First, Concern, Pattern)", () => {
-    const p = renderSystemPrompt({ ...base, kind: "task", type: "mvp" });
+  it("includes AGENTS.md doctrine (Evidence-First, HITL Decomposition, Pattern Detection)", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
     expect(p).toContain("Evidence-First");
     expect(p).toContain("HITL Decomposition");
     expect(p).toContain("Pattern Detection");
+  });
+
+  it("## Brief section present when brief provided", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build", brief: "do the thing" });
+    expect(p).toContain("## Brief");
+    expect(p).toContain("do the thing");
+  });
+
+  it("## Brief section absent when brief is not provided", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
+    expect(p).not.toContain("## Brief");
+  });
+
+  it("## Brief section absent when brief is empty string", () => {
+    const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build", brief: "" });
+    expect(p).not.toContain("## Brief");
+  });
+
+  it("sprint render contains sprint frame distinctive text", () => {
+    const p = renderSystemPrompt({ ...base, kind: "sprint", agent: "sprint", pool: "build" });
+    expect(p).toContain("re-entrant");
+    expect(p).toContain("prior-cycle handoffs");
   });
 });

@@ -23,8 +23,8 @@ function insertIssue(
 ) {
   const now = row.updated_at ?? Math.floor(Date.now() / 1000);
   db.exec(
-    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, class, urgency, hitl, created_at, updated_at)
-     VALUES (?, 'arc-agents', ?, '', '', ?, ?, 'task', 'class_unset', 'nominal', ?, ?, ?)`,
+    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool, hitl, created_at, updated_at)
+     VALUES (?, 'arc-agents', ?, '', '', ?, ?, 'task', 'tier_unset', 'pool_unset', ?, ?, ?)`,
     [row.id, row.title, row.type ?? "mvp", row.state ?? "ready", row.hitl ?? 0, now, now] as never,
   );
 }

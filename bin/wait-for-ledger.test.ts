@@ -82,33 +82,34 @@ test("excludes paused rows from worker count", async () => {
   }
 });
 
-test("ready-row ordering: higher priority first, paused excluded", () => {
-  // Mirrors the WHERE/ORDER BY shipped in wait-for-ledger.ts so any drift in
-  // the production query trips this test alongside the CLI smoke tests.
+test("ready-row ordering: paused excluded, unclaimed only (migration 017)", () => {
+  // Migration 017: priority column dropped. Ordering now uses created_at ASC.
+  // Mirrors the WHERE clause in wait-for-ledger.ts; any drift trips this test.
   const dir = mkdtempSync(join(tmpdir(), "wfl-"));
   const dbPath = join(dir, "t.db");
   try {
     const db = new Database(dbPath);
     migrate(db);
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind, priority, paused)
-       VALUES ('low','p','t','b','mvp','ready','task',10,0)`,
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind, paused, created_at)
+       VALUES ('first','p','t','b','mvp','ready','task',0,1000)`,
     );
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind, priority, paused)
-       VALUES ('high','p','t','b','mvp','ready','task',100,0)`,
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind, paused, created_at)
+       VALUES ('second','p','t','b','mvp','ready','task',0,2000)`,
     );
     db.run(
-      `INSERT INTO issues (id, project, title, body_md, type, state, kind, priority, paused)
-       VALUES ('paused-hi','p','t','b','mvp','ready','task',1000,1)`,
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind, paused, created_at)
+       VALUES ('paused','p','t','b','mvp','ready','task',1,500)`,
     );
     const rows = db
       .query<{ id: string }, [string]>(
-        "SELECT id FROM issues WHERE kind=? AND state='ready' AND claimed_by IS NULL AND paused=0 ORDER BY priority DESC, created_at ASC",
+        "SELECT id FROM issues WHERE kind=? AND state='ready' AND claimed_by IS NULL AND paused=0 ORDER BY created_at ASC",
       )
       .all("task");
     db.close();
-    expect(rows.map((r) => r.id)).toEqual(["high", "low"]);
+    // paused row excluded; oldest created_at first
+    expect(rows.map((r) => r.id)).toEqual(["first", "second"]);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }

@@ -12,7 +12,7 @@ import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrate } from "./migrate";
-import { reapWorktrees } from "./worktree-reaper";
+import { reapWorktrees, backstopPurgeWorktrees } from "./worktree-reaper";
 
 let workDir: string;
 let repoDir: string;
@@ -36,6 +36,23 @@ function insertMergedIssue(db: Database, id: string, wt: string | null, br: stri
      VALUES (?, 'p', 't', 'b', 'mvp', 'merged', 'task', ?, ?)`,
     [id, wt, br],
   );
+}
+
+function insertIssue(db: Database, id: string, state: string, wt: string | null, br: string | null) {
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch)
+     VALUES (?, 'p', 't', 'b', 'mvp', ?, 'task', ?, ?)`,
+    [id, state, wt, br],
+  );
+}
+
+// Add a commit on the worktree's checked-out branch so it is "ahead of main".
+function commitInWorktree(wtDir: string, file: string, body: string) {
+  writeFileSync(join(wtDir, file), body);
+  const add = git(wtDir, ["add", file]);
+  if (!add.ok) throw new Error(`worktree add failed: ${add.out}`);
+  const ci = git(wtDir, ["commit", "-q", "-m", `wt: ${file}`]);
+  if (!ci.ok) throw new Error(`worktree commit failed: ${ci.out}`);
 }
 
 beforeEach(() => {
@@ -179,4 +196,221 @@ test("idempotent: second call is a no-op once the row is cleared", () => {
 
   const second = reapWorktrees(db);
   expect(second.length).toBe(0);
+});
+
+// --- Trigger (b): prune-after-triage-processes-a-failed-task ---
+// A failed/cancelled row whose worktree carries NO commits ahead of main is
+// scratch — nothing to salvage — so the reaper removes it. A failed/cancelled
+// row WITH commits is preserved (the human may want to salvage). blocked rows
+// stay excluded entirely (decomposition parents need their worktree).
+
+test("(b) reaps a FAILED row whose worktree has no commits ahead of main", () => {
+  const db = setupDb();
+  insertIssue(db, "iss-fail-clean", "failed", worktreeDir, BRANCH);
+  // Worktree is fresh off main → 0 commits ahead.
+
+  const reaped = reapWorktrees(db);
+
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.issue_id).toBe("iss-fail-clean");
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+  expect(git(repoDir, ["branch", "--list", BRANCH]).out).toBe("");
+
+  const row = db
+    .query<{ worktree_path: string | null; branch: string | null }, []>(
+      "SELECT worktree_path, branch FROM issues WHERE id='iss-fail-clean'",
+    )
+    .get();
+  expect(row?.worktree_path).toBeNull();
+  expect(row?.branch).toBeNull();
+});
+
+test("(b) PRESERVES a FAILED row whose worktree has commits ahead of main", () => {
+  const db = setupDb();
+  insertIssue(db, "iss-fail-work", "failed", worktreeDir, BRANCH);
+  commitInWorktree(worktreeDir, "salvage.txt", "unmerged work the human may want\n");
+
+  const reaped = reapWorktrees(db);
+
+  // Reported as preserved, NOT removed — and the dir + row are untouched.
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.issue_id).toBe("iss-fail-work");
+  expect(reaped[0]!.outcome).toBe("has-commits");
+  expect(existsSync(worktreeDir)).toBe(true);
+
+  const row = db
+    .query<{ worktree_path: string | null; branch: string | null }, []>(
+      "SELECT worktree_path, branch FROM issues WHERE id='iss-fail-work'",
+    )
+    .get();
+  expect(row?.worktree_path).toBe(worktreeDir);
+  expect(row?.branch).toBe(BRANCH);
+});
+
+test("(b) reaps a CANCELLED row whose worktree has no commits ahead of main", () => {
+  const db = setupDb();
+  insertIssue(db, "iss-cancel-clean", "cancelled", worktreeDir, BRANCH);
+
+  const reaped = reapWorktrees(db);
+
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
+
+test("(b) still SKIPS blocked rows entirely (decomposition parents keep their worktree)", () => {
+  const db = setupDb();
+  insertIssue(db, "iss-blocked", "blocked", worktreeDir, BRANCH);
+
+  const reaped = reapWorktrees(db);
+
+  expect(reaped.length).toBe(0);
+  expect(existsSync(worktreeDir)).toBe(true);
+  const row = db
+    .query<{ worktree_path: string | null; state: string }, []>(
+      "SELECT worktree_path, state FROM issues WHERE id='iss-blocked'",
+    )
+    .get();
+  expect(row?.worktree_path).toBe(worktreeDir);
+  expect(row?.state).toBe("blocked");
+});
+
+test("(b) still SKIPS ready/wip rows even with a worktree_path set", () => {
+  const db = setupDb();
+  insertIssue(db, "iss-ready", "ready", worktreeDir, BRANCH);
+  const reaped = reapWorktrees(db);
+  expect(reaped.length).toBe(0);
+  expect(existsSync(worktreeDir)).toBe(true);
+});
+
+// --- Trigger (c): 7-day backstop purge (disk-scan) ---
+// The row-driven reaper only sees worktrees still recorded on a ledger row.
+// The pre-startup sweep cancelled/deleted hundreds of rows, leaving on-disk
+// worktrees with NO live row — unreachable by reapWorktrees(). The backstop
+// disk-scans a worktrees root and removes ONLY dirs that are safe to remove:
+//   - branch fully merged to main (0 commits ahead) → pure scratch, remove
+//     regardless of age;
+//   - OR aged past maxAgeSec AND no live ledger row references it AND it has
+//     no unmerged commits.
+// It NEVER removes a dir carrying unmerged commits (honor "delete nothing"),
+// and NEVER removes a dir a live ledger row still references (let the
+// row-driven reaper own those).
+
+// Build a sibling worktree under a scanned root. Returns its path.
+function addWorktreeUnder(root: string, name: string, branch: string): string {
+  const dir = join(root, name);
+  const r = git(repoDir, ["worktree", "add", "-q", dir, "-b", branch]);
+  if (!r.ok) throw new Error(`worktree add ${name} failed: ${r.out}`);
+  return dir;
+}
+
+test("(c) backstop removes an aged, no-row, no-commits worktree", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = addWorktreeUnder(root, "orphan-clean", "orphan-clean-br");
+
+  // No ledger row references `dir`. Force it "aged" via now far in the future.
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("removed");
+  expect(existsSync(dir)).toBe(false);
+});
+
+test("(c) backstop PRESERVES an aged, no-row worktree that has unmerged commits", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = addWorktreeUnder(root, "orphan-work", "orphan-work-br");
+  commitInWorktree(dir, "precious.txt", "unmerged salvageable work\n");
+
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("kept-has-commits");
+  expect(existsSync(dir)).toBe(true);
+});
+
+test("(c) backstop KEEPS a worktree a live ledger row still references", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = addWorktreeUnder(root, "tracked", "tracked-br");
+  // A live (wip) row owns this dir → backstop must not touch it.
+  insertIssue(db, "iss-live", "wip", dir, "tracked-br");
+
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("kept-live-row");
+  expect(existsSync(dir)).toBe(true);
+});
+
+test("(c) backstop KEEPS a young, no-row, no-commits worktree (not yet aged out)", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = addWorktreeUnder(root, "fresh", "fresh-br");
+
+  // now == real now, dir just created → under the 7d age gate.
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000),
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("kept-too-young");
+  expect(existsSync(dir)).toBe(true);
+});
+
+test("(c) backstop removes a fully-merged worktree regardless of age", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = addWorktreeUnder(root, "merged-young", "merged-young-br");
+  // Commit on the branch, then merge it into main → 0 commits ahead of main.
+  commitInWorktree(dir, "feature.txt", "shipped\n");
+  const merge = git(repoDir, ["merge", "--no-ff", "-q", "-m", "merge feature", "merged-young-br"]);
+  if (!merge.ok) throw new Error(`merge failed: ${merge.out}`);
+
+  // now == real now → young, but merged → removable anyway.
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000),
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("removed");
+  expect(existsSync(dir)).toBe(false);
+});
+
+test("(c) backstop is a no-op on an empty/absent root", () => {
+  const db = setupDb();
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: join(workDir, "does-not-exist"),
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+  });
+  expect(res.length).toBe(0);
 });
