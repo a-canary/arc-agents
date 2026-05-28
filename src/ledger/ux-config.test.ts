@@ -8,6 +8,8 @@ import {
   loadConfig,
   validateHitlWrite,
   pickModulesForHitl,
+  resolveVaultHome,
+  resolveLedgerDb,
   type UxConfig,
 } from "./ux-config";
 
@@ -173,3 +175,57 @@ test("validateHitlWrite accepts artifact with rasterize-png strategy", () => {
   });
   expect(errs).toEqual([]);
 });
+
+// ── resolveVaultHome tests ───────────────────────────────────────────────────
+
+test("resolveVaultHome: explicit ARC_VAULT_HOME wins", () => {
+  const orig = process.env.ARC_VAULT_HOME;
+  process.env.ARC_VAULT_HOME = "/explicit/vault";
+  try {
+    expect(resolveVaultHome()).toBe("/explicit/vault");
+  } finally {
+    if (orig === undefined) delete process.env.ARC_VAULT_HOME;
+    else process.env.ARC_VAULT_HOME = orig;
+  }
+});
+
+// ── resolveLedgerDb tests ────────────────────────────────────────────────────
+
+test("resolveLedgerDb: ARC_LEDGER_DB wins over everything", () => {
+  const orig = {
+    DB: process.env.ARC_LEDGER_DB,
+    VAULT: process.env.ARC_VAULT_HOME,
+  };
+  process.env.ARC_LEDGER_DB = "/custom/ledger.db";
+  delete process.env.ARC_VAULT_HOME;
+  try {
+    expect(resolveLedgerDb()).toBe("/custom/ledger.db");
+  } finally {
+    if (orig.DB === undefined) delete process.env.ARC_LEDGER_DB;
+    else process.env.ARC_LEDGER_DB = orig.DB;
+    if (orig.VAULT === undefined) delete process.env.ARC_VAULT_HOME;
+    else process.env.ARC_VAULT_HOME = orig.VAULT;
+  }
+});
+
+test("resolveLedgerDb: falls back to resolveVaultHome()/ledger.db", () => {
+  const orig = {
+    DB: process.env.ARC_LEDGER_DB,
+    VAULT: process.env.ARC_VAULT_HOME,
+  };
+  delete process.env.ARC_LEDGER_DB;
+  process.env.ARC_VAULT_HOME = "/my/vault";
+  try {
+    expect(resolveLedgerDb()).toBe("/my/vault/ledger.db");
+  } finally {
+    if (orig.DB === undefined) delete process.env.ARC_LEDGER_DB;
+    else process.env.ARC_LEDGER_DB = orig.DB;
+    if (orig.VAULT === undefined) delete process.env.ARC_VAULT_HOME;
+    else process.env.ARC_VAULT_HOME = orig.VAULT;
+  }
+});
+
+// Note: resolveVaultHome() tests that depend on os.homedir() fallback
+// (XDG-only path, legacy ~/vault preference) cannot be unit-tested without
+// mocking os.homedir() — os.homedir() reads the passwd database, not $HOME.
+// Manual verification: set XDG_DATA_HOME=/tmp/testxdg and delete ARC_VAULT_HOME.

@@ -140,6 +140,34 @@ Before `git commit`, the worker spawns an independent subagent (no shared reason
 
 ### I-0009: Analysis-Writer Contract for Decomposition
 When an `analysis-*.md` (or PRD) prescribes a decomposition of a parent task into N child rows, the writer MUST include the exact `bin/ledger.ts decompose <parent-id> --child "..."` invocation in the prescribed-action section — not just describe the intent ("spawn N HITL children") in prose. The atomic verb (`decompose` in `bin/ledger.ts`) inserts N rows + sets `parent.blocked_by` + flips `parent.state='blocked'` in one transaction; any other sequence (`create --parent` per child + `update --blocked-by` + `update --state blocked`, or per-row `create` calls) is a non-atomic partial decomposition that leaves the parent in a stuck-forever state if any step crashes mid-flight. The spawn skill procedure documents this; this decision makes the writer's contract explicit so analysis files cannot be drafted with the broken pattern. Observed: `analysis-1780676509.md` (2026-06-05) prescribed `decompose` correctly; the executing worker (arc-worker-a-xs4pco) used per-row `create --parent` instead, leaving `dream-repo-branches-stranded-on-origin-m` (parent) in `state=blocked, blocked_by=null`. The bookie's `decompose` verb is the only canonical path; raw `create --parent` is reserved for the rare case of attaching a single pre-existing child to an already-blocked parent (see spawn skill "manual pattern" subsection for that escape hatch).
+### I-0012: XDG-Compliant Vault Path Convention
+Cross-repo env var naming for vault/data directories.
+
+**Principle:** Vault content (notes, evidence, run data) → XDG_DATA_HOME. Config → XDG_CONFIG_HOME. Cache → XDG_CACHE_HOME. No project hardcodes `$HOME/vault`.
+
+**Resolution order (per project, first non-empty wins):**
+- `arc-agents`  → `$ARC_VAULT_HOME` → `$XDG_DATA_HOME/arc/vault` → `$HOME/.local/share/arc/vault` → `$HOME/vault`
+- `ke`          → `$KE_VAULT_HOME`  → `$XDG_DATA_HOME/ke/vault`   → `$HOME/.local/share/ke/vault`   → `$HOME/vault/ke`
+- `pipeliner`   → `$PIPELINER_VAULT_HOME` → `$XDG_DATA_HOME/pipeliner/vault` → `$HOME/.local/share/pipeliner/vault` → `$HOME/vault/pipeliner`
+- `cli-proxy`   → `$CLI_PROXY_VAULT_HOME` → `$XDG_DATA_HOME/cli-proxy/vault` → `$HOME/.local/share/cli-proxy/vault` → `$HOME/vault/cli-proxy`
+
+**Config dirs:** `$XDG_CONFIG_HOME/<project>/` (e.g. `$XDG_CONFIG_HOME/arc/`). `$ARC_CONFIG` already honors XDG_CONFIG_HOME (U-0005).
+
+**Ledger DB (arc-agents only):** `$ARC_LEDGER_DB` → `$ARC_VAULT_HOME/ledger.db` → `$HOME/vault/ledger.db`.
+
+**Rationale:** Separating data/config/cache avoids dotfile pollution, enables OS-level XDG enforcement (AppArmor, Flatpak sandboxing), and makes vault portable between projects. `$ARC_CONFIG` already follows this pattern.
+
+**Files needing migration (cross-repo):**
+- `arc-agents/bin/vast-lease.ts` — `VAULT_DIR` → `ARC_VAULT_HOME`
+- `arc-agents/bin/report-error.sh` — `VAULT_DIR` → `ARC_VAULT_HOME`
+- `ke/bin/knowledge-engine.ts` — `VAULT_DIR` → `KE_VAULT_HOME`
+- `ke/bin/ke-tool.ts` — `KE_ROOT` split into `KE_VAULT_HOME` + `KE_CONFIG_HOME`
+- `pipeliner/examples/blog-publish.ts` — hardcoded `$HOME/vault` → `PIPELINER_VAULT_HOME`
+
+### I-0013: Ledger DB XDG Path
+`open()` in `src/ledger/db.ts` uses `resolveLedgerDb()` from `src/ledger/ux-config.ts`.
+`resolveLedgerDb()` resolves `$ARC_LEDGER_DB` → `$ARC_VAULT_HOME/ledger.db` → `$HOME/vault/ledger.db`.
+Pre-existing installs with `ARC_LEDGER_DB` unset and no XDG migration continue working via legacy fallback.
 
 ### I-0011: triageUnset Auto-Classification
 `triageUnset(db, budget=10)` in `bin/factory.ts` runs each factory tick. Selects up to `budget` ready rows with `agent='agent_unset' OR pool='pool_unset'` ordered by SORT_KEY_SQL. Rules: agent — `source_module='arc-chat'` → `chat`; `kind='prd'` → `director`; else → `developer`. Pool — `tier IN (prod,trust,mvp)` → `build`; else → `explore`. Tier is never touched. Each triaged row gets a `kind='triaged'` event (migration 018). Escape hatch: `ARC_TRIAGE_DISABLE=1`. Budget override: `ARC_TRIAGE_BUDGET=N`.

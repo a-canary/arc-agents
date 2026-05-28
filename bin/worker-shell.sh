@@ -193,8 +193,21 @@ CLAUDE="${CLAUDE_BIN:-claude}"
 # against the canonical ledger — a leaked ARC_LEDGER_DB env var (or its
 # absence, which defaults to canon) would otherwise let a test fixture
 # corrupt production rows. Refuse before any ledger write.
+#
+# CANON_DB uses ARC_VAULT_HOME with XDG_DATA_HOME fallback (I-0012).
+_resolve_arc_vault_home() {
+  local home="${HOME}"
+  local xdg="${XDG_DATA_HOME:-${home}/.local/share}"
+  local xdg_vault="${xdg}/arc/vault"
+  # Prefer existing legacy path if XDG path is unpopulated
+  if [[ -d "${home}/vault" ]] && [[ ! -d "$xdg_vault" ]]; then
+    echo "${home}/vault"
+  else
+    echo "$xdg_vault"
+  fi
+}
 if [[ "${WORKER:-}" == arctest-* ]]; then
-  CANON_DB="${HOME}/vault/ledger.db"
+  CANON_DB="${ARC_VAULT_HOME:-$(_resolve_arc_vault_home)}/ledger.db"
   EFFECTIVE_DB="${ARC_LEDGER_DB:-$CANON_DB}"
   if [[ "$EFFECTIVE_DB" == "$CANON_DB" ]]; then
     echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"arctest-claim-against-canon-refused\"}" >&2
@@ -203,7 +216,15 @@ if [[ "${WORKER:-}" == arctest-* ]]; then
 fi
 
 DB_FLAG=()
-[ -n "${ARC_LEDGER_DB:-}" ] && DB_FLAG=(--db "${ARC_LEDGER_DB}")
+# ARC_LEDGER_DB overrides everything; otherwise fall back to resolveVaultHome()/ledger.db
+if [ -n "${ARC_LEDGER_DB:-}" ]; then
+  DB_FLAG=(--db "${ARC_LEDGER_DB}")
+elif [ -n "${ARC_VAULT_HOME:-}" ]; then
+  DB_FLAG=(--db "${ARC_VAULT_HOME}/ledger.db")
+else
+  # shellcheck disable=SC2046
+  DB_FLAG=(--db "$(_resolve_arc_vault_home)/ledger.db")
+fi
 
 # Atomic claim. Race-safe — losers get claimed=null and exit.
 # ARC_CLAIM_POOL (preferred) or ARC_CLAIM_TYPE (deprecated alias) restricts
