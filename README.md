@@ -55,6 +55,59 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 - [x] **Skills** — `bookie`, `ke-recall`, `ke-learn`, `claude-afk`,
       `to-ledger`, `triage-failed`.
 
+## Public API Surface
+
+### CLI verbs
+
+All bins run via `bun <path>` or installed on PATH after `bun link`:
+
+| Bin | Purpose |
+|---|---|
+| `ledger` | Ledger CRUD + tick + cascade. Primary interface for issue lifecycle. |
+| `wait-for-ledger` | Block until ledger DB is readable (factory bootstrap helper). |
+| `arc-chat` | Post/reply to HITL chat threads. `post <msg>` queues inbound; `tail --thread T` streams replies. |
+| `arc-ux` | UX heartbeat module. `heartbeat | list | answer` verb dispatch against ledger state. |
+| `arc-tui` | Reference TUI module (`heartbeat | list | answer`). Connects arc-ux to a terminal render strategy. |
+| `arc-replay` | Session-replay probe: capture, diff, and regression-test worker-shaped executions. |
+| `factory` | Supervisor daemon. Reaps stale workers, spawns fresh ones up to `pool_caps`. |
+| `webui-server` | arc-webui HTTP server (pre-alpha, see PRD-arc-webui.md). |
+
+Ledger CLI verbs: `init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum`.
+
+### Config schema (`config.json`)
+
+```json
+{
+  "exec_cli_alias": { "<alias>": "<template>" },
+  "pool_caps": { "<pool>": <number> },
+  "default_alias": "<alias>",
+  "fast_alias": "<alias>",   // optional; must be a key in exec_cli_alias
+  "smart_alias": "<alias>"   // optional; must be a key in exec_cli_alias
+}
+```
+
+- `exec_cli_alias` templates must contain `{prompt}` exactly once.
+- `claude --model` aliases must name a known Claude model (`opus`, `sonnet`, `haiku`); provider models must use `pi -p --provider`.
+- `fast_alias` / `smart_alias` are optional pointers set by `/select-models`; they must resolve to keys in `exec_cli_alias`.
+
+### Exported functions (src/)
+
+```ts
+// src/config/load.ts
+loadConfig(root?: string): Config               // load + validate config.json
+resolveAlias(name: string, cfg: Config): string // resolve alias or default
+resolveFast(cfg: Config): { alias, command }    // throws if fast_alias unset
+resolveSmart(cfg: Config): { alias, command }   // throws if smart_alias unset
+
+// src/ledger/schema-enums.ts
+export type Class   = "BUG"|"MVP"|"ops"|"hygiene"|"quality"|"trust"|"scale"|"efficiency"|"class_unset"
+export type Tier    = "prod"|"trust"|"mvp"|"quality"|"scale"|"efficiency"|"hygiene"|"tier_unset"
+export type Pool    = "interactive"|"ops"|"build"|"explore"|"pool_unset"
+export type Agent   = "director"|"developer"|"admin"|"chat"|"triage"|"sprint"|"bookie"|"agent_unset"
+export type Urgency = "interactive"|"nominal"|"deferred"
+sqlInList(values: readonly string[]): string   // for SQL CHECK constraints
+```
+
 ## Coming soon
 
 - [ ] **arc-webui** — 2-panel HITL+AFK web surface (see
