@@ -32,6 +32,27 @@ Install bins on PATH (after merge to main):
 bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 ```
 
+## Examples
+
+Runnable shell scripts in `examples/` — work from a clean clone with just `bun`:
+
+```
+examples/
+├── 01-ledger-quickstart/   # init, create, list, show, tick, doctor -- bun only
+├── 02-chat-interview/       # post + tail replies -- requires running \
+│                            #   bun bin/factory.ts in another terminal
+└── 03-factory-health/       # ledger doctor (pure read) -- bun only
+```
+
+Run any one:
+```
+bash examples/01-ledger-quickstart/run.sh   # bun only
+bash examples/02-chat-interview/run.sh     # bun + factory running in another terminal
+bash examples/03-factory-health/run.sh    # bun only
+```
+
+No private paths, no proprietary keys.
+
 ## Shipped
 
 - [x] **Ledger core** — `issues` + `issue_events` tables, atomic claim
@@ -41,7 +62,7 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 - [x] **Bookie validator** — single authority for ledger writes inside an
       agent session; subagent at `.claude/agents/bookie.md`.
 - [x] **Factory** — supervisor daemon: reaps workers >4hr old, spawns up to
-      N=4 ephemeral tmux worker sessions when ready tasks exist; sweeps
+      N=4 ephemeral tmux worker sessions when ready tasks exist; sweeps to-be
       stale claims each tick.
 - [x] **HITL schema** — two-table model (`hitl_prompts` + `hitl_deliveries`
       + `ux_heartbeats`); first-reply-wins atomic update; loser deliveries
