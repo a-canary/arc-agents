@@ -1,0 +1,9 @@
+title = "arc-agents gitleaks config"
+# Allowlist for false positives: Discord user ID matches rule "discord-client-id"
+# but is NOT a client secret — it's a user snowflake.
+
+[allowlist]
+  description = "Known false positives"
+  paths = [".gitleaksignore"]
+  # Match the specific finding (discord-user-id in .gitleaksignore from prior scan commit)
+  regexes = ["355743847709409281"]

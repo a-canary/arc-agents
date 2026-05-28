@@ -1,0 +1,4 @@
+# .gitleaksignore — arc-agents secret scan
+# false-positive: discord-user-id rule fires on a user snowflake, not a client secret
+# finding: 355743847709409281 in .gitleaksignore (historical commit 2eac46340dcece015baccb7cf14d60ff014a0d43)
+# fix: allowlisted via .gitleaks.toml [allowlist] regexes = ["355743847709409281"]
