@@ -96,7 +96,28 @@ gate_migration_lint() {
   fi
 }
 
-# ── Gate 3: Test — bun test ─────────────────────────────────────────────────
+# ── Gate 3: Secret scan — gitleaks ──────────────────────────────────────────
+
+gate_secret_scan() {
+  log "Gate 3: Secret scan (gitleaks)"
+  local script="$PROJECT/bin/secret-scan-gate.sh"
+  if ! [ -x "$script" ]; then
+    skip "secret-scan" "bin/secret-scan-gate.sh missing"
+    return 0
+  fi
+  if ! command -v gitleaks >/dev/null 2>&1; then
+    skip "secret-scan" "gitleaks not installed"
+    return 0
+  fi
+  if "$script" >/dev/null 2>&1; then
+    pass "secret-scan" "gitleaks: no leaks found"
+  else
+    fail "secret-scan" "gitleaks detected secrets — check bin/secret-scan-gate.sh output"
+    return 1
+  fi
+}
+
+# ── Gate 4: Test — bun test ─────────────────────────────────────────────────
 
 gate_test() {
   log "Gate 3: Test (bun test)"
@@ -120,6 +141,7 @@ main() {
   gate_fixture        || true
   gate_typecheck      || true
   gate_migration_lint || true
+  gate_secret_scan    || true
   gate_test           || true
 
   local failed
