@@ -1,9 +1,8 @@
 # arc-agents
 
-> **Status: WIP / pre-alpha.** Personal research harness, evolving in public.
-> APIs, schemas, and CLIs will break without notice. Not packaged for external
-> use yet — clone and read if curious; expect rough edges. Assumes a specific
-> `~/vault/`, `~/worktrees/`, `~/.config/arc/` layout on the host.
+> **Status: WIP / pre-alpha.** Evolving in public. APIs, schemas, and CLIs
+> will break without notice. Not packaged for external use yet — clone and read
+> if curious; expect rough edges.
 
 Universal agent harness. SQLite ledger + small CLI shims for running ephemeral
 Claude Code workers off a shared message bus. Every state change is an atomic
@@ -68,8 +67,7 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 - [ ] **Impact-class HITL backpressure** — interviewer-only gate on
       `class=impact` prompts; workers must decompose instead.
 - [ ] **Public packaging** — split into installable plugin + bootstrap
-      interview; today everything assumes the host's `~/vault/`,
-      `~/worktrees/`, `~/.config/arc/` layout.
+      interview.
 - [ ] **Docs pass** — runnable quickstart, contributor guide, ADR index.
 
 ## Layout
@@ -83,9 +81,7 @@ docs/adr/   architecture decisions
 .private/   gitignored local state
 ```
 
-External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine),
-`~/vault/agents/<role>/` (memory, inbox, journal, outbox),
-`~/worktrees/<repo>-<slug>/` (worker scratch).
+External state: ledger db, knowledge engine, agent memory, worker scratch.
 
 ## Hard constraints (excerpted from `CHOICES.md`)
 
