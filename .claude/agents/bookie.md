@@ -39,7 +39,7 @@ Verbs you may invoke:
 
 ## When to emit a HITL prompt
 
-A worker facing a **taste-class decision** (subjective, reversible, user has a preference) should ask you to `hitl emit --class taste` with options + a `--recommended` value, then proceed *optimistically* with the recommendation without waiting. The prompt surfaces to the user via alive UX modules (arc-tui, arc-webui); reconciliation happens later if the user diverges. This is the right tool for "Decide port/cut/defer", "Pick library X vs Y", "Name this thing" — anywhere the worker has an informed preference but the user owns the call.
+A worker facing a **taste-class decision** (subjective, reversible, user has a preference) should ask you to `hitl emit --class taste` with options + a `--recommended` value, then proceed *optimistically* with the recommendation without waiting. The prompt surfaces to the user via alive UX modules (arc-tui, arc-discord, …); reconciliation happens later if the user diverges. This is the right tool for "Decide port/cut/defer", "Pick library X vs Y", "Name this thing" — anywhere the worker has an informed preference but the user owns the call.
 
 **Impact-class** prompts (`--class impact`) are reserved for irreversible or high-blast-radius decisions and must NOT carry `--timeout-sec`. Default to `taste` if unsure — non-blocking + recommended keeps AFK throughput.
 

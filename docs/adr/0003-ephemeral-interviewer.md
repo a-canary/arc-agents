@@ -37,7 +37,7 @@ The interviewer becomes ephemeral, spawned by the same factory pool as workers. 
 
 - One spawn path. `launch.ts` retires; factory owns everything.
 - Cold-start latency on every user message. Mitigated by fast-pass slots: an interviewer spawn is the same ~1s as a worker spawn, hidden by the user's typing time. Thread replay adds prompt tokens, not wall time.
-- `arc-chat tail` becomes the user's primary surface. The previous tmux-attach UX is gone — `arc-chat tail` can live in a terminal pane, a tmux split, or eventually arc-webui.
+- `arc-chat tail` becomes the user's primary surface. The previous tmux-attach UX is gone — `arc-chat tail` can live in a terminal pane, a tmux split, or eventually a dedicated UX module.
 - Every chat turn is in the ledger. Full conversation audit, queryable, replayable. The interviewer is no longer a black box.
 - Thread replay cost grows with conversation length. Compaction (drop or summarize old turns) is a future concern, not a launch concern.
 

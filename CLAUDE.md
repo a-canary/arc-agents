@@ -6,7 +6,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 - `CONTEXT.md` — domain glossary (Ledger, Issue, Worker, Factory, Interviewer, Bookie, Claim, Decomposition, Worktree, Reap). Definitions only.
 - `CHOICES.md` — scoped decisions (M-* mission, A-* architecture, G-* design, S-* skills, D-* data, I-* implementation). Higher tier constrains lower.
-- `PRD-v1.md` — product spec. `PRD-arc-webui.md` + `SLICE-PLAN-arc-webui.md` — webui slice.
+- `PRD-v1.md` — product spec.
 - `docs/adr/` — architecture decision records (when present).
 
 Treat `CONTEXT.md` as a glossary, not a spec — do not put implementation details there. Use `CHOICES.md` for decisions, ADRs for hard-to-reverse trade-offs.

@@ -12,7 +12,7 @@ Two problems showed up immediately:
 1. **Context pollution.** A worker that finished task A carried task A's context (files read, tools invoked, conclusions reached) into task B. The model's behavior on B was measurably worse — anchored on A's framing, sometimes referencing A's files as if they were part of B's worktree.
 2. **Stale code.** Workers never restarted, so updates to skills, hooks, subagent definitions, or worker prompts didn't take effect until the user manually killed and relaunched the session. The whole `~/repos/arc-agents` checkout could drift relative to what the running workers had loaded.
 
-No human ever attended these sessions (the planned `arc-webui` failed; workers are AFK by design). So the "interactive" framing was paid for in context-correctness without the corresponding observability benefit.
+No human ever attended these sessions (workers are AFK by design). So the "interactive" framing was paid for in context-correctness without the corresponding observability benefit.
 
 ## Decision
 

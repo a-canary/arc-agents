@@ -70,9 +70,6 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 
 ## Coming soon
 
-- [ ] **arc-webui** — 2-panel HITL+AFK web surface (see
-      [`PRD-arc-webui.md`](./PRD-arc-webui.md) +
-      [`SLICE-PLAN-arc-webui.md`](./SLICE-PLAN-arc-webui.md)).
 - [ ] **arc-discord** — async push module for HITL prompts.
 - [ ] **Decomposition flow** — AFK workers atomically insert N HITL
       children + flip parent to `blocked`; fanout cap = 5, recursion ok.

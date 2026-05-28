@@ -26,7 +26,7 @@ Universal agent harness. Ledger-dispatched, interactive-pane runtime. Replaces `
 <repo>/.private/             per-repo gitignored local state
 ```
 
-**arc- prefix** for user-owned repos: `arc-agents`, `arc-webui`. Third-party repos keep upstream name.
+**arc- prefix** for user-owned repos: `arc-agents`. Third-party repos keep upstream name.
 
 ### A-2. Three roles
 | Role | Scope | Workspace |
@@ -61,7 +61,7 @@ CREATE TABLE issues (
   role          TEXT,                    -- 'developer' | 'admin' | 'director' | NULL
   parent_id     INTEGER REFERENCES issues(id),
   thread_id     TEXT,                    -- groups chat/encounter exchanges
-  repo          TEXT,                    -- arc-agents, arc-webui, ...
+  repo          TEXT,                    -- arc-agents, arc-framework, ...
   slug          TEXT,                    -- worktree slug
   title         TEXT NOT NULL,
   body          TEXT,                    -- markdown
@@ -199,7 +199,7 @@ AI decides: low-level impl within approved scope.
 
 - Multi-user. Single operator (aaron).
 - Cross-machine sync. Single host.
-- Web UI (lives in `arc-webui`, depends on this).
+- Web UI: see arc-framework/arc/packages/arc-webui (depends on this).
 - GitHub Issues mirror. Ledger is local-first.
 
 ---

@@ -127,18 +127,8 @@ ux_modules:
     cli: arc-tui                 # binary on PATH
     heartbeat: { interval_sec: 60, stale_after_sec: 300 }
 
-  - name: arc-webui
-    implements: [ask_text, ask_choice, ask_confirm, notify, show_artifact]
-    renders:
-      text/markdown: native
-      text/diff: native
-      diagram/mermaid: native
-      chart/vega-lite: native
-      image/png: native
-      table/rows: native
-    can_retract: true
-    cli: arc-webui
-    heartbeat: { interval_sec: 60, stale_after_sec: 300 }
+  # arc-webui: lives at arc/packages/arc-webui (arc-framework monorepo).
+  # Config example removed — see that package's own ADR.
 
   - name: arc-discord
     implements: [ask_text, ask_choice, ask_confirm, notify]
@@ -220,12 +210,13 @@ Per-kind `payload` shape is enforced by zod schemas in `src/ledger/hitl-schemas.
 
 - The shapes of individual `payload` zod schemas (defined in code; this ADR fixes the kinds, not the field-level shape).
 - The reconciler daemon's exact implementation (factory-style supervisor likely, but TBD).
-- arc-webui, arc-discord, arc-email module internals — each gets its own ADR if any decision is hard-to-reverse.
+- arc-framework/arc/packages/arc-webui/ module internals — see that package's own ADR.
+- arc-discord, arc-email module internals — each gets its own ADR if any decision is hard-to-reverse.
 - The hygiene cron that motivated this work — built on top of the contract, doesn't constrain it.
 
 ## Consequences
 
 - Modules become independently installable/restartable. No harness redeploy when a module ships.
-- `arc-tui` is the first reference implementation. Once it works end-to-end the contract is proven; `arc-webui` becomes module #2.
+- `arc-tui` is the first reference implementation. Once it works end-to-end the contract is proven; UX module #2 follows the same pattern.
 - The contract surface (verbs, artifact types, schema) will mutate as new mediums reveal gaps. This ADR mutates with it — accepted trade-off versus splitting surface into a separate `system/ux-module-contract.md`.
 - Bookie gains real validation responsibility beyond schema-shape (alive-module + render-capability checks). Worth it — it's already the single write choke point.
