@@ -2,8 +2,7 @@
 
 > **Status: WIP / pre-alpha.** Personal research harness, evolving in public.
 > APIs, schemas, and CLIs will break without notice. Not packaged for external
-> use yet — clone and read if curious; expect rough edges. Assumes a specific
-> `~/vault/`, `~/worktrees/`, `~/.config/arc/` layout on the host.
+> use yet — clone and read if curious; expect rough edges.
 
 Universal agent harness. SQLite ledger + small CLI shims for running ephemeral
 Claude Code workers off a shared message bus. Every state change is an atomic
@@ -38,8 +37,8 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
       (`UPDATE ... RETURNING`), cascade-on-merge SQL trigger.
 - [x] **CLI** — `ledger {init,create,claim,update,event,list,show,tick,…}`,
       flag-only `create` per PRD-v1 §4.
-- [x] **Bookie validator** — single authority for ledger writes inside an
-      agent session; subagent at `.claude/agents/bookie.md`.
+- [x] **Bookie validator** — ledger writes inside agent sessions are
+      validated through a dedicated validator subagent.
 - [x] **Factory** — supervisor daemon: reaps workers >4hr old, spawns up to
       N=4 ephemeral tmux worker sessions when ready tasks exist; sweeps
       stale claims each tick.
@@ -68,8 +67,7 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 - [ ] **Impact-class HITL backpressure** — interviewer-only gate on
       `class=impact` prompts; workers must decompose instead.
 - [ ] **Public packaging** — split into installable plugin + bootstrap
-      interview; today everything assumes the host's `~/vault/`,
-      `~/worktrees/`, `~/.config/arc/` layout.
+      interview; today everything assumes host layout conventions.
 - [ ] **Docs pass** — runnable quickstart, contributor guide, ADR index.
 
 ## Layout
@@ -83,20 +81,21 @@ docs/adr/   architecture decisions
 .private/   gitignored local state
 ```
 
-External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine),
-`~/vault/agents/<role>/` (memory, inbox, journal, outbox),
-`~/worktrees/<repo>-<slug>/` (worker scratch).
+External state: `~/.vault/ledger.db` (canon), `~/.vault/ke/` (knowledge engine),
+`~/.vault/agents/<role>/` (memory, inbox, journal, outbox),
+`~/.worktrees/<repo>-<slug>/` (worker scratch).
 
-## Hard constraints (excerpted from `CHOICES.md`)
+## Architectural Constraints
 
 - Interactive Claude panes only — no `claude -p` headless subprocesses
   (`M-0002`, billing-driven).
 - One SQL `UPDATE ... RETURNING` decides every race — no locks, no retry
   loops (`G-0002`).
-- All ledger writes route through the bookie subagent, except the
+- All ledger writes route through the bookie validator, except the
   bootstrap claim in `worker-shell.sh`.
 - No symlinks during migrations (`G-0007`); move files, fix refs.
-- Vault overrides repo where both exist; vault never pushed (`A-0004`).
+- Vault overrides repo where both exist; vault state is never
+  committed to source control (`A-0004`).
 - TypeScript default (`G-0008`), Bun runtime.
 
 ## License
