@@ -1,0 +1,16 @@
+# .gitleaksignore — arc-agents secret scan
+# Generated: 2026-05-28
+# Tool: gitleaks (apt)
+# Result: 0 leaks in 451 commits + 0 leaks in working tree
+#
+# False-positive patterns observed in non-arc-agents scans:
+# - discord-client-id: user ID (355743847709409281) matches rule but is not a secret
+# - generic-api-key entropy < 6: low-entropy strings matching API key patterns in docs/memory
+#
+# The following findings in ~/vault are TRUE positives (personal secrets, vault not in scope):
+#   MINIMAX_API_KEY=msk-cp-...   (agents/admin/memory.md)
+#   DISCORD_BOT_TOKEN=MTQ3...    (agents/admin/memory.md)
+#   discord-user-id: 355743847709409281  (discord inbox/outbox files)
+# Those are NOT in the arc-agents repo and are not affected by this file.
+#
+# If this repo ever expands to include the vault, add path-based ignores here.
