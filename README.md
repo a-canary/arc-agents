@@ -4,6 +4,8 @@
 > APIs, schemas, and CLIs will break without notice. Not packaged for external
 > use yet — clone and read if curious; expect rough edges. Assumes a specific
 > `~/vault/`, `~/worktrees/`, `~/.config/arc/` layout on the host.
+>
+> **Trading (MS-001):** Alpha. Strategies are personal, proprietary — excluded from all OSS sweeps. Not in this repo.
 
 Universal agent harness. SQLite ledger + small CLI shims for running ephemeral
 Claude Code workers off a shared message bus. Every state change is an atomic
