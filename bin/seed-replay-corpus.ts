@@ -12,6 +12,7 @@ import { Database } from "bun:sqlite";
 import { readdirSync, readFileSync, mkdirSync, writeFileSync, copyFileSync, existsSync } from "fs";
 import { createHash } from "crypto";
 import { join, dirname } from "path";
+import { homedir } from "node:os";
 
 type Row = {
   id: string; project: string; parent_id: string|null; title: string;
@@ -36,8 +37,9 @@ function arg(name: string, dflt?: string): string|undefined {
 const COUNT = Number(arg("count", "30"));
 const OUT_ROOT = arg("out", "tests/replay-corpus")!;
 const REPO_ROOT = process.cwd();
-const DB_PATH = arg("db", "/home/aaron/vault/ledger.db")!;
-const SESSIONS_DIR = "/home/aaron/.claude/projects/-home-aaron-repos-arc-agents";
+const HOME = homedir();
+const DB_PATH = arg("db", `${HOME}/vault/ledger.db`)!;
+const SESSIONS_DIR = `${HOME}/.claude/projects/-home-aaron-repos-arc-agents`;
 
 const db = new Database(DB_PATH, { readonly: true });
 

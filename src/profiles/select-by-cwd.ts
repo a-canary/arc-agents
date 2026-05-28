@@ -9,11 +9,11 @@ export interface SelectOptions {
 
 /**
  * Role selection by cwd per A-0003 / CLAUDE.md:
- *   1. ~/vault/agents/admin/        → admin
- *   2. ~/vault/agents/director/     → director
- *   3. ~/worktrees/<repo>-*\/        → developer
- *   4. ~/repos/<name>/              → developer
- *   5. fallback                     → director
+ *   1. ${HOME}/vault/agents/admin/     → admin
+ *   2. ${HOME}/vault/agents/director/  → director
+ *   3. ${HOME}/worktrees/<repo>-*\/  → developer
+ *   4. ${HOME}/repos/<name>/       → developer
+ *   5. fallback                    → director
  */
 export function selectRoleByCwd(cwd: string, opts: SelectOptions = {}): Role {
   const home = opts.home ?? homedir();
