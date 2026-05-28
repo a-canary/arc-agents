@@ -1,0 +1,42 @@
+# Dev artifacts
+*.test.ts
+*.test.tsx
+
+# Claude harness internals
+.claude/
+hooks/
+contexts/
+profiles/
+roles/
+skills/
+system/
+systemd/
+docs/
+tests/
+
+# Config & docs (user fills in their own)
+CLAUDE.md
+CONTEXT.md
+CHOICES.md
+PRD-*.md
+SLICE-PLAN-*.md
+config.json
+tsconfig.json
+
+# Node/bun
+node_modules/
+bun.lockb
+*.tsbuildinfo
+
+# OS
+.DS_Store
+
+# Local state
+.private/
+.local/
+.scratch/
+*.db
+*.db-shm
+*.db-wal
+.env
+.env.*

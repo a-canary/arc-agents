@@ -26,10 +26,19 @@ bun bin/ledger.ts init
 bun bin/factory.ts
 ```
 
-Install bins on PATH (after merge to main):
+Install bins on PATH (after merge to main, or via `npm pack` + `npm install` for external use):
 
 ```
-bun link && bun link arc-agents     # registers ledger, wait-for-ledger
+bun link && bun link arc-agents     # registers ledger, wait-for-ledger, arc-chat, arc-tui, arc-ux, factory, webui-server
+```
+
+For external adoption (no git clone needed):
+
+```
+npm pack
+npm install ./arc-agents-*.tgz
+# bins available: ledger, wait-for-ledger, arc-chat, arc-tui, arc-ux, factory, webui-server
+# then: ledger init && ledger create ...
 ```
 
 ## Shipped
@@ -57,9 +66,11 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 
 ## Coming soon
 
-- [ ] **arc-webui** — 2-panel HITL+AFK web surface (see
+- [x] **arc-webui** — 2-panel HITL+AFK web surface (see
       [`PRD-arc-webui.md`](./PRD-arc-webui.md) +
       [`SLICE-PLAN-arc-webui.md`](./SLICE-PLAN-arc-webui.md)).
+- [x] **Public packaging** — `.npmignore` + `npm pack` for external adoption;
+      no git clone required; bins install via Bun runtime (`#!/usr/bin/env bun`)
 - [ ] **arc-discord** — async push module for HITL prompts.
 - [ ] **Decomposition flow** — AFK workers atomically insert N HITL
       children + flip parent to `blocked`; fanout cap = 5, recursion ok.
