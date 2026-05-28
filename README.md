@@ -3,7 +3,7 @@
 > **Status: WIP / pre-alpha.** Personal research harness, evolving in public.
 > APIs, schemas, and CLIs will break without notice. Not packaged for external
 > use yet — clone and read if curious; expect rough edges. Assumes a specific
-> `~/vault/`, `~/worktrees/`, `~/.config/arc/` layout on the host.
+> vault + worktrees + config directory layout on the host.
 
 Universal agent harness. SQLite ledger + small CLI shims for running ephemeral
 Claude Code workers off a shared message bus. Every state change is an atomic
@@ -26,20 +26,14 @@ bun bin/ledger.ts init
 bun bin/factory.ts
 ```
 
-Install bins on PATH (after merge to main):
-
-```
-bun link && bun link arc-agents     # registers ledger, wait-for-ledger
-```
-
 ## Shipped
 
 - [x] **Ledger core** — `issues` + `issue_events` tables, atomic claim
       (`UPDATE ... RETURNING`), cascade-on-merge SQL trigger.
 - [x] **CLI** — `ledger {init,create,claim,update,event,list,show,tick,…}`,
-      flag-only `create` per PRD-v1 §4.
+      flag-only `create` per PRD-v1.
 - [x] **Bookie validator** — single authority for ledger writes inside an
-      agent session; subagent at `.claude/agents/bookie.md`.
+      agent session; subagent at `skills/bookie/SKILL.md`.
 - [x] **Factory** — supervisor daemon: reaps workers >4hr old, spawns up to
       N=4 ephemeral tmux worker sessions when ready tasks exist; sweeps
       stale claims each tick.
@@ -68,8 +62,7 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 - [ ] **Impact-class HITL backpressure** — interviewer-only gate on
       `class=impact` prompts; workers must decompose instead.
 - [ ] **Public packaging** — split into installable plugin + bootstrap
-      interview; today everything assumes the host's `~/vault/`,
-      `~/worktrees/`, `~/.config/arc/` layout.
+      interview; today the harness assumes a specific config directory layout.
 - [ ] **Docs pass** — runnable quickstart, contributor guide, ADR index.
 
 ## Layout
@@ -83,18 +76,20 @@ docs/adr/   architecture decisions
 .private/   gitignored local state
 ```
 
-External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine),
-`~/vault/agents/<role>/` (memory, inbox, journal, outbox),
-`~/worktrees/<repo>-<slug>/` (worker scratch).
+## External state
+
+The ledger state directory (default: `vault/`) and worktree root (default:
+`worktrees/`) are configured in `config.json`. Both must exist before
+running the daemon.
 
 ## Hard constraints (excerpted from `CHOICES.md`)
 
-- Interactive Claude panes only — no `claude -p` headless subprocesses
-  (`M-0002`, billing-driven).
+- Interactive Claude panes only — no headless subprocesses (`M-0002`,
+  billing-driven).
 - One SQL `UPDATE ... RETURNING` decides every race — no locks, no retry
   loops (`G-0002`).
 - All ledger writes route through the bookie subagent, except the
-  bootstrap claim in `worker-shell.sh`.
+  bootstrap atomic-claim step in the worker shell.
 - No symlinks during migrations (`G-0007`); move files, fix refs.
 - Vault overrides repo where both exist; vault never pushed (`A-0004`).
 - TypeScript default (`G-0008`), Bun runtime.
