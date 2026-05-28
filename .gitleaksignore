@@ -1,0 +1,13 @@
+# .gitleaksignore — arc-agents secret scan findings
+# Generated: 2026-05-28  Tool: gitleaks v8.18.2
+# Result: 0 leaks in 492 commits (arc-agents), 0 leaks in 197 commits (arc-webui).
+#
+# Format: each non-comment line must be a gitleaks fingerprint:
+#   <commit-sha>:<rule-id>:<file-path>:<line-number>
+#
+# No entries: scan produced zero findings requiring suppression.
+#
+# Two false-positive Discord snowflakes (355743847709409281) appear in
+# .gitleaksignore comments on commits 3875076 and 2eac463 — both are
+# intentionally listed as examples and are NOT secrets. Suppressed by
+# path-based allowlist in .gitleaks.toml targeting .gitleaksignore itself.

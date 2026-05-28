@@ -3,8 +3,9 @@
 #
 # Gates (in order, all run; non-zero exit if any FAIL):
 #   1. fixture   — at least one *.test.ts colocated test exists
-#   2. typecheck — `bun run typecheck` passes (tsc --noEmit)
-#   3. test      — `bun test` passes (full suite, bun's runner)
+#   2. gitleaks  — `gitleaks detect --config .gitleaks.toml` reports 0 leaks
+#   3. typecheck — `bun run typecheck` passes (tsc --noEmit)
+#   4. test      — `bun test` passes (full suite, bun's runner)
 #
 # Usage: bin/merge-gate.sh [--project <path>]
 #   PROJECT env var or --project overrides cwd. Defaults to repo containing this script.
@@ -47,6 +48,23 @@ run_cmd() {
 
 # ── Gate 1: Fixture — *.test.ts files exist ─────────────────────────────────
 
+gate_gitleaks() {
+  log "Gate 2: Gitleaks"
+  if ! command -v gitleaks >/dev/null 2>&1; then
+    skip "gitleaks" "gitleaks not on PATH"
+    return 0
+  fi
+  if [ ! -f "$PROJECT/.gitleaks.toml" ]; then
+    skip "gitleaks" ".gitleaks.toml not found"
+    return 0
+  fi
+  if gitleaks detect --source="$PROJECT" --config "$PROJECT/.gitleaks.toml" --verbose 2>&1 | tee /dev/stderr | grep -q "leaks found: [1-9]"; then
+    fail "gitleaks" "leaks detected; see gitleaks output above"
+    return 1
+  fi
+  pass "gitleaks" "gitleaks detect: no leaks"
+}
+
 gate_fixture() {
   log "Gate 1: Fixture"
   local count
@@ -62,7 +80,7 @@ gate_fixture() {
 # ── Gate 2: Typecheck — bun run typecheck ───────────────────────────────────
 
 gate_typecheck() {
-  log "Gate 2: Typecheck"
+  log "Gate 3: Typecheck"
   if ! [ -f "$PROJECT/package.json" ]; then
     skip "typecheck" "no package.json"
     return 0
@@ -82,7 +100,7 @@ gate_typecheck() {
 # ── Gate 2b: Migration lint — G-0007 no symlinks ────────────────────────────
 
 gate_migration_lint() {
-  log "Gate 2b: Migration lint (G-0007)"
+  log "Gate 3b: Migration lint (G-0007)"
   local script="$PROJECT/bin/lint-migrations.sh"
   if ! [ -x "$script" ]; then
     skip "migration-lint" "bin/lint-migrations.sh missing"
@@ -99,7 +117,7 @@ gate_migration_lint() {
 # ── Gate 3: Test — bun test ─────────────────────────────────────────────────
 
 gate_test() {
-  log "Gate 3: Test (bun test)"
+  log "Gate 4: Test (bun test)"
   if ! command -v bun >/dev/null 2>&1; then
     fail "test" "bun not on PATH"
     return 1
@@ -118,6 +136,7 @@ main() {
   log "Starting merge gate project=$PROJECT branch=$BRANCH HEAD=$HEAD_HASH"
 
   gate_fixture        || true
+  gate_gitleaks       || true
   gate_typecheck      || true
   gate_migration_lint || true
   gate_test           || true

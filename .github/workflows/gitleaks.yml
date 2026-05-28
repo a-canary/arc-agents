@@ -1,0 +1,29 @@
+name: Gitleaks
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+
+jobs:
+  gitleaks:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Install gitleaks
+        run: |
+          if command -v gitleaks >/dev/null 2>&1; then
+            echo "gitleaks found on PATH"
+          else
+            go install github.com/gitleaks/gitleaks/v8@v8.18.2
+            echo "$HOME/go/bin" >> $GITHUB_PATH
+          fi
+      - name: Run gitleaks
+        run: gitleaks detect --source=. --config .gitleaks.toml --log-level=info
+        # Exit code 1 = leaks found = PR cannot be merged

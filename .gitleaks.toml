@@ -1,0 +1,7 @@
+title = "arc-agents gitleaks config"
+# Allowlist: .gitleaksignore is a scan-report artifact; its findings are not actual leaks.
+
+[allowlist]
+  description = "Known false positives"
+  # .gitleaksignore is a scan-report artifact; its findings are not actual leaks.
+  paths = [".gitleaksignore"]
