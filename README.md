@@ -10,8 +10,9 @@ Claude Code workers off a shared message bus. Every state change is an atomic
 SQL transition: no daemons, no IPC, no queues — just rows.
 
 See [`CONTEXT.md`](./CONTEXT.md) glossary, [`CHOICES.md`](./CHOICES.md) scoped
-decisions, [`PRD-v1.md`](./PRD-v1.md) product spec, and
-[`docs/adr/`](./docs/adr/) for architecture decisions.
+decisions, [`docs/PUBLIC-API.md`](./docs/PUBLIC-API.md) public surface + SemVer
+contract, [`PRD-v1.md`](./PRD-v1.md) product spec, and [`docs/adr/`](./docs/adr/) for
+architecture decisions.
 
 ## Stack
 
@@ -34,6 +35,10 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 
 ## Shipped
 
+- [x] **Public API doc + version pin** — `docs/PUBLIC-API.md` documents the
+      supported public surface (CLI verbs, exported functions, config schema);
+      `package.json` version is exact-pinned (no `^`, no `~`) for explicit
+      SemVer contract.
 - [x] **Ledger core** — `issues` + `issue_events` tables, atomic claim
       (`UPDATE ... RETURNING`), cascade-on-merge SQL trigger.
 - [x] **CLI** — `ledger {init,create,claim,update,event,list,show,tick,…}`,

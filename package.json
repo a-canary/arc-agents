@@ -1,6 +1,8 @@
 {
   "name": "arc-agents",
   "version": "0.1.0",
+  // pinned 0.x for explicit SemVer contract — every bump is a deliberate act
+  // (no ^, no ~, no range). See docs/PUBLIC-API.md §Version pinning policy.
   "type": "module",
   "private": true,
   "bin": {
