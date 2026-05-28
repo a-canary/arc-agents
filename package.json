@@ -2,6 +2,7 @@
   "name": "arc-agents",
   "version": "0.1.0",
   "type": "module",
+  "license": "Apache-2.0",
   "private": true,
   "bin": {
     "ledger": "./bin/ledger.ts",
