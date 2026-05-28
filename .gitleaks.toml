@@ -1,0 +1,11 @@
+# gitleaks.toml — arc-agents
+# Allowlist for documented false positives.
+
+[allowlist]
+  description = "False positives"
+
+  # Personal Discord user ID in commit message body of 2eac463
+  regexes = ["""355743847709409281"""]
+
+  # Allow .gitleaksignore files
+  paths = ["""^\\.gitleaksignore$"""]
