@@ -77,7 +77,7 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
 ```
 bin/         executable entrypoints (ledger, factory, arc-chat, arc-ux, arc-tui, hygiene-tick, …)
 src/        library code (ledger/, profiles/)
-profiles/   role JSON (developer, director, admin)
+profiles/   role JSON (reference impl: developer, director, admin — user-private role names)
 skills/     skill definitions
 docs/adr/   architecture decisions
 .private/   gitignored local state

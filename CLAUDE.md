@@ -64,6 +64,8 @@ External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine), `
 
 ## Role selection by cwd (`A-0003`)
 
+> **Reference implementation note:** Role names (Director/Admin/Developer) shown here are the framework's reference impl. Actual agent names and workspace paths are user-private — configured in `~/vault/agents/<role>/`. The path-based selection logic is framework-defined; the role names and vault layout are user-configured.
+
 1. `~/vault/agents/admin/` → Admin
 2. `~/vault/agents/director/` → Director
 3. `~/worktrees/<repo>-*/` → Developer

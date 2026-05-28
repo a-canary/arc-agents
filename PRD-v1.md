@@ -28,14 +28,16 @@ Universal agent harness. Ledger-dispatched, interactive-pane runtime. Replaces `
 
 **arc- prefix** for user-owned repos: `arc-agents`, `arc-webui`. Third-party repos keep upstream name.
 
-### A-2. Three roles
+### A-2. Three roles (reference impl)
+The framework ships with a three-role reference impl. Role names and vault workspace paths are user-private — these names are the documented reference; actual agent names are configured in `~/vault/agents/<role>/`.
+
 | Role | Scope | Workspace |
 |---|---|---|
 | **Director** | Portfolio orchestration, user comms, delegation. Sole human interface. | `~/vault/agents/director/` |
 | **Developer** | Code execution within a repo's CHOICES.md. Spawned per worktree. | `~/worktrees/<repo>-<slug>/` |
 | **Admin** | System, infra, secrets, security. Watches others for leaks/runaway-spend. | `~/vault/agents/admin/` |
 
-Agent selection by cwd priority:
+Agent selection by cwd priority (path logic is framework-defined; role name at each path is user-private):
 1. `~/vault/agents/admin/` → Admin
 2. `~/vault/agents/director/` → Director
 3. `~/worktrees/<repo>-*/` → Developer
@@ -163,7 +165,7 @@ Two-tier model policy: Opus 4.7 for synthesis (cap $10/day); minimax-m2.7 for bu
 - **No cycles, no nap-sleep.** Panes run continuously. Compact/vacuum/budget-rotate via cron (only retained crons).
 - **`/checkin`** on demand.
 - **HITL:** worker sets `state='blocked', hitl=1`, inserts child `kind='encounter'`. Interviewer pane surfaces it. User reply → `encounter_reply` → worker unblocks.
-- **Worktree-per-issue:** Developer always spawns into `~/worktrees/<repo>-<slug>/`. Never edits `~/repos/<name>/` directly.
+- **Worktree-per-issue:** The Developer role (per A-2) always spawns into `~/worktrees/<repo>-<slug>/`. Never edits `~/repos/<name>/` directly.
 - **Slug-primary naming.** Collision → append `-<xxxx>` short id.
 
 ---

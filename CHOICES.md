@@ -25,15 +25,16 @@ Workers are one-shot tmux sessions, not long-lived panes. `bin/factory.ts` super
 ### A-0001: Three-Tier Layout
 `~/repos/` (canonical) · `~/worktrees/<repo>-<slug>/` (dev) · `~/vault/` (portfolio state) · `<repo>/.private/` (gitignored local).
 
-### A-0002: Three Roles
-Director (portfolio, user comms) · Developer (per-worktree code) · Admin (system, secrets).
+### A-0002: Three Roles (Reference Impl)
+The framework ships with a three-role reference impl: Director (portfolio, user comms) · Developer (per-worktree code) · Admin (system, secrets). Role names and vault workspace paths are user-private — the reference names are documented here; actual agent names are configured in `~/vault/agents/<role>/`.
 
 ### A-0003: Agent Selection by CWD
-1. `~/vault/agents/admin/` → Admin
-2. `~/vault/agents/director/` → Director
-3. `~/worktrees/<repo>-*/` → Developer
-4. `~/repos/<name>/` → Developer (read-mostly)
-5. fallback → Director
+Path-based selection logic is framework-defined; the target role name at each path is user-private. The reference impl maps:
+1. `~/vault/agents/admin/` → Admin role
+2. `~/vault/agents/director/` → Director role
+3. `~/worktrees/<repo>-*/` → Developer role
+4. `~/repos/<name>/` → Developer role (read-mostly)
+5. fallback → Director role
 
 ### A-0004: Vault Overrides Repo
 Private wins where both exist. Vault never pushed.

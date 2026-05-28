@@ -1,6 +1,6 @@
 ---
 name: triage-failed
-description: "Director-subagent skill. Classifies a `state=failed` ledger row as low-risk (auto-decompose into slices, cancel parent) vs needs-HITL (mark for human review)."
+description: "Reference impl: Director-subagent skill. Classifies a `state=failed` ledger row as low-risk (auto-decompose into slices, cancel parent) vs needs-HITL (mark for human review). Role name is framework reference; user-private."
 ---
 
 # triage-failed — Failed Row Triage
