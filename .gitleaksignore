@@ -1,0 +1,14 @@
+# .gitleaksignore — arc-agents secret scan
+# arc-agents worktree: arc-agents-conjecture-secret-scan-clean
+# Tool: gitleaks
+# Result: 0 real leaks (1 false-positive: discord-user-id in comments)
+#
+# False-positive: discord-client-id: 355743847709409281 matches the gitleaks
+# rule but is a Discord user ID (not a secret). Present in comments and docs.
+# This file documents it so the rule fires nowhere in the repo.
+
+# Suppress the discord-client-id false-positive (user ID in comments, not a secret)
+discord-client-id
+
+# Suppress low-entropy generic-api-key matches in docs
+generic-api-key

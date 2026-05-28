@@ -1,0 +1,7 @@
+# Gitleaks config for arc-agents worktree
+# Excludes false-positive: discord-user-id (355743847709409281) matches 
+# discord-client-id rule in .gitleaksignore but is a Discord user ID, not a secret.
+
+[allowlist]
+description = "Discord user ID 355743847709409281 present in comments/documents is not a client secret"
+commits = ["2eac46340dcece015baccb7cf14d60ff014a0d43"]
