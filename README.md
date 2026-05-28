@@ -72,6 +72,18 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
       `~/worktrees/`, `~/.config/arc/` layout.
 - [ ] **Docs pass** — runnable quickstart, contributor guide, ADR index.
 
+## Examples
+
+Runnable examples in `examples/` work from a clean clone with only `bun install`.
+
+```
+bun examples/run-ledger.ts                  # TypeScript: ledger core loop (init/create/list/claim/update/tick)
+bun examples/run-factory.ts --once           # spawn-readiness check, one factory tick
+bash examples/run-ledger.sh                 # Bash equivalent (uses $ARC_LEDGER_DB, default /tmp/arc-demo.sqlite)
+```
+
+No private paths, no proprietary keys.  Uses `$ARC_LEDGER_DB` (default `/tmp/arc-demo.sqlite`).
+
 ## Layout
 
 ```
