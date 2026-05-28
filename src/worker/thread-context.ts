@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Thread replay for cold-starting workers.
 //
 // One module owns both the SQL filter (which kinds + source_module count as

@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Tests for cascade-trigger widening — sprint parents re-ready on terminal children.
 // All DBs are throwaway in-memory instances — never touches ~/vault/ledger.db.
 //

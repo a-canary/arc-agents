@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Single source of truth for issue-kind categorisation.
 //
 // The schema's CHECK constraint (src/ledger/migrate.ts) admits:

@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 import { describe, test, expect } from "bun:test";
 import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";

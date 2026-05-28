@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // ADR 0005 — single source of truth for the (class, urgency) enum pair.
 // `bookie-validator.ts` re-exports from here so the SQL CHECK list and the
 // runtime validators cannot drift. Migration 011 also generates its CHECK

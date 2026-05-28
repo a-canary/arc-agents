@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Deploy-preview probe — pure logic for ADR 0007.
 //
 // dev-quest's FOCUS pane wants to show a "Preview ready" badge for issues

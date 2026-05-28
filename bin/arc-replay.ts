@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // arc-replay — capture-replay-diff harness for arc-agents (S-0003).
 //
 //   arc-replay capture <turn-id>                    freeze a worker turn into a fixture

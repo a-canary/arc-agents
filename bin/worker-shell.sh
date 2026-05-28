@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # arc-agents ephemeral worker. One claim → one interactive claude → exit.
 # Invoked by factory.ts inside a fresh tmux session:
 #   tmux new-session -d -s <worker-name> bash worker-shell.sh <worker-name>

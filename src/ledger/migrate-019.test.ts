@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Tests for migration 019_issue_kind_sprint.
 // All DBs are throwaway in-memory or tmp-file — never touches ~/vault/ledger.db.
 

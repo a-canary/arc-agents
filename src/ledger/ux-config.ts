@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // UX Module Contract — config loader + bookie HITL validator.
 // See ADR 0002 (U-0001, U-0005). Config declares verbs + render strategies;
 // ledger heartbeats hold liveness. This module is the join point.

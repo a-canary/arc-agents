@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Tests for the consolidated HITL prompt insert + validation module.
 // See src/ledger/hitl-prompt.ts. Both bin/arc-ux.ts and bin/ledger.ts's
 // `hitl emit` verb route through this module so the Zod payload validator

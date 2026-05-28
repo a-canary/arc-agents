@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // S8 — pre-drafter CLI entry.
 //
 //   bun bin/pre-drafter.ts run [--once] [--interval-sec N] [--db PATH]

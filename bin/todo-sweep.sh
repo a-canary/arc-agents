@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # todo-sweep.sh — TODO/FIXME/XXX must reference a ledger task.
 #
 # Each TODO/FIXME/XXX comment added in the PR diff must include a ledger

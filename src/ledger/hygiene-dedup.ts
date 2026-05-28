@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Dedup logic for `ledger hygiene-emit`. Pure: takes (skill, candidate title,
 // existing rows) and returns a verdict. Caller decides what to do with it.
 //

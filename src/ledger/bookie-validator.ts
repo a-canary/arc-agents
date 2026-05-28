@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Pure validators for bookie writes. No db access — all funcs total over inputs.
 // Used by bin/ledger.ts to reject positional create and bad enums before they
 // hit the schema CHECK and corrupt error messages with raw SQLITE_CONSTRAINT.

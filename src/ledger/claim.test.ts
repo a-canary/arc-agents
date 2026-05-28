@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Tests for the single-sourced atomic claim (ADR 0001 §"Consequences",
 // G-0002). claimOnce + CLAIM_SQL are imported by both bin/ledger.ts and
 // indirectly by bin/worker-shell.sh (via `ledger print-claim-sql`).

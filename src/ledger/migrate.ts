@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Idempotent ledger schema migrations.
 // Apply order is append-only. Each migration checks current state before running.
 

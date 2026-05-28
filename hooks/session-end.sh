@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # arc-agents SessionEnd hook — emit closing event to ledger (best-effort).
 # Workers are ledger-dispatched; ledger is the system of record.
 

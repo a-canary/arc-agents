@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // S8 — Interviewer pre-drafter (SLICE-PLAN-arc-webui.md).
 //
 // On chat-in rows arriving at rank ≤ TOP_N, generate `draft_md` containing a

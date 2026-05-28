@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Classify a failed task into low-risk (auto-decompose into new tasks) vs
 // needs-HITL (open an HITL row for owner review). Pure function over the
 // failed row + its event log; no db writes.

@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Reaper test: spin up a real throwaway git repo + real worktree, then verify
 // reapWorktrees() removes the worktree dir, deletes the branch, nulls the
 // ledger columns, and logs a kind='note' agent='worktree-reaper' event.

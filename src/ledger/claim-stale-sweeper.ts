@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Reset stale claims back to ready. A claim is stale if:
 //   - claimed_at is older than `staleAfterSec` (default 7200 = 2hr), OR
 //   - claimed_by matches `arctest-*` and claimed_at is older than

@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # lint-migrations.sh — enforce G-0007 (no symlinks during migrations).
 #
 # Scans src/ledger/migrate.ts and any migration files for symlink usage.

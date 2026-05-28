@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # arc-tui-loop — director-side render loop for the arc-tui reference module.
 # Beats heartbeat every 30s and prints any open prompts addressed to arc-tui.
 # Answer with: bun /home/aaron/repos/arc-agents/bin/arc-tui.ts answer <id> <ans>

@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // S10: arc-webui tailscale-only binding smoke test.
 // Boots Bun.serve on tailscale0, asserts only that iface accepts connections;
 // non-tailnet IPs (LAN, loopback) refuse with ECONNREFUSED. Skips when

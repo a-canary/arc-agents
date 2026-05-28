@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Ledger CLI. Flag-only create per PRD-v1 §4; positional args are rejected.
 // JSON to stdout when not a TTY; table otherwise.
 

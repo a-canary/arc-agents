@@ -1,4 +1,8 @@
 #!/usr/bin/env bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # G-0005 slice guard: fail commit if staged changes exceed ~2000 modified-line
 # equivalents or span more than one top-level area.
 #

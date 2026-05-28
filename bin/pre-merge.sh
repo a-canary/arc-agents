@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # pre-merge.sh — composite pre-merge gate for arc-agents PRs.
 #
 # Runs every local gate in order. Used by the merger subagent before

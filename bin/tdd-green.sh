@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # tdd-green.sh — per-file test coverage gate.
 #
 # For each *.ts file added/modified in the diff (excluding *.test.ts, *.d.ts,

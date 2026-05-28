@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Worktree reaper: removes the git worktree + branch for issues that are done
 // with their worktree and have a worktree_path still recorded on the row.
 //

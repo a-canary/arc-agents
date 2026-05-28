@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { $ } from "bun";
 import { mkdtempSync, rmSync } from "node:fs";

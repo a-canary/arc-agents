@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Headless worker watchdog + log-capture tests.
 //
 // Two liveness/observability gaps in the headless (`pi -p`) branch of

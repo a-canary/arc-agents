@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # arc-agents Stop hook — AFK shutdown reminder for ephemeral workers.
 #
 # Fires when claude wants to end the turn. For a worker (ARC_TASK_ID set),

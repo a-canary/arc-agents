@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 import { z } from "zod";
 import { readFileSync } from "node:fs";
 import { join, dirname } from "node:path";

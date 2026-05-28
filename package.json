@@ -3,6 +3,8 @@
   "version": "0.1.0",
   "type": "module",
   "private": true,
+  "license": "Apache-2.0",
+  "license-check": true,
   "bin": {
     "ledger": "./bin/ledger.ts",
     "wait-for-ledger": "./bin/wait-for-ledger.ts",

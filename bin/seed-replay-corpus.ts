@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // seed-replay-corpus — build initial replay-shadow corpus (S-0003).
 //
 // Builds tests/replay-corpus/<task-id>/ for N terminal worker turns from the

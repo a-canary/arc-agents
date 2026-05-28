@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // arc-ux — the verb shim the interviewer (and class=taste workers) call to
 // surface HITL prompts. See ADR 0002 — UX Module Contract.
 //

@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // TDD tests for PR-3 pieces:
 //   (a) spawn-ready --pool X filter (and --type alias)
 //   (b) triageUnset factory function (rule table, idempotency, budget, events)

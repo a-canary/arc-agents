@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Opus burn-rate monitor. Shells out to `codeburn export` and warns when
 // Opus exceeds 50% of trailing-window (Today calendar-day) tokens.
 // "Today" is used as the trailing-window proxy — codeburn exposes no

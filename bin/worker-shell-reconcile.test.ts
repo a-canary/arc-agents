@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Headless reconcile-decision test.
 //
 // The headless worker (`pi -p`) produces no in-pane output and may not call the

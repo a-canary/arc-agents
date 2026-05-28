@@ -1,4 +1,8 @@
 #!/bin/bash
+# Copyright 2026 a-canary
+# Licensed under the Apache License, Version 2.0
+# SPDX-License-Identifier: Apache-2.0
+
 # merge-gate.sh — pipeline merge gate validation for arc-agents (Bun/TS).
 #
 # Gates (in order, all run; non-zero exit if any FAIL):

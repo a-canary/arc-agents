@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Single-sourced atomic claim. Per ADR 0001 §"Consequences" and G-0002,
 // the claim is one SQL `UPDATE...RETURNING` that decides the winner; losers
 // see zero rows. This module is the canonical home for that SQL.

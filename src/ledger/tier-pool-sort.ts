@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // Migration 017 — tier-MAJOR / pool-MINOR sort key.
 // Replaces class-urgency-sort.ts for post-017 tables.
 // tier picks priority rank; pool picks worker-lane; created_at is FIFO tiebreak; id is final stable tiebreak.

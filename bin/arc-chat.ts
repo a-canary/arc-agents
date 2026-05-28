@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // arc-chat — user-facing chat surface for the ephemeral interviewer (ADR 0003).
 //
 //   arc-chat post <message> [--thread T]    write chat_in row, return thread_id

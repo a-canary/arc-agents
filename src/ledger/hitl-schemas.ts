@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // HITL prompt payload schemas. See ADR 0002 — UX Module Contract.
 // Imported by the bookie validator and by UX modules to know what to render.
 

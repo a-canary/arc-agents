@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // S2: arc-webui SSE ledger-delta server.
 // Binds tailscale0 (fail-fast if missing). Polls ledger 1s. Emits SSE
 // deltas on /sse/hitl and /sse/afk. See SLICE-PLAN-arc-webui.md.

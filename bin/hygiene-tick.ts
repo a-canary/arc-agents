@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // hygiene-tick — round-robin hygiene cron. See plan: 6hr cron picks one repo
 // from a preset list, creates a `type=cron` task that invokes a hygiene skill.
 // Skip-not-stack: skips a repo that already has an OPEN hygiene cron task.

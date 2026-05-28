@@ -1,4 +1,8 @@
 #!/usr/bin/env bun
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // bin/deploy-preview.ts — cron-scheduled probe per ADR 0007.
 //
 // Reads candidate issues from ~/vault/ledger.db, probes each PR for a

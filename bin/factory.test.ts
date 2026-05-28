@@ -1,3 +1,7 @@
+// Copyright 2026 a-canary
+// Licensed under the Apache License, Version 2.0
+// SPDX-License-Identifier: Apache-2.0
+
 // E2E: factory spawns ephemeral workers that claim from the ledger and exit.
 // Fake CLAUDE_BIN=/bin/true so no real claude is invoked — we verify the
 // spawn lifecycle, claim atomicity, and reap behavior, not model output.
