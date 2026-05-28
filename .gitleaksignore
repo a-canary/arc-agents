@@ -1,0 +1,5 @@
+# .gitleaksignore — arc-agents secret scan
+# false-positive: discord-client-id rule fires on a Discord user snowflake (not a client secret)
+# The specific finding 355743847709409281 is prevented by:
+#   .gitleaks.toml [allowlist] paths = [".gitleaksignore"]
+#   This path-based allowlist suppresses the false-positive without needing to hard-code the value here.
