@@ -17,7 +17,7 @@ Wraps the pure module at `src/ledger/failed-classifier.ts`. The skill is the I/O
 
 1. **Load the row + events:**
    ```
-   bun ~/repos/arc-agents/bin/ledger.ts show <id>
+   bun ~/repos/arc/packages/arc-agents/bin/ledger.ts show <id>
    ```
    Returns `{ issue, events }`.
 
@@ -25,11 +25,11 @@ Wraps the pure module at `src/ledger/failed-classifier.ts`. The skill is the I/O
    - Parent PRD if `.scratch/<slug>/PRD.md` exists for the row's project.
    - `CHOICES.md` sections relevant to the row's evidence.
    - Recent commits touching files mentioned in evidence (`git log -p -- <file>`).
-   - Sibling / ancestor rows: `bun ~/repos/arc-agents/bin/ledger.ts list --kind task --limit 50` filtered by `parent_id` or `blocked_by`.
+   - Sibling / ancestor rows: `bun ~/repos/arc/packages/arc-agents/bin/ledger.ts list --kind task --limit 50` filtered by `parent_id` or `blocked_by`.
 
 3. **Classify:**
    ```ts
-   import { classifyFailed } from "~/repos/arc-agents/src/ledger/failed-classifier";
+   import { classifyFailed } from "~/repos/arc/packages/arc-agents/src/ledger/failed-classifier";
    const verdict = classifyFailed(
      { id, type, title, body_md, evidence_md },
      events.map(e => ({ kind: e.kind, payload_md: e.payload_md })),
@@ -42,14 +42,14 @@ Wraps the pure module at `src/ledger/failed-classifier.ts`. The skill is the I/O
    - Call bookie `decompose --text "<short PRD-like text reconstructed from row + context>"` to mint N new mvp slices.
    - Cancel parent with evidence:
      ```
-     bun ~/repos/arc-agents/bin/ledger.ts update <id> \
+     bun ~/repos/arc/packages/arc-agents/bin/ledger.ts update <id> \
        --state cancelled \
        --evidence "triage-failed: split into <N> slices [<id1>, <id2>, ...]; reasons: <classifier reasons>"
      ```
 
    **needs-HITL** — flag for owner:
    ```
-   bun ~/repos/arc-agents/bin/ledger.ts update <id> \
+   bun ~/repos/arc/packages/arc-agents/bin/ledger.ts update <id> \
      --hitl 1 \
      --evidence "triage-failed: needs human review; reasons: <classifier reasons>"
    ```

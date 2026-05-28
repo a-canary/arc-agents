@@ -80,7 +80,7 @@ Factory dispatches on the `pool` column (not `type`). Slot model: 4-any (any poo
 `ke-recall` (start) · `ke-learn` (stop, queued) · `spawn` (ledger write, not process spawn).
 
 ### S-0002: Skills Location
-`~/repos/arc-agents/skills/`.
+`~/repos/arc/packages/arc-agents/skills/`.
 
 ### S-0003: Replay-Shadow as the Confidence Primitive
 Capture one real worker turn → replay against candidate config in an isolated sandbox → diff transcript + ledger writes + quality signals. Run on a corpus (~30) before promoting prompt/template/model/skill-set changes. Generic dev practice, not arc-specific; harness is per-system (`bin/arc-replay.ts` for arc-agents). Skill defines contract, system wires it. Not a substitute for live shadow on concurrency/UX/scale regressions. See `skills/replay-shadow/SKILL.md`.
@@ -127,7 +127,7 @@ Writes ledger rows on behalf of agents. Single point of validation.
 `profiles/<role>.json` — context_summary, boot_skills, model, daily_budget_usd, max_concurrency, worktree.
 
 ### I-0005: Install via bun link
-`bun link` from `~/repos/arc-agents/` → `~/.local/bin/{ledger,agent}`. Only after merge to main.
+`bun link` from `~/repos/arc/packages/arc-agents/` → `~/.local/bin/{ledger,agent}`. Only after merge to main.
 
 ### I-0006: Git Author
 Commits use the deployer's configured git user (`git config user.name` / `user.email`). No hardcoded author in framework code — repo is public, deployed by many.

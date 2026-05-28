@@ -62,8 +62,8 @@ Refuse if: PR not found, isDraft=true, state != OPEN, mergeable=CONFLICTING (wit
 ### Step 2 — Locate or create worktree
 Branches are usually checked out at `~/worktrees/<repo>-<slug>/`. If a worktree exists, `cd` there. If not, create one:
 ```bash
-git -C ~/repos/arc-agents fetch origin <branch>
-git -C ~/repos/arc-agents worktree add ~/worktrees/arc-agents-<slug> <branch>
+git -C ~/repos/arc/packages/arc-agents fetch origin <branch>
+git -C ~/repos/arc/packages/arc-agents worktree add ~/worktrees/arc-agents-<slug> <branch>
 ```
 
 ### Step 3 — Rebase on origin/main
@@ -130,7 +130,7 @@ Use `--squash` by default (matches arc-agents commit hygiene). Use `--merge` onl
 
 ### Step 8 — Clean up worktree
 ```bash
-git -C ~/repos/arc-agents worktree remove ~/worktrees/arc-agents-<slug> --force
+git -C ~/repos/arc/packages/arc-agents worktree remove ~/worktrees/arc-agents-<slug> --force
 ```
 Allow `--force` because we just merged the branch upstream — the worktree state is recoverable from origin/main.
 

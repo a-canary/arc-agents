@@ -45,7 +45,7 @@ Workers claim rows in this order (with ties broken by id).
 1. If owner gave only a sentence (e.g. "file a task to fix the broken hooks loader"), ask for the missing required flags before doing anything else.
 2. Delegate to bookie:
    ```
-   bun ~/repos/arc-agents/bin/ledger.ts create \
+   bun ~/repos/arc/packages/arc-agents/bin/ledger.ts create \
      --kind <k> --type <ty> --project <p> --title "<t>" \
      [--body "<md>"] [--acceptance "<md>"] [--blocked-by '<json>'] [--parent <id>]
    ```

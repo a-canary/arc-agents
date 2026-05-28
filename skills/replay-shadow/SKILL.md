@@ -97,7 +97,7 @@ Illustrative. The pattern is what generalizes; the wiring is arc-specific.
 **Unit of work:** one worker claim → execute → terminate cycle on a single task row.
 
 **Capture:**
-- *Input:* `bun ~/repos/arc-agents/bin/ledger.ts render-prompt <task-id> --worker <w>` — already exists, emits the exact system prompt the worker saw.
+- *Input:* `bun ~/repos/arc/packages/arc-agents/bin/ledger.ts render-prompt <task-id> --worker <w>` — already exists, emits the exact system prompt the worker saw.
 - *Env-snapshot:* repo + branch + HEAD sha at claim time (from `issue_events`); KE snapshot via `rsync ~/vault/ke ~/vault/replay-fixtures/<slug>/ke/`; task row + parent + thread history.
 - *Transcript:* the worker's claude session JSONL at `~/.claude/projects/<proj>/<session>.jsonl`.
 - *Output-diff:* ledger rows the worker wrote between claim and terminal state (`SELECT * FROM issue_events WHERE issue_id=? OR actor=?` plus children-spawned); commits + PR on the worktree branch; files committed.

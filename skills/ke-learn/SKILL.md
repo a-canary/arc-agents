@@ -40,7 +40,7 @@ source: session-<short-id>
 
 ## Procedure
 
-1. `bun ~/repos/arc-agents/bin/ke.ts learn --scope <scope> --title "<headline>" --body "<md>" [--tags "a,b"]`.
+1. `bun ~/repos/arc/packages/arc-agents/bin/ke.ts learn --scope <scope> --title "<headline>" --body "<md>" [--tags "a,b"]`.
 2. CLI writes file, then runs `INSERT INTO ke(path, body) VALUES(?, ?)` to update FTS index.
 3. Returns the new file path.
 

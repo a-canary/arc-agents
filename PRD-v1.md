@@ -138,7 +138,7 @@ RETURNING id;
 
 ## 5. Role profiles
 
-`~/repos/arc-agents/profiles/<role>.json`:
+`~/repos/arc/packages/arc-agents/profiles/<role>.json`:
 ```json
 {
   "context_summary": "string",
@@ -174,7 +174,7 @@ Two-tier model policy: Opus 4.7 for synthesis (cap $10/day); minimax-m2.7 for bu
 2. `ke-learn` — session stop, queue distilled learnings
 3. `spawn` — write task row via bookie (no direct process spawn)
 
-Other core skills live in `~/repos/arc-agents/skills/`.
+Other core skills live in `~/repos/arc/packages/arc-agents/skills/`.
 
 ---
 

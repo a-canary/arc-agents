@@ -51,12 +51,12 @@ For HITL decomposition the typical child has `kind=task, type=HITL, hitl=1`.
 
    ```
    For each child spec:
-     bun ~/repos/arc-agents/bin/ledger.ts create \
+     bun ~/repos/arc/packages/arc-agents/bin/ledger.ts create \
        --kind <k> --type <ty> --title "<t>" --parent <parent-id> \
        [--body "<md>"] [--acceptance "<md>"]
 
    Then, with collected child ids:
-     bun ~/repos/arc-agents/bin/ledger.ts update <parent-id> \
+     bun ~/repos/arc/packages/arc-agents/bin/ledger.ts update <parent-id> \
        --blocked-by '<jsonChildIds>' --state blocked
    ```
 

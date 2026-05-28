@@ -41,7 +41,7 @@ Procedure:
 
 1. Run:
    ```
-   bun ~/repos/arc-agents/bin/ledger.ts create \
+   bun ~/repos/arc/packages/arc-agents/bin/ledger.ts create \
      --kind <k> --type <ty> --title "<t>" --project <p> \
      [--body "<md>"] [--acceptance "<md>"] [--parent <id>] [--blocked-by '<json>']
    ```
@@ -87,4 +87,4 @@ Notes:
 
 - CHECK violation → return error with offending column.
 - Unique id collision after 5 retries → escalate (should never happen with 4-char suffix on slug).
-- Schema migration not applied → run `bun ~/repos/arc-agents/src/ledger/migrate.ts` first.
+- Schema migration not applied → run `bun ~/repos/arc/packages/arc-agents/src/ledger/migrate.ts` first.

@@ -16,7 +16,7 @@ Per ADR 0007, dev-quest's FOCUS pane wants to show a "Preview ready" badge for i
 ## Contract
 
 ```
-bun ~/repos/arc-agents/bin/deploy-preview.ts [--db <path>] [--limit N] [--dry] [--once]
+bun ~/repos/arc/packages/arc-agents/bin/deploy-preview.ts [--db <path>] [--limit N] [--dry] [--once]
 ```
 
 Inputs (all optional):
@@ -96,7 +96,7 @@ This is consumed by dev-quest's FOCUS pane (badge) and ACTIVITY pane (one-line i
 ## Cron suggestion
 
 ```
-*/5 * * * * cd ~/repos/arc-agents && bun bin/deploy-preview.ts >> ~/logs/deploy-preview.log 2>&1
+*/5 * * * * cd ~/repos/arc/packages/arc-agents && bun bin/deploy-preview.ts >> ~/logs/deploy-preview.log 2>&1
 ```
 
 ## Sole-writer note
