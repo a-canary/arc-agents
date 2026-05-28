@@ -1,0 +1,15 @@
+# .gitleaks.toml — arc-agents secret scan allowlist
+# Suppresses known false positives that are not actual secrets.
+
+[allowlist]
+  description = "Known false positives in arc-agents repo"
+
+# Discord user IDs (17-18 digits) embedded in documentation/comments are metadata,
+# not client secrets. The discord-client-id rule produces false positives.
+[[allowlist.regex]]
+  regex = "(?i)discord-user-id:\\s*355743847709409281"
+  description = "Discord user ID as metadata comment in gitleaksignore"
+
+[[allowlist.regex]]
+  regex = '(?i)"discord(-user)?-id"'
+  description = "Discord user ID field names (not secrets)"
