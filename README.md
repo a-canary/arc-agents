@@ -1,17 +1,16 @@
 # arc-agents
 
-> **Status: WIP / pre-alpha.** Personal research harness, evolving in public.
-> APIs, schemas, and CLIs will break without notice. Not packaged for external
-> use yet — clone and read if curious; expect rough edges. Assumes a specific
-> `~/vault/`, `~/worktrees/`, `~/.config/arc/` layout on the host.
+> **Status: 0.x — experimental.** APIs, schemas, and CLIs may break within the 0.x range.
+> **Pin to a specific minor version** (e.g. `"arc-agents": "0.1.2"`) when integrating.
+> Full public API reference: [`PUBLIC_API.md`](./PUBLIC_API.md).
 
 Universal agent harness. SQLite ledger + small CLI shims for running ephemeral
 Claude Code workers off a shared message bus. Every state change is an atomic
 SQL transition: no daemons, no IPC, no queues — just rows.
 
 See [`CONTEXT.md`](./CONTEXT.md) glossary, [`CHOICES.md`](./CHOICES.md) scoped
-decisions, [`PRD-v1.md`](./PRD-v1.md) product spec, and
-[`docs/adr/`](./docs/adr/) for architecture decisions.
+decisions, [`PUBLIC_API.md`](./PUBLIC_API.md) full CLI/library reference,
+[`PRD-v1.md`](./PRD-v1.md) product spec, and [`docs/adr/`](./docs/adr/) for architecture decisions.
 
 ## Stack
 
@@ -86,6 +85,18 @@ docs/adr/   architecture decisions
 External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine),
 `~/vault/agents/<role>/` (memory, inbox, journal, outbox),
 `~/worktrees/<repo>-<slug>/` (worker scratch).
+
+## Public API
+
+`PUBLIC_API.md` documents the full public surface: all `ledger` CLI verbs and flags,
+exported library functions, config schema, and environment variables. Use it as
+the authoritative reference for tooling, plugins, and CI integration.
+
+Version pin example (package.json):
+
+```json
+"arc-agents": "0.1.2"
+```
 
 ## Hard constraints (excerpted from `CHOICES.md`)
 
