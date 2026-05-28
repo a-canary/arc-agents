@@ -2,7 +2,13 @@ import { test, expect } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { loadConfig, resolveAlias } from "./load";
+import {
+  loadConfig,
+  resolveAlias,
+  resolveFast,
+  resolveSmart,
+  type Config,
+} from "./load";
 
 const repoRoot = join(import.meta.dir, "..", "..");
 
@@ -89,4 +95,109 @@ test("resolveAlias throws when default_alias is missing from map", () => {
     default_alias: "missing-default",
   };
   expect(() => resolveAlias("no-such-alias", cfg)).toThrow("missing-default");
+});
+
+test("loadConfig rejects fast_alias that does not name an exec_cli_alias key", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const bad = {
+      exec_cli_alias: { "opus-max": "claude --model opus {prompt}" },
+      pool_caps: { default: 4 },
+      default_alias: "opus-max",
+      fast_alias: "ghost-alias",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
+    expect(() => loadConfig(dir)).toThrow(/fast_alias.*ghost-alias.*not a key/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig rejects smart_alias that does not name an exec_cli_alias key", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const bad = {
+      exec_cli_alias: { "opus-max": "claude --model opus {prompt}" },
+      pool_caps: { default: 4 },
+      default_alias: "opus-max",
+      smart_alias: "ghost-alias",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
+    expect(() => loadConfig(dir)).toThrow(/smart_alias.*ghost-alias.*not a key/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig accepts fast_alias and smart_alias that resolve in exec_cli_alias", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const ok = {
+      exec_cli_alias: {
+        "opus-max": "claude --model opus --effort max {prompt}",
+        "minimax-fast":
+          "pi -p --provider minimax --model MiniMax-M2.7 --thinking low {prompt}",
+      },
+      pool_caps: { default: 4 },
+      default_alias: "minimax-fast",
+      fast_alias: "minimax-fast",
+      smart_alias: "opus-max",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(ok));
+    const cfg = loadConfig(dir);
+    expect(cfg.fast_alias).toBe("minimax-fast");
+    expect(cfg.smart_alias).toBe("opus-max");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig accepts a config with neither fast_alias nor smart_alias set", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const ok = {
+      exec_cli_alias: { "opus-max": "claude --model opus {prompt}" },
+      pool_caps: { default: 4 },
+      default_alias: "opus-max",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(ok));
+    const cfg = loadConfig(dir);
+    expect(cfg.fast_alias).toBeUndefined();
+    expect(cfg.smart_alias).toBeUndefined();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("resolveFast / resolveSmart return the resolved alias and command", () => {
+  const cfg: Config = {
+    exec_cli_alias: {
+      "opus-max": "claude --model opus --effort max {prompt}",
+      "minimax-fast":
+        "pi -p --provider minimax --model MiniMax-M2.7 --thinking low {prompt}",
+    },
+    pool_caps: { default: 4 },
+    default_alias: "minimax-fast",
+    fast_alias: "minimax-fast",
+    smart_alias: "opus-max",
+  };
+  expect(resolveFast(cfg)).toEqual({
+    alias: "minimax-fast",
+    command:
+      "pi -p --provider minimax --model MiniMax-M2.7 --thinking low {prompt}",
+  });
+  expect(resolveSmart(cfg)).toEqual({
+    alias: "opus-max",
+    command: "claude --model opus --effort max {prompt}",
+  });
+});
+
+test("resolveFast / resolveSmart throw with a select-models hint when pointer is unset", () => {
+  const cfg: Config = {
+    exec_cli_alias: { "opus-max": "claude --model opus {prompt}" },
+    pool_caps: { default: 4 },
+    default_alias: "opus-max",
+  };
+  expect(() => resolveFast(cfg)).toThrow("/select-models");
+  expect(() => resolveSmart(cfg)).toThrow("/select-models");
 });
