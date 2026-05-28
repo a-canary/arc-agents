@@ -9,10 +9,11 @@
 #   1. branch-clean   — no uncommitted changes, working tree clean
 #   2. rebased        — head is rebased on $BASE (no merge commits in branch)
 #   3. author-lint    — every commit author matches I-0006 (a-canary)
-#   4. tdd-green      — colocated *.test.ts for every prod .ts in diff
-#   5. todo-sweep     — TODO/FIXME/XXX reference a ledger task or PR
-#   6. merge-gate     — fixture + typecheck + bun test (bin/merge-gate.sh)
-#   7. ci-green       — gh pr checks <num> all PASS (if --pr passed)
+#   4. api-key-guard — no hardcoded API keys / empty env var fallbacks in staged diff
+#   5. tdd-green      — colocated *.test.ts for every prod .ts in diff
+#   6. todo-sweep     — TODO/FIXME/XXX reference a ledger task or PR
+#   7. merge-gate     — fixture + typecheck + bun test (bin/merge-gate.sh)
+#   8. ci-green       — gh pr checks <num> all PASS (if --pr passed)
 #
 # Usage:
 #   bin/pre-merge.sh [--base <ref>] [--pr <num>] [--project <path>]
@@ -37,7 +38,7 @@ done
 
 # BIN is always resolved from this script's own location — gate scripts may
 # not exist in the target $PROJECT (e.g. older branch, different repo). Allow
-# overriding via --bin if the merger wants to test a different gate set.
+# overriding via --bin if the merger user wants to test a different gate set.
 SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 if [ -z "$PROJECT" ]; then
   PROJECT="$(cd "$SCRIPT_DIR/.." && pwd)"
@@ -111,9 +112,68 @@ gate_author_lint() {
   pass "author-lint" "all commits authored by $expected_name"
 }
 
-# Gate 4: tdd-green
+# Gate 4: api-key-guard — no hardcoded API keys in staged diff
+# Pattern source: conjecture security incident (csk-hpr4... dead key in git history).
+# Matches bare key strings, empty env var fallbacks, and plain-text config values.
+gate_api_key_guard() {
+  log "Gate 4: api-key-guard"
+  # Extract added lines from staged diff (skip diff headers)
+  local staged_diff
+  staged_diff=$(git diff --cached -U0 \
+    -- '*.ts' '*.js' '*.py' '*.sh' '*.yaml' '*.yml' '*.json' '*.svelte' '*.md' \
+    | grep -E '^\+[^+]' \
+    | grep -v '^(\+\+|---|\s*Index:)' \
+    || true)
+
+  if [ -z "$staged_diff" ]; then
+    skip "api-key-guard" "no staged additions"
+    return
+  fi
+
+  # Grep patterns: bare secret strings, empty env var defaults, plain-text key fields.
+  # Each got its own line in the while loop so violations are isolated.
+  local found=0
+  # shellcheck disable=SC2016  # backtick expansion inside '' intentionally literal
+  while IFS= read -r line; do
+    [ -z "$line" ] && continue
+    # Cerebras, OpenAI, Anthropic, Azure key prefixes (any 20+ char token-like string)
+    if echo "$line" | grep -qE "'csk-[A-Za-z0-9]{20,}'" || \
+       echo "$line" | grep -qE '"csk-[A-Za-z0-9]{20,}"' || \
+       echo "$line" | grep -qE "'sk-[A-Za-z0-9]{20,}'" || \
+       echo "$line" | grep -qE '"sk-[A-Za-z0-9]{20,}"'; then
+      fail "api-key-guard" "bare API key string found: ${line:0:80}"
+      found=1
+      break
+    fi
+    # os.environ.get / os.getenv with empty-fallback default (silent fail on unset)
+    if echo "$line" | grep -qE 'os\.environ\.get\([^)]*[\'\"].*[\"\']' || \
+       echo "$line" | grep -qE 'os\.getenv\([^)]*[\'\"].*[\"\']'; then
+      fail "api-key-guard" "empty env-var default (silent fail): ${line:0:80}"
+      found=1
+      break
+    fi
+    # "key": "20+charvalue" plain-text in JSON/YAML config
+    if echo "$line" | grep -qE '"[a-z_-]{0,20}key[a-z_-]{0,20}"\s*:\s*"[A-Za-z0-9]{16,}"'; then
+      fail "api-key-guard" "plain-text API key in config: ${line:0:80}"
+      found=1
+      break
+    fi
+    # API_KEY = "" / = '' (empty string assignment)
+    if echo "$line" | grep -qE '(API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|CEREBRAS_API_KEY)\s*=\s*["\']{2}'; then
+      fail "api-key-guard" "empty API_KEY assignment found: ${line:0:80}"
+      found=1
+      break
+    fi
+  done <<< "$staged_diff"
+
+  if [ "$found" -eq 0 ]; then
+    pass "api-key-guard" "no hardcoded API key patterns in staged diff"
+  fi
+}
+
+# Gate 5: tdd-green
 gate_tdd_green() {
-  log "Gate 4: tdd-green"
+  log "Gate 5: tdd-green"
   if [ ! -x "$BIN/tdd-green.sh" ]; then
     skip "tdd-green" "bin/tdd-green.sh not found"
     return
@@ -125,9 +185,9 @@ gate_tdd_green() {
   fi
 }
 
-# Gate 5: todo-sweep
+# Gate 6: todo-sweep
 gate_todo_sweep() {
-  log "Gate 5: todo-sweep"
+  log "Gate 6: todo-sweep"
   if [ ! -x "$BIN/todo-sweep.sh" ]; then
     skip "todo-sweep" "bin/todo-sweep.sh not found"
     return
@@ -139,9 +199,9 @@ gate_todo_sweep() {
   fi
 }
 
-# Gate 6: merge-gate (fixture + typecheck + bun test)
+# Gate 7: merge-gate (fixture + typecheck + bun test)
 gate_merge_gate() {
-  log "Gate 6: merge-gate (fixture+typecheck+test)"
+  log "Gate 7: merge-gate (fixture+typecheck+test)"
   if [ ! -x "$BIN/merge-gate.sh" ]; then
     fail "merge-gate" "bin/merge-gate.sh not found"
     return
@@ -158,9 +218,9 @@ gate_merge_gate() {
   fi
 }
 
-# Gate 7: ci-green (gh pr checks)
+# Gate 8: ci-green (gh pr checks)
 gate_ci_green() {
-  log "Gate 7: ci-green"
+  log "Gate 8: ci-green"
   if [ -z "$PR_NUM" ]; then
     skip "ci-green" "no --pr given"
     return
@@ -189,6 +249,7 @@ log "Starting pre-merge gate project=$PROJECT base=$BASE pr=${PR_NUM:-<none>}"
 gate_branch_clean
 gate_rebased
 gate_author_lint
+gate_api_key_guard
 gate_tdd_green
 gate_todo_sweep
 gate_merge_gate
