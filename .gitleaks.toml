@@ -1,0 +1,8 @@
+# Gitleaks config for arc-agents
+# Scan result 2026-05-28: 0 leaks in 482 commits, 0 false-positives requiring suppression.
+# No allowlist entries needed. File kept as the config hook for future per-rule tuning.
+
+[allowlist]
+description = "No false-positives identified in arc-agents repo as of 2026-05-28"
+commits = []
+paths = [".gitleaksignore"]

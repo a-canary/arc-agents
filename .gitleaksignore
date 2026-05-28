@@ -1,0 +1,9 @@
+# .gitleaksignore — arc-agents secret scan findings
+# Generated: 2026-05-28  Tool: gitleaks v8.16.0
+# Result: 0 leaks in 482 commits, 0 leaks in working tree.
+#
+# Format: each non-comment line must be a gitleaks fingerprint:
+#   <commit-sha>:<rule-id>:<file-path>:<secret-value>
+#
+# No entries: scan produced zero findings requiring suppression.
+# If a future scan surfaces a false-positive, add its fingerprint here.

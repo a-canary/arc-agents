@@ -4,7 +4,8 @@
 # Gates (in order, all run; non-zero exit if any FAIL):
 #   1. fixture   — at least one *.test.ts colocated test exists
 #   2. typecheck — `bun run typecheck` passes (tsc --noEmit)
-#   3. test      — `bun test` passes (full suite, bun's runner)
+#   3. secret-scan — gitleaks + trufflehog (no real secrets)
+#   4. test      — `bun test` passes (full suite, bun's runner)
 #
 # Usage: bin/merge-gate.sh [--project <path>]
 #   PROJECT env var or --project overrides cwd. Defaults to repo containing this script.
@@ -14,6 +15,10 @@
 # Port of ~/agents/bin/merge-gate.sh adapted for Bun runtime (was tsx/vitest).
 
 set -euo pipefail
+
+# Ensure ~/bin precedes /usr/local/bin so user-installed tools (trufflehog)
+# resolve before system-installed ones. Required for oss-sweep gitleaks+trufflehog.
+export PATH="$HOME/bin:$PATH"
 
 # Resolve --project flag
 PROJECT="${PROJECT:-}"
@@ -96,10 +101,33 @@ gate_migration_lint() {
   fi
 }
 
-# ── Gate 3: Test — bun test ─────────────────────────────────────────────────
+# ── Gate 3: Secret scan — gitleaks + trufflehog ──────────────────────────────
+
+gate_secret_scan() {
+  log "Gate 3: Secret scan (gitleaks + trufflehog)"
+  local script="$PROJECT/bin/secret-scan-gate.sh"
+  if ! [ -x "$script" ]; then
+    skip "secret-scan" "bin/secret-scan-gate.sh missing"
+    return 0
+  fi
+  if "$script" --project "$PROJECT" >/tmp/secret-scan-$$.log 2>&1; then
+    pass "secret-scan" "gitleaks+trufflehog: no leaks found"
+  else
+    local rc=$?
+    if [ "$rc" -eq 2 ]; then
+      fail "secret-scan" "gitleaks not installed — failing closed"
+    else
+      fail "secret-scan" "secret scan detected secrets — see /tmp/secret-scan-$$.log"
+    fi
+    cat /tmp/secret-scan-$$.log >&2
+    return 1
+  fi
+}
+
+# ── Gate 4: Test — bun test ─────────────────────────────────────────────────
 
 gate_test() {
-  log "Gate 3: Test (bun test)"
+  log "Gate 4: Test (bun test)"
   if ! command -v bun >/dev/null 2>&1; then
     fail "test" "bun not on PATH"
     return 1
@@ -120,6 +148,7 @@ main() {
   gate_fixture        || true
   gate_typecheck      || true
   gate_migration_lint || true
+  gate_secret_scan   || true
   gate_test           || true
 
   local failed

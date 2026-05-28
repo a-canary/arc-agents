@@ -1,0 +1,24 @@
+#!/usr/bin/env bash
+# pre-push hook — run secret scan before any push
+#
+# Copy this file to .git/hooks/pre-push (executable) to install the hook.
+# The hook runs secret-scan-gate.sh and aborts the push if secrets are found.
+#
+# To install automatically, run: bin/install-pre-push-hook.sh
+# Or manually: cp bin/pre-push-hook .git/hooks/pre-push && chmod +x .git/hooks/pre-push
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+PROJECT="$(cd "$SCRIPT_DIR/.." && pwd)"
+
+# PATH must include ~/bin for user-installed trufflehog
+export PATH="$HOME/bin:$PATH"
+
+echo "[pre-push] Running secret scan..."
+if ! "$SCRIPT_DIR/secret-scan-gate.sh" --project "$PROJECT" >/dev/null 2>&1; then
+  echo "[pre-push] FAILED: secret scan detected secrets. Push blocked." >&2
+  echo "[pre-push] Run ./bin/secret-scan-gate.sh for details." >&2
+  exit 1
+fi
+echo "[pre-push] Secret scan passed."
