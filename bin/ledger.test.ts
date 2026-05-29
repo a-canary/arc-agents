@@ -451,6 +451,25 @@ test("update --hitl 1 flips column without state change", async () => {
   }
 });
 
+test("update --agent and --project patch the row without state change", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "p", "--agent", "developer", "--project", "arc-agents")) as {
+      id: string;
+    };
+    await run(db, "update", c.id, "--agent", "admin", "--project", "onenation");
+    const shown = (await run(db, "show", c.id)) as {
+      issue: { agent: string; project: string; state: string };
+    };
+    expect(shown.issue.agent).toBe("admin");
+    expect(shown.issue.project).toBe("onenation");
+    expect(shown.issue.state).toBe("ready");
+  } finally {
+    cleanup();
+  }
+});
+
 test("update --hitl rejects non-binary value", async () => {
   const { db, cleanup } = freshDb();
   try {
