@@ -11,7 +11,8 @@
     "arc-tui": "./bin/arc-tui.ts",
     "arc-replay": "./bin/arc-replay.ts",
     "factory": "./bin/factory.ts",
-    "webui-server": "./bin/webui-server.ts"
+    "webui-server": "./bin/webui-server.ts",
+    "playwright-check": "./bin/playwright-check.ts"
   },
   "scripts": {
     "test": "bun test",
@@ -22,6 +23,7 @@
     "typescript": "^5.5.0"
   },
   "dependencies": {
+    "playwright": "^1.50.0",
     "yaml": "^2.9.0",
     "zod": "^3.23.0"
   }
