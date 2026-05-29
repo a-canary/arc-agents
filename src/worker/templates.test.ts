@@ -1,6 +1,6 @@
 import { describe, expect, it } from "bun:test";
 import { existsSync } from "node:fs";
-import { dirname, join } from "node:path";
+import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
 import { renderSystemPrompt, resolveTemplate } from "./templates";
 
