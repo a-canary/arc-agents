@@ -1083,6 +1083,28 @@ export const migrations: Migration[] = [
       `);
     },
   },
+  {
+    id: "020_blog_table",
+    // ADR 0007 — Blog Feed. Separate table for human-readable posts, not a polymorphic kind.
+    // Columns: id, project, title, body_md, artifact_path, origin_task_id, created_at.
+    // origin_task_id nullable — manual posts (e.g. from the blog skill) have no origin.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS blog (
+          id             TEXT PRIMARY KEY,
+          project        TEXT NOT NULL,
+          title          TEXT NOT NULL,
+          body_md        TEXT NOT NULL,
+          artifact_path  TEXT,
+          origin_task_id TEXT REFERENCES issues(id),
+          created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_blog_project ON blog(project)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_blog_created_at ON blog(created_at DESC)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_blog_origin_task_id ON blog(origin_task_id) WHERE origin_task_id IS NOT NULL");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
