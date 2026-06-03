@@ -16,6 +16,7 @@ import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
+import { checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, resolveAlias } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
 
@@ -332,6 +333,14 @@ switch (cmd) {
             `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging.`,
           );
         }
+        // analysis-1780502957 Pattern 1 Part A: enforce pr_url's repo matches
+        // the row's project field. The guard runs at the bookie layer so
+        // a worker cannot mark a row merged against the wrong github repo.
+        const project = db
+          .query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?")
+          .get(id)?.project;
+        const guardMsg = checkMergeGuard(project, pr);
+        if (guardMsg) die(guardMsg);
       }
     }
 
