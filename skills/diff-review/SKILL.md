@@ -18,6 +18,7 @@ Run **after** the diff is finalized (all code/test/doc edits done, no further wo
 1. `git diff` against the branch's merge base (raw patch text, no commentary).
 2. The task row's `body_md` + `acceptance_md` (the brief).
 3. Full contents of any ADR file referenced by the brief or touched by the diff.
+4. The row's `project` field and (if filed) the `pr_url` — see "Project-field verification" below.
 
 The subagent receives **nothing else** — no event log, no worker chat history, no prior reasoning. Independence is the whole point.
 
@@ -47,7 +48,7 @@ Empty arrays are valid (and expected for clean, in-scope diffs).
 ## Procedure (worker side)
 
 1. Capture the diff: `git diff $(git merge-base HEAD origin/main)..HEAD` (or `git diff --cached` if already staged).
-2. Capture the brief: `bun bin/ledger.ts show <task-id>` and extract `issue.body_md` + `issue.acceptance_md`.
+2. Capture the brief: `bun bin/ledger.ts show <task-id>` and extract `issue.body_md` + `issue.acceptance_md` + `issue.project` + `issue.pr_url`.
 3. Identify touched ADRs: any `docs/adr/*.md` file in the diff, plus any ADR explicitly cited in the brief.
 4. Spawn an independent reviewer via the `Agent` tool with `subagent_type: general-purpose` (no shared context). Prompt template below.
 5. Validate the returned JSON parses and matches the schema. If not, re-prompt once for fix; if still malformed, fail loud and decompose.
@@ -56,6 +57,34 @@ Empty arrays are valid (and expected for clean, in-scope diffs).
    - including an explicit justification in the row's `evidence_md` at merge time, naming each unresolved item.
 7. Ask the bookie subagent (via the Agent tool) to log the report as `kind=diff_review` with the JSON object as the payload. Bookie writes via `bin/ledger.ts event`; the worker does not invoke the CLI directly (all-writes-through-bookie rule).
 8. Proceed to `git add` / `git commit` / push / PR.
+
+## Project-field verification (mandatory precondition)
+
+Before the subagent reads the diff, it must verify the row's `project` field matches the `pr_url`'s github repo. This catches the "worker committed to the wrong repo" class of bug (Pattern 4 in `~/vault/agents/director/journal/analysis-1780502957.md` — the 5 cli-proxy rows that filed PRs against `a-canary/arc-agents` instead of `a-canary/cli-proxy`).
+
+The worker passes two new sections to the subagent (between `=== ACCEPTANCE ===` and `=== DIFF ===`):
+
+```
+=== ROW PROJECT FIELD ===
+<value of issue.project, e.g. "cli-proxy" — may be empty/null for arc-agents internal rows>
+
+=== PR_URL (if filed) ===
+<value of issue.pr_url — may be null if not yet filed>
+```
+
+The subagent runs this 3-line bash check **before** reading the diff:
+
+```bash
+EXPECTED_REPO="a-canary/${PROJECT}"
+ACTUAL_REPO="$(echo "$PR_URL" | sed -E 's|.*github.com/([^/]+/[^/]+)/pull/.*|\1|')"
+[ "$EXPECTED_REPO" = "$ACTUAL_REPO" ] || { echo "PR repo mismatch: expected $EXPECTED_REPO, got $ACTUAL_REPO"; exit 2; }
+```
+
+- If `PROJECT` is empty/missing (arc-agents internal rows) → skip the check, no false positive.
+- If `PR_URL` is missing and `PROJECT` is set → skip the check (no PR to verify against yet; the bookie merge guard fires at merge time as the last line of defense).
+- If both are set and the regex produces an `ACTUAL_REPO` that doesn't match → exit 2 before reading the diff. The subagent reports the mismatch in `surprises_vs_brief`.
+
+Fixture: `project=cli-proxy, pr_url=https://github.com/a-canary/cli-proxy/pull/1` → `EXPECTED_REPO=a-canary/cli-proxy`, `ACTUAL_REPO=a-canary/cli-proxy`, check passes.
 
 ## Reviewer prompt template
 
@@ -92,6 +121,12 @@ Do not editorialize. Do not output anything outside the JSON object.
 
 === ACCEPTANCE ===
 <acceptance_md>
+
+=== ROW PROJECT FIELD ===
+<project — may be empty for arc-agents internal rows>
+
+=== PR_URL (if filed) ===
+<pr_url — may be empty if not yet filed>
 
 === TOUCHED ADRS ===
 <adr-file-1 path + contents>
