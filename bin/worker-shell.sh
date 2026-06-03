@@ -70,6 +70,39 @@ stall_timeout_secs() {
   fi
 }
 
+# Resolve the target REPO for a claimed row. Honors ARC_PROJECT_REPO_<UPPER>
+# env overrides; defaults to ~/repos/<project>/. Pure: $1 = project name →
+# absolute REPO path on stdout. Falls back to the script's own location
+# (~/repos/arc-agents) for an empty/unset project so the prior hardcoded
+# behavior survives as a no-regression safety net for legacy rows.
+#
+# Why env override + ~/repos default: rows may name a project whose working
+# clone lives at a non-default location — a bare clone on a fast SSD, a fork
+# under a different org, a CI cache mirror. ARC_PROJECT_REPO_<UPPER> lets
+# the factory (or a test harness) redirect without editing this script. The
+# default ~/repos/<project>/ mirrors the convention `factory.ts` and the
+# director's `CHOICES.md` directories already follow.
+#
+# Hyphens in the project name become underscores in the env var (so
+# "cli-proxy" → ARC_PROJECT_REPO_CLI_PROXY, "starlight-slm" →
+# ARC_PROJECT_REPO_STARLIGHT_SLM). This matches the bash uppercase idiom
+# shells and CI configs already use for project-scoped knobs.
+resolve_repo() {
+  local project="$1"
+  if [ -z "$project" ]; then
+    cd "$(dirname "$0")/.." && pwd
+    return
+  fi
+  local var
+  var="ARC_PROJECT_REPO_$(echo "$project" | tr '[:lower:]-' '[:upper:]_')"
+  local override="${!var:-}"
+  if [ -n "$override" ]; then
+    echo "$override"
+  else
+    echo "${HOME}/repos/${project}"
+  fi
+}
+
 # Sourced by the test harness — define functions, then stop before doing any
 # real work (claim, exec, ledger writes). Production never sets this.
 if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
@@ -138,8 +171,22 @@ if [ -z "$CLAIM_ID" ]; then
   exit 0
 fi
 
+# Project-aware REPO routing. Hardcoding REPO to this script's own location
+# (~/repos/arc-agents) made every worker edit arc-agents regardless of the
+# row's `project` field (Pattern 1, analysis-1780502957.md). After the claim
+# succeeds, read the row's project via the same `bun ledger show` call the
+# test fixtures use, then resolve to ~/repos/<project>/ (or the
+# ARC_PROJECT_REPO_<UPPER> override). $REPO above stays pointed at
+# ~/repos/arc-agents/ — we still need the local bin/ledger.ts — so the
+# worktree parent is a NEW variable, WT_REPO, used only by the git worktree
+# commands and the user prompt. Empty/unset project falls back to $REPO
+# (the script's own location) for legacy rows.
+PROJECT="$(bun "$LEDGER_BIN" show "$CLAIM_ID" "${DB_FLAG[@]}" 2>/dev/null \
+  | grep -oE '"project":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+WT_REPO="$(resolve_repo "$PROJECT")"
+
 # Isolate into a per-task worktree BEFORE the agent boots, so every worker
-# edits an isolated checkout — never the production repo at $REPO. The
+# edits an isolated checkout — never the production repo at $WT_REPO. The
 # render-prompt carries no isolation step, and a worker reaches the merger's
 # worktree convention only via the merge flow, so isolation must be forced
 # here (mechanical, pre-agent — same bootstrap justification as the claim).
@@ -147,16 +194,16 @@ fi
 # Slug = CLAIM_ID (already a unique, filesystem-safe kebab task id). Branch
 # worker/<slug> off main; worktree at ~/worktrees/<repo-basename>-<slug>/.
 # Idempotent: a pre-existing worktree (re-claim) is reused, not re-added.
-REPO_NAME="$(basename "$REPO")"
+REPO_NAME="$(basename "$WT_REPO")"
 WT_DIR="${HOME}/worktrees/${REPO_NAME}-${CLAIM_ID}"
 WT_BRANCH="worker/${CLAIM_ID}"
 if [ ! -d "$WT_DIR" ]; then
   # -B resets the branch to main's tip if a stale branch lingers from a prior
   # reaped attempt; --force overrides a leftover claude-agent worktree lock.
-  if ! git -C "$REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" main 2>/dev/null; then
+  if ! git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" main 2>/dev/null; then
     # Branch may be checked out elsewhere; fall back to a detached worktree so
     # the worker still isolates rather than silently running in prod root.
-    git -C "$REPO" worktree add --force --detach "$WT_DIR" main
+    git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" main
   fi
 fi
 cd "$WT_DIR"
@@ -174,7 +221,7 @@ export ARC_WORKTREE="$WT_DIR"
 SYS_PROMPT="$(bun "$LEDGER_BIN" render-prompt "$CLAIM_ID" --worker "$WORKER" "${DB_FLAG[@]}")"
 
 USER_PROMPT="Task ${CLAIM_ID}. You are isolated in worktree ${WT_DIR} (branch
-${WT_BRANCH}, off main) — do all work here, never in ${REPO}. Run \`bun ${LEDGER_BIN} ${DB_FLAG[*]} show ${CLAIM_ID}\`
+${WT_BRANCH}, off main) — do all work here, never in ${WT_REPO}. Run \`bun ${LEDGER_BIN} ${DB_FLAG[*]} show ${CLAIM_ID}\`
 to read it, then execute. On terminal state, ask bookie to update (merged +
 evidence + pr, or failed + evidence, or decompose into HITL children). tmux
 dies on exit; factory respawns if more work."
