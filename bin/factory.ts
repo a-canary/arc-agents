@@ -341,7 +341,18 @@ export function tick(): TickResult {
   const orphans = reapOrphanClaims(db);
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
-  const worktrees = reapWorktrees(db);
+  // Live-worker set for the reaper's defensive guard: reapWorktrees() will
+  // skip a row whose claimed_by is still in the tmux session list. This
+  // closes the race where a worker session has its row flipped to terminal
+  // (merged/failed/cancelled) but its bash subprocess is still alive with
+  // the worktree as its CWD — reaping the worktree would break the worker's
+  // next bash command. After reapFinished() kills the session, listWorkers()
+  // excludes it, and the reaper proceeds normally on the same tick. The set
+  // is reused later for the slot accounting (any/interactive live counts) so
+  // we only pay for one tmux list-sessions call per tick.
+  const sessions = listWorkers();
+  const liveWorkerNames = new Set(sessions.map((s) => s.name));
+  const worktrees = reapWorktrees(db, liveWorkerNames);
   // (c) 7-day backstop: periodic disk-scan for orphan worktrees with no live row.
   // Interval-gated so the readdir + per-dir git calls don't run every 5s tick.
   const nowSec = Math.floor(Date.now() / 1000);
@@ -361,8 +372,8 @@ export function tick(): TickResult {
   const reaped = [...reapedExited, ...reapedAge, ...reapedDone];
 
   // tmux sessions don't carry pool identity — track via prefix suffix `-i-` / `-a-`.
-  // Legacy sessions (no infix) count as "any".
-  const sessions = listWorkers();
+  // Legacy sessions (no infix) count as "any". Reuse the set we fetched above
+  // (the worktree reaper consumed it) so we don't pay for a second tmux call.
   const liveInteractive = sessions.filter((s) => s.name.startsWith(`${PREFIX}-i-`)).length;
   const liveAny = sessions.length - liveInteractive;
 

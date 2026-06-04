@@ -29,6 +29,14 @@
 //   - `git worktree remove` and `git branch -D` will fail loudly if the path
 //     is not actually a worktree managed by git — we treat any failure as a
 //     leave-it-alone signal and just log.
+//
+// LIVE-WORKER GUARD: reapWorktrees() takes an optional `liveWorkerNames` set
+// and skips any row whose `claimed_by` is in the set. The factory tick()
+// builds that set from listWorkers() right before calling the reaper, so a
+// worker whose row was just flipped to terminal but whose bash subprocess is
+// still alive (race: reapFinished() just sent kill-session, the process
+// hasn't torn down yet) does NOT lose its CWD out from under it. The reap
+// fires on the next tick, after the session is actually gone.
 
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
@@ -42,7 +50,17 @@ export type ReapedWorktree = {
   branch: string | null;
   // has-commits: a failed/cancelled row whose worktree has unmerged commits —
   // preserved for human salvage, row untouched.
-  outcome: "removed" | "missing" | "git-remove-failed" | "no-parent-repo" | "has-commits";
+  // worker-alive: a row whose claimed_by tmux session is still listed as live
+  // (defensive skip — reaping would yank the CWD out from under a worker that
+  // has a still-running bash subprocess; observed in starlight-e13-... where a
+  // merged worker was idling and the reap removed its worktree mid-session).
+  outcome:
+    | "removed"
+    | "missing"
+    | "git-remove-failed"
+    | "no-parent-repo"
+    | "has-commits"
+    | "worker-alive";
   detail?: string;
 };
 
@@ -90,20 +108,62 @@ function behindMain(worktreePath: string): number {
   return Number.isFinite(n) ? n : 0;
 }
 
-export function reapWorktrees(db: Db): ReapedWorktree[] {
+export function reapWorktrees(
+  db: Db,
+  // Optional set of live tmux worker-session names. When provided, the reaper
+  // skips rows whose `claimed_by` is in the set — a defensive guard against
+  // the race where the worker's bash subprocess is still alive (reapFinished
+  // just sent kill-session, but the process hasn't fully torn down yet, or
+  // the worker has a long-lived child whose CWD is the reaped worktree).
+  // Passing the set is preferred over letting the reaper shell out to tmux:
+  //   - the factory already has the set from listWorkers();
+  //   - the test harness can pin a deterministic set without tmux at all.
+  // `undefined` / `null` / empty set all mean "no live workers known" → the
+  // guard is a no-op and the reaper proceeds with the normal policy.
+  liveWorkerNames?: ReadonlySet<string> | null,
+): ReapedWorktree[] {
   // (a) merged + (b) failed/cancelled. blocked stays excluded (decomposition
   // parents). ready/wip/claimed/review are live — never reaped here.
+  // claimed_by is fetched so the live-worker guard below can short-circuit
+  // rows whose session is still in the tmux server's session list.
   const rows = db
     .query(
-      `SELECT id, state, worktree_path, branch FROM issues
+      `SELECT id, state, worktree_path, branch, claimed_by FROM issues
        WHERE state IN ('merged','failed','cancelled') AND worktree_path IS NOT NULL`,
     )
-    .all() as { id: string; state: string; worktree_path: string; branch: string | null }[];
+    .all() as {
+    id: string;
+    state: string;
+    worktree_path: string;
+    branch: string | null;
+    claimed_by: string | null;
+  }[];
 
   const reaped: ReapedWorktree[] = [];
   for (const row of rows) {
     const wt = row.worktree_path;
     const br = row.branch;
+
+    // Live-worker guard: if the row's claimed_by tmux session is still alive,
+    // skip the reap. The factory's reapFinished() runs BEFORE reapWorktrees()
+    // in tick(), and a normally-converged tick will see an empty live set
+    // (the just-killed session is gone from listWorkers). The guard exists
+    // for the cases that don't converge: a reaped worker whose bash subprocess
+    // is still alive (the CWD is the reaped worktree, the next bash command
+    // would fail), or any other code path that calls reapWorktrees without
+    // first passing the worker's session through reapFinished. Cost: one Set
+    // lookup per row. The reap fires on the NEXT tick once the session is
+    // actually gone — the worktree is just delayed by ≤ the tick interval.
+    if (row.claimed_by && liveWorkerNames && liveWorkerNames.has(row.claimed_by)) {
+      reaped.push({
+        issue_id: row.id,
+        worktree_path: wt,
+        branch: br,
+        outcome: "worker-alive",
+        detail: `claimed_by=${row.claimed_by} is still a live tmux session; defer reap to next tick`,
+      });
+      continue;
+    }
 
     // (b) commit-guard: a failed/cancelled worktree with unmerged commits is
     // preserved for human salvage. merged rows skip this — their work is

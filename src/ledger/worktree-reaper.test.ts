@@ -414,3 +414,164 @@ test("(c) backstop is a no-op on an empty/absent root", () => {
   });
   expect(res.length).toBe(0);
 });
+
+// --- Live-worker guard: race between merge and reap ---
+// Reported in starlight-e13-... (2026-06-04): row flipped to merged while a
+// worker session was still alive (or had a still-running bash subprocess with
+// the worktree as its CWD). reapWorktrees() fired 1s after the merge and
+// yanked the worktree dir, breaking the worker's next bash command
+// ("Working directory does not exist"). The guard takes a set of live tmux
+// worker-session names; rows whose claimed_by is in the set are skipped with
+// outcome=worker-alive (deferred to the next tick once the session is gone).
+
+test("live-worker guard: skips a merged row whose claimed_by is in the live set", () => {
+  const db = setupDb();
+  // Row claims to be from a still-alive worker session.
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-live-merge', 'p', 't', 'b', 'mvp', 'merged', 'task', ?, ?, ?)`,
+    [worktreeDir, BRANCH, "arc-worker-a-abc123"],
+  );
+
+  const live = new Set(["arc-worker-a-abc123"]);
+  const reaped = reapWorktrees(db, live);
+
+  // Reported as deferred, NOT removed.
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.issue_id).toBe("iss-live-merge");
+  expect(reaped[0]!.outcome).toBe("worker-alive");
+  expect(reaped[0]!.detail).toContain("arc-worker-a-abc123");
+
+  // Worktree + row untouched — the worker can still use it as its CWD.
+  expect(existsSync(worktreeDir)).toBe(true);
+  const row = db
+    .query<{ worktree_path: string | null; branch: string | null }, []>(
+      "SELECT worktree_path, branch FROM issues WHERE id='iss-live-merge'",
+    )
+    .get();
+  expect(row?.worktree_path).toBe(worktreeDir);
+  expect(row?.branch).toBe(BRANCH);
+
+  // No worktree-reaped event was logged for the deferred row.
+  const ev = db
+    .query<{ payload_md: string }, []>(
+      "SELECT payload_md FROM issue_events WHERE issue_id='iss-live-merge' AND agent='worktree-reaper'",
+    )
+    .get();
+  expect(ev ?? null).toBeNull();
+});
+
+test("live-worker guard: same row, no live set → reaps normally (regression: guard is opt-in)", () => {
+  const db = setupDb();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-no-guard', 'p', 't', 'b', 'mvp', 'merged', 'task', ?, ?, ?)`,
+    [worktreeDir, BRANCH, "arc-worker-a-abc123"],
+  );
+
+  // No liveWorkerNames passed → guard is a no-op, the row reaps as before.
+  const reaped = reapWorktrees(db);
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
+
+test("live-worker guard: same row, live set without this session → reaps normally", () => {
+  const db = setupDb();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-other-alive', 'p', 't', 'b', 'mvp', 'merged', 'task', ?, ?, ?)`,
+    [worktreeDir, BRANCH, "arc-worker-a-abc123"],
+  );
+
+  // Live set contains a DIFFERENT worker — this one is dead, so reap proceeds.
+  const live = new Set(["arc-worker-a-zzz999"]);
+  const reaped = reapWorktrees(db, live);
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
+
+test("live-worker guard: live set is empty → reaps normally", () => {
+  const db = setupDb();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-empty-set', 'p', 't', 'b', 'mvp', 'merged', 'task', ?, ?, ?)`,
+    [worktreeDir, BRANCH, "arc-worker-a-abc123"],
+  );
+
+  const reaped = reapWorktrees(db, new Set());
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
+
+test("live-worker guard: second call after session is gone → reaps the deferred row", () => {
+  const db = setupDb();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-defer-then-reap', 'p', 't', 'b', 'mvp', 'merged', 'task', ?, ?, ?)`,
+    [worktreeDir, BRANCH, "arc-worker-a-abc123"],
+  );
+
+  // Tick 1: worker alive → deferred.
+  const first = reapWorktrees(db, new Set(["arc-worker-a-abc123"]));
+  expect(first.length).toBe(1);
+  expect(first[0]!.outcome).toBe("worker-alive");
+  expect(existsSync(worktreeDir)).toBe(true);
+
+  // Tick 2: worker gone → reap fires.
+  const second = reapWorktrees(db, new Set());
+  expect(second.length).toBe(1);
+  expect(second[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
+
+test("live-worker guard: applies to FAILED + CANCELLED rows too, not just merged", () => {
+  const db = setupDb();
+  // One failed, one cancelled, both with worktrees clean of unmerged commits.
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-fail-live', 'p', 't', 'b', 'mvp', 'failed', 'task', ?, ?, ?)`,
+    [worktreeDir, BRANCH, "arc-worker-a-abc123"],
+  );
+  // Make a sibling worktree for the cancelled row.
+  const wt2 = join(workDir, "wt2");
+  const r = git(repoDir, ["worktree", "add", "-q", wt2, "-b", "reaper-test-branch-2"]);
+  if (!r.ok) throw new Error(`worktree add wt2 failed: ${r.out}`);
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-cancel-live', 'p', 't', 'b', 'mvp', 'cancelled', 'task', ?, ?, ?)`,
+    [wt2, "reaper-test-branch-2", "arc-worker-a-xyz789"],
+  );
+
+  // Both workers alive → both deferred.
+  const live = new Set(["arc-worker-a-abc123", "arc-worker-a-xyz789"]);
+  const reaped = reapWorktrees(db, live);
+
+  expect(reaped.length).toBe(2);
+  const byId = new Map(reaped.map((r) => [r.issue_id, r]));
+  expect(byId.get("iss-fail-live")?.outcome).toBe("worker-alive");
+  expect(byId.get("iss-cancel-live")?.outcome).toBe("worker-alive");
+  expect(existsSync(worktreeDir)).toBe(true);
+  expect(existsSync(wt2)).toBe(true);
+});
+
+test("live-worker guard: row with claimed_by=NULL is NOT skipped (no live worker to protect)", () => {
+  const db = setupDb();
+  // Merged row with NO claimed_by — the guard should not apply.
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, branch, claimed_by)
+     VALUES ('iss-no-claim', 'p', 't', 'b', 'mvp', 'merged', 'task', ?, ?, NULL)`,
+    [worktreeDir, BRANCH],
+  );
+
+  const live = new Set(["arc-worker-a-abc123"]);
+  const reaped = reapWorktrees(db, live);
+
+  // Despite the live set being non-empty, this row is reapable because no
+  // worker currently owns it. (The set protects OWNED worktrees, not all.)
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
