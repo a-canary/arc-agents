@@ -42,10 +42,10 @@ import {
   type BackstopResult,
 } from "../src/ledger/worktree-reaper";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
+import { runLedgerJson } from "../src/ledger/cli-invoke";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const SHELL = join(REPO, "bin", "worker-shell.sh");
-const LEDGER = join(REPO, "bin", "ledger.ts");
 
 // Legacy ARC_WORKER_MAX collapses both pools into one general bucket.
 const LEGACY_MAX = process.env.ARC_WORKER_MAX ? parseInt(process.env.ARC_WORKER_MAX, 10) : null;
@@ -54,7 +54,6 @@ const SLOTS_INTERACTIVE = LEGACY_MAX !== null ? 0 : parseInt(process.env.ARC_SLO
 const MAX_AGE = parseInt(process.env.ARC_WORKER_MAX_AGE ?? "14400", 10);
 const INTERVAL = parseInt(process.env.ARC_FACTORY_INTERVAL ?? "5", 10);
 const PREFIX = process.env.ARC_WORKER_PREFIX ?? "arc-worker";
-const DB_FLAG = process.env.ARC_LEDGER_DB ? ["--db", process.env.ARC_LEDGER_DB] : [];
 
 // Trigger (c): 7-day backstop disk-scan over the worktrees root. It's expensive
 // (readdir + a couple of `git rev-list` per dir), so we don't run it every 5s
@@ -269,16 +268,10 @@ export function reapFinished(db: any): string[] {
 type ReadyRow = { id: string; kind: string; type: string; title: string };
 
 export function listReady(poolFilter?: string): ReadyRow[] {
-  const args = [LEDGER, "spawn-ready", ...DB_FLAG];
+  const args: string[] = [];
   if (poolFilter) args.push("--pool", poolFilter);
-  const r = spawnSync(process.execPath, args, { encoding: "utf8" });
-  if (r.status !== 0) return [];
-  try {
-    const rows = JSON.parse(r.stdout ?? "[]");
-    return Array.isArray(rows) ? rows : [];
-  } catch {
-    return [];
-  }
+  const rows = runLedgerJson<ReadyRow[]>("spawn-ready", args, []);
+  return Array.isArray(rows) ? rows : [];
 }
 
 export function countReady(): number {
@@ -522,17 +515,10 @@ export function printOrphansCleared(priorCount: number, now: number = Math.floor
 // Scoped to ~/worktrees/<prefix>* via the existing `ledger doctor --json` reader
 // to reuse its battle-tested git porcelain parsing rather than re-implementing.
 export function auditMergeableWorktrees(): { paths: string[]; branches: (string | null)[] } {
-  const r = spawnSync(process.execPath, [LEDGER, "doctor", "--json", ...DB_FLAG], { encoding: "utf8" });
-  if (r.status !== 0) return { paths: [], branches: [] };
-  try {
-    const out = JSON.parse(r.stdout ?? "{}") as {
-      mergeable_worktrees?: { path: string; branch: string | null }[];
-    };
-    const found = out.mergeable_worktrees ?? [];
-    return { paths: found.map((w) => w.path), branches: found.map((w) => w.branch) };
-  } catch {
-    return { paths: [], branches: [] };
-  }
+  type DoctorOut = { mergeable_worktrees?: { path: string; branch: string | null }[] };
+  const out = runLedgerJson<DoctorOut>("doctor", ["--json"], {});
+  const found = out.mergeable_worktrees ?? [];
+  return { paths: found.map((w) => w.path), branches: found.map((w) => w.branch) };
 }
 
 export function printMergeableWarn(

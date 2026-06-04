@@ -10,13 +10,10 @@
 // with the same thread_id.
 
 import { spawnSync } from "node:child_process";
-import { join, dirname } from "node:path";
-import { fileURLToPath } from "node:url";
 import { open, openWithMigrate } from "../src/ledger/db";
+import { dbFlag, LEDGER_BIN } from "../src/ledger/cli-invoke";
 
-const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
-const LEDGER = join(REPO, "bin", "ledger.ts");
-const DB_FLAG = process.env.ARC_LEDGER_DB ? ["--db", process.env.ARC_LEDGER_DB] : [];
+const DB_FLAG = dbFlag();
 
 const args = process.argv.slice(2);
 const cmd = args[0];
@@ -50,9 +47,9 @@ switch (cmd) {
     // Truncate title; full message in body for replay.
     const title = message.length > 80 ? message.slice(0, 77) + "..." : message;
     const r = spawnSync(
-      "bun",
+      process.execPath,
       [
-        LEDGER, "create",
+        LEDGER_BIN, "create",
         "--kind", "event",
         "--type", "interactive",
         "--tier", "trust",
