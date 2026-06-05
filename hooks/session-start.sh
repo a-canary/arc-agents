@@ -34,4 +34,41 @@ if boot:
 PY
 fi
 
+# --- AGENTS-GLOBAL.md collector ----------------------------------------------
+# Convention: AGENTS-GLOBAL.md = rules that must ESCAPE their repo to reach a
+# cross-repo orchestrator (e.g. a Director dispatching workers into siblings it
+# never cd's into). Repo-LOCAL rules go in AGENTS.md, which the harness already
+# scopes by cwd — those must NOT live here. User-global rules live in ~/AGENTS.md
+# (system prompt). The filename is the access modifier: naming a file
+# AGENTS-GLOBAL.md is the deliberate act of promotion.
+#
+# Sources: every ~/repos/*/AGENTS-GLOBAL.md plus the current repo root.
+# cwd-agnostic by design; deduped by realpath.
+collect_agents_global() {
+  local -a candidates=()
+  for d in "$HOME"/repos/*; do
+    [ -d "$d" ] && candidates+=( "$d/AGENTS-GLOBAL.md" )
+  done
+  local repo_root
+  repo_root="$(git rev-parse --show-toplevel 2>/dev/null)"
+  [ -n "$repo_root" ] && candidates+=( "$repo_root/AGENTS-GLOBAL.md" )
+
+  local -A seen=()
+  local printed=0 f real
+  for f in "${candidates[@]}"; do
+    [ -f "$f" ] || continue
+    real="$(realpath "$f")"
+    [ -n "${seen[$real]:-}" ] && continue
+    seen[$real]=1
+    if [ "$printed" -eq 0 ]; then
+      echo ""
+      echo "=== AGENTS-GLOBAL directives (apply to this session) ==="
+      printed=1
+    fi
+    echo "--- $real ---"
+    cat "$f"
+  done
+}
+collect_agents_global
+
 exit 0
