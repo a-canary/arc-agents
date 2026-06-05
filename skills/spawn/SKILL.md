@@ -68,6 +68,28 @@ For HITL decomposition the typical child has `kind=task, type=HITL, hitl=1`.
 
 The worker has driven the parent to a terminal-for-this-session state (`blocked`). Per `claude-afk`, exit cleanly. Factory will not respawn on this parent until all children merge — at which point the cascade trigger flips it back to `ready`.
 
+## Writer's contract (analysis files that plan decomposition)
+
+Per [CHOICES I-0009](../CHOICES.md#i-0009-analysis-writer-contract-for-decomposition), when an `analysis-*.md` or PRD file prescribes decomposing a parent task into N children, the file's "prescribed action" section MUST include the **exact** `bin/ledger.ts decompose <parent-id> --child "..."` invocation, not a prose description of the intent. The full atomic verb sequence is:
+
+```
+bun ~/repos/arc-agents/bin/ledger.ts decompose <parent-id> \
+  --child "<child-1-title>" \
+  --child "<child-2-title>" \
+  --child "<child-3-title>" \
+  --agent bookie
+```
+
+Common pitfalls to avoid in the analysis file:
+
+| Don't write | Write instead |
+|---|---|
+| "Spawn N HITL children via the spawn skill" | The exact `decompose <parent> --child ...` invocation above, with the parent id known from the analysis. |
+| "Use the create verb to insert a child per decision" | The atomic `decompose` verb (one transaction, N children + parent block). |
+| "Set `parent.blocked_by` and flip state to blocked" | The `decompose` verb (it does both in one call; manual `update --blocked-by` does NOT exist — see `update` verb in `bin/ledger.ts`). |
+
+When the worker executes the prescription, the parent is atomically flipped to `blocked` and `parent.blocked_by` is set to the new child ids. The `unblock_dependents` SQL trigger (or `unblock_sprint_parents` for sprint parents) re-flips the parent to `ready` when all children reach a terminal state. If the prescription used the broken manual pattern, a crash between steps leaves the parent in a stuck-forever partial state.
+
 ## Related
 
 - [[bookie]] — performs the writes.
