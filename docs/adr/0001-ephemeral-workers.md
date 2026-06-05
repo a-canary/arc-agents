@@ -51,3 +51,9 @@ The interviewer remains a single long-lived pane (`bin/launch.ts`, single-pane s
 
 - E2E tests in `bin/factory.test.ts` exercise empty-ledger no-op, N_MAX cap, reap-by-age, and atomic-claim race with parallel shells.
 - Operationally: `tmux list-sessions | grep arc-worker-` should show ≤ N_MAX live sessions, none older than MAX_AGE, and respawn within `INTERVAL` seconds of a task reaching `state=ready`.
+
+## Compute-heavy tasks: operator runs the compute, worker lands the finding
+
+ADR 0001 assumes the worker does the work in the worker bash. For **compute-heavy ML tasks** (LoRA sweeps, embedding passes, N-domain scaling on a vast.ai lease), this assumption is wrong: the deliverable takes longer than the 30-min stall watchdog, the worker bash is not a 4-hour training job, and the worker's role on these tasks is to *land the operator's pre-computed finding*, not to run the experiment itself.
+
+The documented design is the **operator pattern** — see ADR 0008. Briefly: the operator holds the vast.ai lease and runs the compute; the worker atomic-claims the row, finds the operator's artifacts on disk, runs `git add` + `git commit` + diff-review + merge, and exits within minutes. The 30-min watchdog is a *turn-level* safety net, not a *task-level* compute budget. The 4 successful E-rows (E3/E9/E10/E13) + 7 eventually-successful E-rows (E1/E2/E4/E5/E7/E8/000027) in the 2026-05-28 → 2026-06-04 window all used this pattern; per `analysis-1780697137.md` Pattern 3 + the E4 operator-note 2026-05-30 15:28:54.
