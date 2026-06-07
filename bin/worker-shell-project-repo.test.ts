@@ -85,6 +85,19 @@ test("project_repo_path maps project=expert-horde to expert-horde", () => {
   expect(r.out).toBe("/home/aaron/repos/expert-horde");
 });
 
+test("project_repo_path maps project=conjecture to conjecture", () => {
+  // Same gap as expert-horde: hygiene cron rows in ~/.config/arc/hygiene.yaml
+  // list `conjecture` as a repo; the worker-shell mapping previously had no
+  // entry, so project=conjecture rows fell through to $REPO (arc-agents) and
+  // forked an empty arc-agents worktree instead of the real conjecture
+  // checkout. See task `improve-architecture-arc-agents-project-`
+  // (2026-06-07) and the originating observation in
+  // `000048-hygiene-conjecture-improve-architecture`.
+  const r = projectPath("conjecture");
+  expect(r.rc).toBe(0);
+  expect(r.out).toBe("/home/aaron/repos/conjecture");
+});
+
 test("project_repo_path falls through to $REPO (arc-agents) for unknown projects", () => {
   // Back-compat path: every arc-agents / arc-webui / arc-skills / etc. row
   // hits this default and ends up where the old code put it — no
