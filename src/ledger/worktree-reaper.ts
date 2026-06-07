@@ -204,13 +204,12 @@ export type BackstopResult = {
 
 export type BackstopOpts = {
   worktreesRoot: string;
-  parentRepo: string;
   maxAgeSec: number;
   now?: number; // unix seconds; defaults to wall clock (overridable for tests)
 };
 
 export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResult[] {
-  const { worktreesRoot, parentRepo, maxAgeSec } = opts;
+  const { worktreesRoot, maxAgeSec } = opts;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const results: BackstopResult[] = [];
 
@@ -242,8 +241,15 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
     }
     if (!st.isDirectory()) continue;
 
-    // Confirm git actually manages this as a worktree before touching it.
-    if (!findParentRepo(dir)) {
+    // Confirm git actually manages this as a worktree AND capture the parent
+    // repo it belongs to. The worktrees root may mix worktrees from many
+    // repos (arc-agents, expert-horde, starlight-slm, ...) — each must be
+    // removed via `git -C <its-actual-parent>`, not via the dispatcher's repo.
+    // Resolving from the worktree (not from `parentRepo` opt) is the only
+    // way to handle the cross-project case: the worktree's git-common-dir
+    // is the source of truth.
+    const worktreeParent = findParentRepo(dir);
+    if (!worktreeParent) {
       results.push({ worktree_path: dir, outcome: "not-a-worktree" });
       continue;
     }
@@ -274,7 +280,7 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
       continue;
     }
 
-    const rm = git(parentRepo, ["worktree", "remove", "-f", "-f", dir]);
+    const rm = git(worktreeParent, ["worktree", "remove", "-f", "-f", dir]);
     if (!rm.ok) {
       results.push({ worktree_path: dir, outcome: "kept-too-young", detail: `git-remove-failed: ${rm.out}` });
       continue;

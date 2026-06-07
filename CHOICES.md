@@ -141,6 +141,9 @@ Before `git commit`, the worker spawns an independent subagent (no shared reason
 ### I-0011: triageUnset Auto-Classification
 `triageUnset(db, budget=10)` in `bin/factory.ts` runs each factory tick. Selects up to `budget` ready rows with `agent='agent_unset' OR pool='pool_unset'` ordered by SORT_KEY_SQL. Rules: agent — `source_module='arc-chat'` → `chat`; `kind='prd'` → `director`; else → `developer`. Pool — `tier IN (prod,trust,mvp)` → `build`; else → `explore`. Tier is never touched. Each triaged row gets a `kind='triaged'` event (migration 018). Escape hatch: `ARC_TRIAGE_DISABLE=1`. Budget override: `ARC_TRIAGE_BUDGET=N`.
 
+### I-0012: Cross-Project Worktree Routing
+A row's `project` is a LOGICAL name (e.g. `starlight`, `starlight-slm`), not the path to the physical git repo. The factory dispatcher runs from `arc-agents/`, but a worker for `project=starlight` needs the worktree in `expert-horde` (the code lives there, not in the dispatcher's checkout). `bin/worker-shell.sh` resolves the logical project to the physical repo via `project_repo_path <project>` — a small hardcoded table (with `ARC_PROJECT_REPO_<project>` env override for adding new mappings without editing the script). The default for unknown projects is the dispatcher's $REPO, preserving back-compat for every arc-agents / arc-webui / arc-skills row. The claim SQL (`src/ledger/claim.ts`) was extended to `RETURNING id, project` so the bash bootstrap can route without a second ledger round-trip. Companion fix: the backstop disk-scan (`src/ledger/worktree-reaper.ts:backstopPurgeWorktrees`) now resolves the worktree's actual parent via `findParentRepo(dir)` per dir, so cross-project worktrees are no longer orphaned on disk when their work merges. Hygiene task: `improve-architecture-worker-shell-sh-wt-` (2026-06-07).
+
 ---
 
 ## UX

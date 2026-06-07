@@ -350,7 +350,6 @@ export function tick(): TickResult {
     lastBackstop = nowSec;
     backstop = backstopPurgeWorktrees(db, {
       worktreesRoot: WORKTREES_ROOT,
-      parentRepo: REPO,
       maxAgeSec: BACKSTOP_MAX_AGE,
       now: nowSec,
     });

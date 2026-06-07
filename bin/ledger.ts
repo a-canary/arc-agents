@@ -157,13 +157,17 @@ switch (cmd) {
     // --type is kept as a deprecated alias for one transition window.
     // SQL lives in src/ledger/claim.ts so the bash bootstrap in
     // worker-shell.sh and this CLI share one canonical UPDATE...RETURNING.
+    // Output also carries `project` so the bash bootstrap can route the
+    // worktree to the right physical repo (project=starlight → expert-horde,
+    // not the dispatcher's arc-agents). See bin/worker-shell.sh
+    // `project_repo_path` for the mapping.
     const worker = args[1] ?? die("worker required");
     if (worker.startsWith("--")) die("worker required (positional)");
     const poolFilter = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
     const row = claimOnce(db, worker, poolFilter);
     if (!row) {
-      out({ claimed: null });
+      out({ claimed: null, project: null });
       break;
     }
     db.run(`INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'claimed', ?, ?)`, [
@@ -171,7 +175,7 @@ switch (cmd) {
       worker,
       `claimed by ${worker}`,
     ]);
-    out({ claimed: row.id });
+    out({ claimed: row.id, project: row.project });
     break;
   }
 
