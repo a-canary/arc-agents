@@ -101,6 +101,7 @@ project_repo_path() {
   case "$project" in
     starlight)     echo "/home/aaron/repos/expert-horde" ;;
     starlight-slm) echo "/home/aaron/repos/starlight-slm" ;;
+    expert-horde)  echo "/home/aaron/repos/expert-horde" ;;
     *)             echo "${REPO:-}" ;;
   esac
 }
