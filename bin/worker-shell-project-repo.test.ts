@@ -73,6 +73,18 @@ test("project_repo_path maps project=starlight-slm to starlight-slm", () => {
   expect(r.out).toBe("/home/aaron/repos/starlight-slm");
 });
 
+test("project_repo_path maps project=expert-horde to expert-horde", () => {
+  // Hygiene cron rows in ~/.config/arc/hygiene.yaml list `expert-horde` (not
+  // the legacy `starlight` alias) as the logical project name. Without this
+  // mapping, the case branch falls through to $REPO (arc-agents) and the
+  // worker lands in an empty arc-agents worktree, having to manually clone
+  // the real expert-horde checkout. See task
+  // `improve-architecture-bin-worker-shell-sh` (2026-06-07).
+  const r = projectPath("expert-horde");
+  expect(r.rc).toBe(0);
+  expect(r.out).toBe("/home/aaron/repos/expert-horde");
+});
+
 test("project_repo_path falls through to $REPO (arc-agents) for unknown projects", () => {
   // Back-compat path: every arc-agents / arc-webui / arc-skills / etc. row
   // hits this default and ends up where the old code put it — no
