@@ -305,6 +305,15 @@ function addWorktreeUnder(root: string, name: string, branch: string): string {
   return dir;
 }
 
+// Build a sibling worktree of a FOREIGN repo under the scanned root. Used
+// by the cross-project backstop test.
+function addWorktreeUnderForeign(root: string, name: string, branch: string, foreignRepo: string): string {
+  const dir = join(root, name);
+  const r = git(foreignRepo, ["worktree", "add", "-q", dir, "-b", branch]);
+  if (!r.ok) throw new Error(`foreign worktree add ${name} failed: ${r.out}`);
+  return dir;
+}
+
 test("(c) backstop removes an aged, no-row, no-commits worktree", () => {
   const db = setupDb();
   const root = join(workDir, "wts");
@@ -314,7 +323,6 @@ test("(c) backstop removes an aged, no-row, no-commits worktree", () => {
   // No ledger row references `dir`. Force it "aged" via now far in the future.
   const res = backstopPurgeWorktrees(db, {
     worktreesRoot: root,
-    parentRepo: repoDir,
     maxAgeSec: 7 * 86400,
     now: Math.floor(Date.now() / 1000) + 30 * 86400,
   });
@@ -333,7 +341,6 @@ test("(c) backstop PRESERVES an aged, no-row worktree that has unmerged commits"
 
   const res = backstopPurgeWorktrees(db, {
     worktreesRoot: root,
-    parentRepo: repoDir,
     maxAgeSec: 7 * 86400,
     now: Math.floor(Date.now() / 1000) + 30 * 86400,
   });
@@ -353,7 +360,6 @@ test("(c) backstop KEEPS a worktree a live ledger row still references", () => {
 
   const res = backstopPurgeWorktrees(db, {
     worktreesRoot: root,
-    parentRepo: repoDir,
     maxAgeSec: 7 * 86400,
     now: Math.floor(Date.now() / 1000) + 30 * 86400,
   });
@@ -372,7 +378,6 @@ test("(c) backstop KEEPS a young, no-row, no-commits worktree (not yet aged out)
   // now == real now, dir just created → under the 7d age gate.
   const res = backstopPurgeWorktrees(db, {
     worktreesRoot: root,
-    parentRepo: repoDir,
     maxAgeSec: 7 * 86400,
     now: Math.floor(Date.now() / 1000),
   });
@@ -395,7 +400,6 @@ test("(c) backstop removes a fully-merged worktree regardless of age", () => {
   // now == real now → young, but merged → removable anyway.
   const res = backstopPurgeWorktrees(db, {
     worktreesRoot: root,
-    parentRepo: repoDir,
     maxAgeSec: 7 * 86400,
     now: Math.floor(Date.now() / 1000),
   });
@@ -409,8 +413,53 @@ test("(c) backstop is a no-op on an empty/absent root", () => {
   const db = setupDb();
   const res = backstopPurgeWorktrees(db, {
     worktreesRoot: join(workDir, "does-not-exist"),
-    parentRepo: repoDir,
     maxAgeSec: 7 * 86400,
   });
   expect(res.length).toBe(0);
+});
+
+// Cross-project backstop: ~/worktrees/ may contain worktrees from many repos
+// (arc-agents, expert-horde, starlight-slm, ...). The pre-fix code invoked
+// `git -C <dispatcher-repo> worktree remove <other-repo-worktree>` which
+// silently failed for every cross-project dir, so those worktrees leaked
+// disk forever. The fix: the backstop resolves the worktree's actual parent
+// via `findParentRepo(dir)` per dir. This test stands up a SECOND repo
+// (foreignRepo) and a worktree of it, then confirms the backstop removes
+// the foreign worktree even though the call site never named the foreign
+// repo.
+test("(c) backstop removes a worktree of a foreign repo (cross-project case)", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts-mixed");
+  spawnSync("mkdir", ["-p", root]);
+
+  // Stand up a second, foreign repo with its own main branch.
+  const foreignRepo = join(workDir, "foreign-repo");
+  spawnSync("git", ["init", "-q", "-b", "main", foreignRepo], { encoding: "utf8" });
+  git(foreignRepo, ["config", "user.email", "test@example.com"]);
+  git(foreignRepo, ["config", "user.name", "test"]);
+  writeFileSync(join(foreignRepo, "FOREIGN"), "foreign seed\n");
+  git(foreignRepo, ["add", "FOREIGN"]);
+  git(foreignRepo, ["commit", "-q", "-m", "foreign seed"]);
+
+  // A worktree OF the foreign repo, placed in the same scanned root.
+  const dir = addWorktreeUnderForeign(root, "foreign-orphan", "foreign-br", foreignRepo);
+
+  // No ledger row references `dir`. Force it "aged" via now far in the future.
+  // NOTE: backstopPurgeWorktrees no longer takes a `parentRepo` opt — it
+  // resolves the parent per worktree from the worktree's own git metadata.
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  // The backstop resolved foreignRepo as the worktree's parent (NOT repoDir,
+  // which is the test's "dispatcher" repo) and removed the foreign worktree.
+  expect(mine?.outcome).toBe("removed");
+  expect(existsSync(dir)).toBe(false);
+  // Sanity: the foreign repo is still a valid repo — `git worktree list`
+  // on it no longer shows our dir.
+  const list = git(foreignRepo, ["worktree", "list"]);
+  expect(list.out).not.toContain(dir);
 });

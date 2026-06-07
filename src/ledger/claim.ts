@@ -13,7 +13,11 @@ import type { Database } from "bun:sqlite";
 import { SORT_KEY_SQL } from "./tier-pool-sort";
 import { CLAIMABLE_KINDS_SQL } from "./kinds";
 
-export type ClaimRow = { id: string };
+// `project` is returned alongside `id` so the worker bootstrap
+// (bin/worker-shell.sh) can route the worktree to the right physical repo —
+// a row with project=starlight has its code in expert-horde, not the
+// dispatcher's repo (arc-agents). See bin/worker-shell.sh `project_repo_path`.
+export type ClaimRow = { id: string; project: string };
 
 // Build the canonical claim SQL. With `poolFilter=true`, the inner SELECT
 // gains `AND pool=?2` so the fast-pass pool can restrict the claim to one
@@ -24,7 +28,7 @@ export function buildClaimSQL(poolFilter: boolean): string {
   const poolClause = poolFilter ? "AND pool=?2 " : "";
   return `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
          WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${poolClause}ORDER BY ${SORT_KEY_SQL} LIMIT 1)
-         RETURNING id`;
+         RETURNING id, project`;
 }
 
 // Canonical claim SQL (no pool filter). Exported as a convenience for

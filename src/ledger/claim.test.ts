@@ -168,3 +168,34 @@ test("claimOnce does NOT claim a kind='prd' ready row", () => {
 test("CLAIMABLE_KINDS_SQL contains sprint for claim SQL inclusion", () => {
   expect(CLAIM_SQL).toContain("'sprint'");
 });
+
+// ── claimOnce also returns `project` so the worker bootstrap can route
+// the worktree to the right physical repo. The row's `project` field is a
+// LOGICAL name (e.g. `starlight`), not a path; bin/worker-shell.sh looks it
+// up via `project_repo_path` to find the actual git dir (e.g. expert-horde).
+// Before this, every worker landed in ~/worktrees/arc-agents-<id> regardless
+// of the row's project, leaving the worker with an empty checkout of the
+// dispatcher's repo (the originating bug: improve-architecture-worker-shell-sh-wt-).
+test("claimOnce returns the row's project alongside id", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = insertReady(db, "starlight-row", "mvp", "pool_unset");
+    // insertReady hardcodes 'arc-agents' — override project for this test.
+    db.run(`UPDATE issues SET project='starlight' WHERE id=?`, [id]);
+
+    const row = claimOnce(db, "w-proj");
+    expect(row).not.toBeNull();
+    expect(row!.id).toBe(id);
+    expect(row!.project).toBe("starlight");
+  } finally {
+    cleanup();
+  }
+});
+
+test("claimOnce RETURNING clause includes both id and project columns", () => {
+  // The SQL contract: the bash bootstrap parses `claimed` from the JSON
+  // output and the worker-shell `project_repo_path` lookup needs `project`.
+  // If either column drops out of RETURNING, downstream consumers silently
+  // receive undefined — guard the literal here.
+  expect(CLAIM_SQL).toContain("RETURNING id, project");
+});

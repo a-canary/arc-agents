@@ -59,6 +59,52 @@ stall_timeout_secs() {
   fi
 }
 
+# Resolve the physical repo dir for a row's `project` name (the logical
+# identifier in the ledger, e.g. `starlight`). Defaults to the dispatcher's
+# $REPO (arc-agents) for unknown projects — so every project that lives in
+# arc-agents, arc-webui, arc-skills, etc. behaves exactly as before. No
+# regression on the back-compat path.
+#
+# Cross-project mapping: a row's `project` is a LOGICAL name, not a path.
+# Without this indirection the worker always lands in an `arc-agents-` worktree
+# under ~/worktrees/, even when the actual code lives elsewhere. Three live
+# examples (2026-06-07): project=starlight rows have their code in
+# expert-horde, not arc-agents; previously the worktree was an empty
+# arc-agents checkout and the worker routed around it by working in
+# expert-horde's own nested worktree. See hygiene task
+# `improve-architecture-worker-shell-sh-wt-` for the originating bug.
+#
+# Override contract: env var ARC_PROJECT_REPO_<project> wins over the hardcoded
+# table, with dashes in the project name converted to underscores (bash env
+# names disallow dashes). Allows operators / per-factory configs to add a new
+# project→repo mapping without editing this script. An override pointing at a
+# non-existent dir fails LOUDLY via the worktree-add fallback chain — no
+# silent squat in $REPO.
+#
+# Pure: $1 = project name → repo path on stdout. Caller must export REPO
+# (this script's own dispatcher dir) before invoking; we use it as the
+# fall-through value.
+project_repo_path() {
+  local project="${1:-}"
+  if [[ -z "$project" ]]; then
+    echo "${REPO:-}"
+    return
+  fi
+  # Sanitize project name for env-var lookup: bash disallows dashes, so
+  # `starlight-slm` → `ARC_PROJECT_REPO_starlight_slm`.
+  local env_name="ARC_PROJECT_REPO_${project//-/_}"
+  local override="${!env_name:-}"
+  if [[ -n "$override" ]]; then
+    echo "$override"
+    return
+  fi
+  case "$project" in
+    starlight)     echo "/home/aaron/repos/expert-horde" ;;
+    starlight-slm) echo "/home/aaron/repos/starlight-slm" ;;
+    *)             echo "${REPO:-}" ;;
+  esac
+}
+
 # Sourced by the test harness — define functions, then stop before doing any
 # real work (claim, exec, ledger writes). Production never sets this.
 if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
@@ -121,6 +167,11 @@ CLAIM_POOL="${ARC_CLAIM_POOL:-${ARC_CLAIM_TYPE:-}}"
 [ -n "$CLAIM_POOL" ] && POOL_FLAG=(--pool "$CLAIM_POOL")
 CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${POOL_FLAG[@]}")"
 CLAIM_ID="$(echo "$CLAIM_JSON" | grep -oE '"claimed":[[:space:]]*"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+# `project` is optional in the JSON (null when claim races / loses; also
+# defensive against future output-shape drift). Pull it AFTER CLAIM_ID so an
+# absent `project` key falls back to $REPO via project_repo_path, not to a
+# syntax error from an unset var.
+CLAIM_PROJECT="$(echo "$CLAIM_JSON" | grep -oE '"project":[[:space:]]*"[^"]*"' | sed -E 's/.*"([^"]*)"$/\1/' || true)"
 
 if [ -z "$CLAIM_ID" ]; then
   echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"race-lost-or-empty\"}"
@@ -133,19 +184,35 @@ fi
 # worktree convention only via the merge flow, so isolation must be forced
 # here (mechanical, pre-agent — same bootstrap justification as the claim).
 #
+# WT_PARENT = the physical git repo dir the worktree should fork from. Default
+# is $REPO (the dispatcher's checkout, e.g. arc-agents for the live factory),
+# but cross-project rows (project=starlight → expert-horde, etc.) are routed
+# to the mapped repo via `project_repo_path`. See the function header for the
+# full mapping + override contract.
+#
 # Slug = CLAIM_ID (already a unique, filesystem-safe kebab task id). Branch
-# worker/<slug> off main; worktree at ~/worktrees/<repo-basename>-<slug>/.
+# worker/<slug> off main; worktree at ~/worktrees/<basename-of-WT_PARENT>-<slug>/.
 # Idempotent: a pre-existing worktree (re-claim) is reused, not re-added.
-REPO_NAME="$(basename "$REPO")"
-WT_DIR="${HOME}/worktrees/${REPO_NAME}-${CLAIM_ID}"
+WT_PARENT="$(project_repo_path "$CLAIM_PROJECT")"
+WT_DIR="${HOME}/worktrees/$(basename "$WT_PARENT")-${CLAIM_ID}"
 WT_BRANCH="worker/${CLAIM_ID}"
+# Sanity-check the mapped repo dir exists before asking git to worktree-add
+# from it. A bad project→repo mapping (typo, repo moved, project retired)
+# would otherwise cascade into a silent "git: fatal: not a git repository"
+# inside the 2>/dev/null of the fallback chain, leaving the worker with no
+# worktree and a confusing cd failure. Fail loud with the offending mapping
+# so the operator (or hygiene task) can fix the table.
+if [[ ! -d "$WT_PARENT" ]]; then
+  echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"project-maps-to-missing-dir\",\"project\":\"$CLAIM_PROJECT\",\"wt_parent\":\"$WT_PARENT\"}" >&2
+  exit 2
+fi
 if [ ! -d "$WT_DIR" ]; then
   # -B resets the branch to main's tip if a stale branch lingers from a prior
   # reaped attempt; --force overrides a leftover claude-agent worktree lock.
-  if ! git -C "$REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" main 2>/dev/null; then
+  if ! git -C "$WT_PARENT" worktree add --force -B "$WT_BRANCH" "$WT_DIR" main 2>/dev/null; then
     # Branch may be checked out elsewhere; fall back to a detached worktree so
     # the worker still isolates rather than silently running in prod root.
-    git -C "$REPO" worktree add --force --detach "$WT_DIR" main
+    git -C "$WT_PARENT" worktree add --force --detach "$WT_DIR" main
   fi
 fi
 cd "$WT_DIR"
@@ -163,7 +230,8 @@ export ARC_WORKTREE="$WT_DIR"
 SYS_PROMPT="$(bun "$LEDGER_BIN" render-prompt "$CLAIM_ID" --worker "$WORKER" "${DB_FLAG[@]}")"
 
 USER_PROMPT="Task ${CLAIM_ID}. You are isolated in worktree ${WT_DIR} (branch
-${WT_BRANCH}, off main) — do all work here, never in ${REPO}. Run \`bun ${LEDGER_BIN} ${DB_FLAG[*]} show ${CLAIM_ID}\`
+${WT_BRANCH}, forked from ${WT_PARENT}, off main) — do all work here, never in
+${REPO}. Run \`bun ${LEDGER_BIN} ${DB_FLAG[*]} show ${CLAIM_ID}\`
 to read it, then execute. On terminal state, ask bookie to update (merged +
 evidence + pr, or failed + evidence, or decompose into HITL children). tmux
 dies on exit; factory respawns if more work."
