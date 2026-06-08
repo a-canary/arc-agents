@@ -103,6 +103,7 @@ project_repo_path() {
     starlight-slm) echo "/home/aaron/repos/starlight-slm" ;;
     expert-horde)  echo "/home/aaron/repos/expert-horde" ;;
     conjecture)    echo "/home/aaron/repos/conjecture" ;;
+    llm-judge)     echo "/home/aaron/repos/llm-judge" ;;
     *)             echo "${REPO:-}" ;;
   esac
 }

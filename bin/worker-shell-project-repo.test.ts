@@ -98,6 +98,19 @@ test("project_repo_path maps project=conjecture to conjecture", () => {
   expect(r.out).toBe("/home/aaron/repos/conjecture");
 });
 
+test("project_repo_path maps project=llm-judge to llm-judge", () => {
+  // llm-judge rows have their code in /home/aaron/repos/llm-judge, not
+  // arc-agents. Without this row the factory creates the worktree from the
+  // wrong repo (an empty arc-agents checkout) and the worker routes around
+  // the misrouting by working directly in the target repo. Observed in
+  // task `000050-hygiene-llm-judge-improve-architecture`: the worktree was
+  // ~/worktrees/arc-agents-000050-... but the actual code lives in
+  // /home/aaron/repos/llm-judge.
+  const r = projectPath("llm-judge");
+  expect(r.rc).toBe(0);
+  expect(r.out).toBe("/home/aaron/repos/llm-judge");
+});
+
 test("project_repo_path falls through to $REPO (arc-agents) for unknown projects", () => {
   // Back-compat path: every arc-agents / arc-webui / arc-skills / etc. row
   // hits this default and ends up where the old code put it — no
