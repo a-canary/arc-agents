@@ -225,6 +225,46 @@ test("list default excludes terminal rows; --all includes them", async () => {
   }
 }, 15000);
 
+test("list --created-by filters by the agent that emitted kind='created'", async () => {
+  // Bookie/admin triage uses this to drop the post-hoc jq filter when asking
+  // "what did <agent> file?" — joins issue_events to find the creator.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const a = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "alpha", "--agent", "bookie")) as { id: string };
+    const b = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "beta", "--agent", "cli")) as { id: string };
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "gamma", "--agent", "bookie")) as { id: string };
+
+    const bookieRows = (await run(db, "list", "--created-by", "bookie")) as {
+      id: string;
+      title: string;
+    }[];
+    expect(bookieRows.map((r) => r.title).sort()).toEqual(["alpha", "gamma"]);
+    expect(bookieRows.map((r) => r.id)).toContain(a.id);
+    expect(bookieRows.map((r) => r.id)).toContain(c.id);
+
+    const cliRows = (await run(db, "list", "--created-by", "cli")) as {
+      title: string;
+    }[];
+    expect(cliRows.map((r) => r.title)).toEqual(["beta"]);
+
+    // Composes with --state + --limit: still applies the creator filter.
+    const combo = (await run(
+      db,
+      "list",
+      "--created-by",
+      "bookie",
+      "--state",
+      "ready",
+      "--limit",
+      "5",
+    )) as { title: string }[];
+    expect(combo.length).toBe(2);
+  } finally {
+    cleanup();
+  }
+});
+
 test("ls is an alias for list", async () => {
   const { db, cleanup } = freshDb();
   try {

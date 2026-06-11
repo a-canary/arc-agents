@@ -401,6 +401,7 @@ switch (cmd) {
     const state = getFlag("state");
     const kind = getFlag("kind");
     const type = getFlag("type");
+    const createdBy = getFlag("created-by");
     const all = args.includes("--all");
     const limit = parseInt(getFlag("limit") ?? "100", 10);
     const where: string[] = [];
@@ -418,6 +419,12 @@ switch (cmd) {
     if (type) {
       where.push("type=?");
       vals.push(type);
+    }
+    if (createdBy) {
+      where.push(
+        "id IN (SELECT issue_id FROM issue_events WHERE kind='created' AND agent=?)",
+      );
+      vals.push(createdBy);
     }
     const sql = `SELECT id, state, kind, type, title FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
@@ -1295,7 +1302,7 @@ switch (cmd) {
                                        skills: clarify-docs, improve-architecture,
                                                trash-retired-files, analyse-recent-sessions
                                        dedups against ready/blocked/wip/claimed hygiene rows
-  list [--state --kind --type --limit --all]   (alias: ls)
+  list [--state --kind --type --created-by --limit --all]   (alias: ls)
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them
   show <id>
