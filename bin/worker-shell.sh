@@ -38,6 +38,17 @@ worker_log_path() {
   echo "${cache}/arc-workers/${1}.log"
 }
 
+# Last-resort scrollback capture: if the tee's pipe gets SIGKILLed or
+# broken, the logfile is 0 bytes even when the pane has output. Pure:
+# $1=worker, $2=logfile → appends, no-op when not in a tmux session.
+capture_scrollback_to_log() {
+  local worker="$1" log="$2"
+  [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
+    && tmux capture-pane -p -t "$worker" -S -2000 >> "$log" 2>/dev/null \
+    || true
+  return 0
+}
+
 # Wall-clock stall bound (seconds) for the headless child (Gap 2). pi has no
 # read/stall timeout, so a dropped upstream LLM stream epoll-hangs it forever;
 # wrapping it in `timeout` makes a wedged worker self-terminate → the post-exit
@@ -258,4 +269,5 @@ else
   EVIDENCE="headless reconcile: agent exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH}; no advanceable work, marked failed (was ${POST_STATE:-claimed})."
   bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state failed --evidence "$EVIDENCE" >/dev/null 2>&1 || true
 fi
+capture_scrollback_to_log "$WORKER" "$LOG_FILE"
 exit "$AGENT_RC"
