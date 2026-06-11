@@ -1562,3 +1562,27 @@ test("render-prompt thread replay includes prior event/reply rows in created_at 
     cleanup();
   }
 });
+
+test("update --blocked-by is rejected (silently-dropped flag guard)", async () => {
+  // Regression: bin/ledger.ts update used to ignore --blocked-by entirely,
+  // returning {updated: true} while leaving the column NULL. Workers trusted
+  // the success and thought they had wired the parent. The guard now errors
+  // with a pointer to the `decompose` verb, which is the only writer of
+  // parent.blocked_by.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "guard")) as {
+      id: string;
+    };
+    const r = await runRaw(db, "update", c.id, "--blocked-by", '["x","y"]', "--state", "blocked");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/decompose/);
+    // Flag value is not echoed back; row must be untouched.
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string; blocked_by: string | null } };
+    expect(shown.issue.state).toBe("ready");
+    expect(shown.issue.blocked_by).toBeNull();
+  } finally {
+    cleanup();
+  }
+});

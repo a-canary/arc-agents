@@ -47,20 +47,21 @@ For HITL decomposition the typical child has `kind=task, type=HITL, hitl=1`.
 ## Procedure
 
 1. Decide child specs. Each child must have a clear acceptance criterion (what would let the parent unblock).
-2. Delegate to bookie via Agent tool:
+2. Delegate to bookie via Agent tool — use the **`decompose` verb** (atomic: children + parent.blocked_by + parent.state=blocked in one transaction):
 
    ```
-   For each child spec:
-     bun ~/repos/arc-agents/bin/ledger.ts create \
-       --kind <k> --type <ty> --title "<t>" --parent <parent-id> \
-       [--body "<md>"] [--acceptance "<md>"]
-
-   Then, with collected child ids:
-     bun ~/repos/arc-agents/bin/ledger.ts update <parent-id> \
-       --blocked-by '<jsonChildIds>' --state blocked
+   bun ~/repos/arc-agents/bin/ledger.ts decompose <parent-id> \
+     --child "<title 1>" [--child "<title 2>" ...]
    ```
 
-3. Bookie emits a `decomposed` event on the parent listing the new child ids.
+   Each `--child` may be a bare title (inherits parent tier+pool) or a JSON object `{"title":..., "tier"?:..., "pool"?:..., "agent"?:...}`.
+
+   > **Do NOT** fall back to the `create`+`update --blocked-by` pattern.
+   > `update` deliberately rejects `--blocked-by` (silently-dropped-flag guard
+   > shipped in the decompose era) so the only writer of `parent.blocked_by`
+   > is `decompose`. Use `decompose` end-to-end; bookie will route the write.
+
+3. Bookie emits a `progress: decomposed into N children: ...` event on the parent listing the new child ids.
 4. Return the ordered list of child ids to the caller.
 
 ## After spawn
