@@ -36,6 +36,11 @@ export function loadThreadContext(
   thread_id: string,
   current_id: string,
 ): string {
+  // Order by created_at (with id as a stable tiebreaker for rows that share
+  // the same second) so the replay reflects conversational timeline, not
+  // slug-insertion order. Bug-shaped surprise: mintId slugs are random-suffixed
+  // on collision, so ORDER BY id was actually order-of-INSERT in practice but
+  // was never a contract. created_at is.
   const turns = db
     .query<ThreadTurn, [string, string]>(
       `SELECT id, kind, COALESCE(source_module,'') AS source_module, title, COALESCE(body_md, '') AS body
@@ -45,7 +50,7 @@ export function loadThreadContext(
            (kind IN ('event','reply') AND source_module='arc-chat')
            OR (kind = 'event' AND source_module = 'arc-sprint')
          )
-       ORDER BY id`,
+       ORDER BY created_at, id`,
     )
     .all(thread_id, current_id);
   return renderThreadReplay(turns);

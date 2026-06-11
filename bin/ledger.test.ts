@@ -1157,3 +1157,88 @@ test("resolve-alias on DB without agent column returns default alias name", asyn
     cleanup();
   }
 });
+
+test("render-prompt thread replay includes prior event/reply rows in created_at order", async () => {
+  // I-0002: worker-shell.sh calls `ledger render-prompt` after claim. For an
+  // issue in a chat thread, the rendered prompt must include prior turns
+  // ordered by created_at (oldest first), excluding the current row itself.
+  // Speaker mapping: kind=event → [user], kind=reply → [you], source_module=arc-sprint → [handoff].
+  //
+  // The fixture below deliberately uses IDs in one order and created_at in
+  // a different order to actually exercise the created_at contract — a
+  // coincidental-id-order test would silently pass under the old `ORDER BY id`
+  // bug. See src/worker/thread-context.ts for the SQL.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const directDb = new Database(db);
+    // The current row the worker is about to handle. Has thread_id=T so the
+    // replay path is taken; kind=task with source_module=arc-chat is what
+    // interviewer produces (post-ADR-0005 a chat_in turn is kind=event;
+    // kind=task is the live-task version that triggers render-prompt).
+    const t0 = 1_700_000_000;
+    directDb.run(
+      `INSERT INTO issues (id, project, kind, type, title, body_md, state, thread_id, source_module, agent, tier, pool, created_at, updated_at)
+       VALUES (?, 'p', 'task', 'mvp', 'current task', 'current task body', 'claimed', 'T1', 'arc-chat', 'developer', 'tier_unset', 'pool_unset', ?, ?)`,
+      ["cur-1", t0 + 100, t0 + 100],
+    );
+    // Three prior turns. IDs are inserted in [a, b, c] order; created_at is in
+    // [c, a, b] order. A buggy `ORDER BY id` would emit a, b, c — wrong.
+    // Correct ordering by created_at must emit c, a, b.
+    const turns: { id: string; kind: "event" | "reply"; body: string; created_at: number }[] = [
+      // id=a, created_at=t0+30 → slot 2 in chronological order
+      { id: "prior-a", kind: "event", body: "user message A", created_at: t0 + 30 },
+      // id=b, created_at=t0+50 → slot 3
+      { id: "prior-b", kind: "reply", body: "you replied B", created_at: t0 + 50 },
+      // id=c, created_at=t0+10 → slot 1 (oldest)
+      { id: "prior-c", kind: "event", body: "user message C (oldest)", created_at: t0 + 10 },
+    ];
+    for (const turn of turns) {
+      directDb.run(
+        `INSERT INTO issues (id, project, kind, type, title, body_md, state, thread_id, source_module, agent, tier, pool, created_at, updated_at)
+         VALUES (?, 'p', ?, 'interactive', ?, ?, 'merged', 'T1', 'arc-chat', 'chat', 'tier_unset', 'pool_unset', ?, ?)`,
+        [turn.id, turn.kind, turn.body, turn.body, turn.created_at, turn.created_at],
+      );
+    }
+    // A row that should be filtered: kind=task with the same thread_id, but not
+    // kind IN (event, reply). It must NOT appear in the replay.
+    directDb.run(
+      `INSERT INTO issues (id, project, kind, type, title, body_md, state, thread_id, source_module, agent, tier, pool, created_at, updated_at)
+       VALUES (?, 'p', 'task', 'mvp', 'sibling task', 'sibling body', 'merged', 'T1', 'arc-chat', 'developer', 'tier_unset', 'pool_unset', ?, ?)`,
+      ["sibling-1", t0 + 5, t0 + 5],
+    );
+    directDb.close();
+
+    const r = await $`bun ${cli} render-prompt cur-1 --worker arc-worker-test --db ${db}`.quiet();
+    expect(r.exitCode).toBe(0);
+    const prompt = r.stdout.toString();
+
+    // Header carries the thread id so downstream consumers can confirm the
+    // replay path was actually taken (not the no-thread branch).
+    expect(prompt.split("\n")[0]).toContain("thread=T1");
+
+    // All three prior turns present.
+    expect(prompt).toContain("[user] user message C (oldest)");
+    expect(prompt).toContain("[user] user message A");
+    expect(prompt).toContain("[you] you replied B");
+
+    // Current row excluded (replay is prior context, not self).
+    expect(prompt).not.toContain("current task body");
+
+    // Disallowed kind (task) excluded even with same thread_id.
+    expect(prompt).not.toContain("sibling task");
+
+    // The "Prior turns in this thread (oldest first):" header is rendered.
+    expect(prompt).toContain("Prior turns in this thread (oldest first):");
+
+    // created_at ordering: C (t0+10) < A (t0+30) < B (t0+50).
+    const idxC = prompt.indexOf("[user] user message C (oldest)");
+    const idxA = prompt.indexOf("[user] user message A");
+    const idxB = prompt.indexOf("[you] you replied B");
+    expect(idxC).toBeGreaterThanOrEqual(0);
+    expect(idxA).toBeGreaterThan(idxC);
+    expect(idxB).toBeGreaterThan(idxA);
+  } finally {
+    cleanup();
+  }
+});
