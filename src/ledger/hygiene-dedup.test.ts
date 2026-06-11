@@ -12,8 +12,8 @@ describe("normalizeTitle", () => {
     expect(normalizeTitle("Hello,   World!")).toBe("hello world");
   });
   test("strips known skill prefix", () => {
-    expect(normalizeTitle("clarify-docs: stale reference to launch.ts")).toBe(
-      "stale reference to launch ts",
+    expect(normalizeTitle("clarify-docs: stale reference to config.yaml")).toBe(
+      "stale reference to config yaml",
     );
   });
   test("empty/whitespace input", () => {
