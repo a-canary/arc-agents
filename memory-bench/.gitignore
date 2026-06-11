@@ -1,0 +1,11 @@
+# runtime artefacts
+__pycache__/
+*.pyc
+.pytest_cache/
+
+# results land under these dirs (slice #3 / #4 populate)
+runs/results.jsonl
+runs/**/result.json
+statistics/*.json
+elo/*.json
+elo/*.md
