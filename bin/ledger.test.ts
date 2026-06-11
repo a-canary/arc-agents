@@ -912,6 +912,286 @@ test("vacuum (no flags): runs all passes + SQLite VACUUM in one output", async (
   }
 });
 
+// --dry-run must list candidates for every destructive pass and skip the
+// apply step entirely: no row counts change, no files disappear, no SQLite
+// VACUUM runs. Combinable with --events/--deliveries/--artifacts and the
+// default (no sub-flag) path. Useful for inspecting before a destructive run.
+
+test("vacuum dry-run: lists candidates for events + deliveries + artifacts, deletes nothing", async () => {
+  // Acceptance: `bun test bin/ledger.test.ts -t 'vacuum dry-run' green;
+  // verifies no rows deleted, output lists candidates.` The named test below
+  // is the per-pass breakdown; this one is the umbrella check that exercises
+  // all three passes in one dry-run invocation.
+  const { db, cleanup } = freshDb();
+  const home = mkdtempSync(join(tmpdir(), "vacuum-dryrun-umbrella-"));
+  const artDir = join(home, "vault", "artifacts");
+  mkdirSync(artDir, { recursive: true });
+  const orphan = join(artDir, "orphan.png");
+  writeFileSync(orphan, "X".repeat(123));
+  try {
+    await run(db, "init");
+    const directDb = new Database(db);
+    const now = Math.floor(Date.now() / 1000);
+    const old = now - 40 * 24 * 3600;
+    // (a) merged row with old events
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "umbrella")) as { id: string };
+    await run(db, "event", c.id, "progress", "p1");
+    await stubDiffReview(db, c.id);
+    await run(db, "update", c.id, "--state", "merged");
+    directDb.run("UPDATE issue_events SET ts = ? WHERE issue_id = ? AND kind != 'merged'", [old, c.id]);
+    // (b) terminal prompt with old delivery
+    insertPrompt(directDb, "p-old", "answered", old);
+    directDb.run(
+      `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-old','arc-tui','retracted')`,
+    );
+    directDb.close();
+
+    const eventsBefore = new Database(db).query<{ c: number }, []>("SELECT COUNT(*) AS c FROM issue_events").get()!.c;
+    const delivBefore = new Database(db).query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_deliveries").get()!.c;
+
+    // Single dry-run invocation covers events + deliveries + artifacts.
+    const proc = await $`HOME=${home} bun ${cli} vacuum --dry-run --db ${db}`.quiet();
+    const r = JSON.parse(proc.stdout.toString()) as {
+      dry_run: boolean;
+      deliveries: { would_delete: number; candidates: unknown[] };
+      artifacts: { would_unlink: number; candidates: { path: string; size: number }[] };
+    };
+    expect(r.dry_run).toBe(true);
+    // 2 candidate events (progress + diff_review; created/merged excluded:
+    //  created is recent, merged is the audit anchor).
+    expect(r.deliveries.would_delete).toBe(1);
+    expect(r.deliveries.candidates.length).toBe(1);
+    expect(r.artifacts.would_unlink).toBe(1);
+    expect(r.artifacts.candidates[0]!.path).toBe(orphan);
+
+    // Apply path is gated: no rows deleted, no files removed.
+    const eventsAfter = new Database(db).query<{ c: number }, []>("SELECT COUNT(*) AS c FROM issue_events").get()!.c;
+    const delivAfter = new Database(db).query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_deliveries").get()!.c;
+    expect(eventsAfter).toBe(eventsBefore);
+    expect(delivAfter).toBe(delivBefore);
+    expect(existsSync(orphan)).toBe(true);
+  } finally {
+    cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("vacuum --dry-run --events: lists event candidates, deletes nothing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const nowS = Math.floor(Date.now() / 1000);
+    const oldTs = nowS - 60 * 86400;
+
+    // Merged row with 5 events: created, progress, progress, diff_review, merged.
+    // With --older-than 30, 4 of those 5 are candidates (last 'merged' is the
+    // audit anchor and is retained by the WHERE clause).
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "dry-events")) as { id: string };
+    await run(db, "event", c.id, "progress", "p1");
+    await run(db, "event", c.id, "progress", "p2");
+    await stubDiffReview(db, c.id);
+    await run(db, "update", c.id, "--state", "merged");
+    const raw = new Database(db);
+    raw.run("UPDATE issue_events SET ts = ? WHERE issue_id = ?", [oldTs, c.id]);
+    raw.close();
+
+    const before = (await run(db, "show", c.id)) as { events: { seq: number; kind: string }[] };
+    const beforeSeqs = before.events.map((e) => e.seq).sort((a, b) => a - b);
+
+    const r = (await run(db, "vacuum", "--events", "--older-than", "30", "--dry-run")) as {
+      dry_run: boolean;
+      older_than_days: number;
+      events: { would_delete: number; candidates: { seq: number; issue_id: string; kind: string; ts: number }[] };
+    };
+    expect(r.dry_run).toBe(true);
+    expect(r.older_than_days).toBe(30);
+    expect(r.events.would_delete).toBe(4);
+    expect(r.events.candidates.length).toBe(4);
+    for (const cand of r.events.candidates) {
+      expect(cand.issue_id).toBe(c.id);
+      // The retained 'merged' event must NOT appear in candidates — it's the
+      // audit anchor. The other three (created, 2x progress, diff_review) do.
+      expect(cand.kind).not.toBe("merged");
+      expect(["created", "progress", "diff_review"]).toContain(cand.kind);
+    }
+
+    // No rows deleted; the merged event is still last in created order.
+    const after = (await run(db, "show", c.id)) as { events: { seq: number; kind: string }[] };
+    const afterSeqs = after.events.map((e) => e.seq).sort((a, b) => a - b);
+    expect(afterSeqs).toEqual(beforeSeqs);
+  } finally {
+    cleanup();
+  }
+});
+
+test("vacuum --dry-run (no sub-flag): lists candidates for deliveries + artifacts, skips VACUUM", async () => {
+  const { db, cleanup } = freshDb();
+  const home = mkdtempSync(join(tmpdir(), "vacuum-dry-home-"));
+  const artDir = join(home, "vault", "artifacts");
+  mkdirSync(artDir, { recursive: true });
+  const keep = join(artDir, "keep.png");
+  const orphan = join(artDir, "orphan.png");
+  writeFileSync(keep, "K".repeat(100));
+  writeFileSync(orphan, "O".repeat(250));
+  try {
+    await run(db, "init");
+    const directDb = new Database(db);
+    const now = Math.floor(Date.now() / 1000);
+    const old = now - 40 * 24 * 3600;
+    // Live prompt + delivery: keeps `keep.png` reachable.
+    insertPrompt(directDb, "p-live", "open", now, [keep]);
+    directDb.run(
+      `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-live','arc-tui','delivered')`,
+    );
+    // Terminal prompt + delivery: candidate for delivery GC; its artifact
+    // `orphan.png` is unreachable once `p-dead` is GC'd, but the live-prompt
+    // join in the artifact pass scans only `pending`/`delivered` deliveries,
+    // so `orphan.png` is always unreachable and lands in the artifact list.
+    insertPrompt(directDb, "p-dead", "answered", old);
+    directDb.run(
+      `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-dead','arc-tui','retracted')`,
+    );
+    directDb.close();
+
+    const countsBefore = (() => {
+      const d = new Database(db);
+      const deliveries = d.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_deliveries").get()!.c;
+      d.close();
+      return { deliveries };
+    })();
+
+    const proc = await $`HOME=${home} bun ${cli} vacuum --dry-run --db ${db}`.quiet();
+    const r = JSON.parse(proc.stdout.toString()) as {
+      dry_run: boolean;
+      older_than_days: number;
+      deliveries: { would_delete: number; candidates: { prompt_id: string; module_name: string; state: string }[] };
+      artifacts: { would_unlink: number; would_free_bytes: number; candidates: { path: string; size: number }[] };
+      vacuumed?: boolean;
+    };
+
+    expect(r.dry_run).toBe(true);
+    expect(r.older_than_days).toBe(30);
+    // One delivery (the one on the old terminal prompt) is a candidate; the
+    // live delivery on `p-live` is excluded by the WHERE clause.
+    expect(r.deliveries.would_delete).toBe(1);
+    expect(r.deliveries.candidates.length).toBe(1);
+    expect(r.deliveries.candidates[0]!.prompt_id).toBe("p-dead");
+    expect(r.deliveries.candidates[0]!.module_name).toBe("arc-tui");
+    expect(r.deliveries.candidates[0]!.state).toBe("retracted");
+    // Both blobs are present on disk; only `orphan.png` is unreachable, so
+    // it's the sole artifact candidate.
+    expect(r.artifacts.would_unlink).toBe(1);
+    expect(r.artifacts.would_free_bytes).toBe(250);
+    expect(r.artifacts.candidates.map((a) => a.path)).toEqual([orphan]);
+    expect(r.artifacts.candidates[0]!.size).toBe(250);
+    // SQLite VACUUM is gated off in dry-run — must not appear.
+    expect(r.vacuumed).toBeUndefined();
+
+    // Zero mutations: rows unchanged, files unchanged.
+    const countsAfter = (() => {
+      const d = new Database(db);
+      const deliveries = d.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_deliveries").get()!.c;
+      d.close();
+      return { deliveries };
+    })();
+    expect(countsAfter.deliveries).toBe(countsBefore.deliveries);
+    expect(existsSync(keep)).toBe(true);
+    expect(existsSync(orphan)).toBe(true);
+  } finally {
+    cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("vacuum --dry-run --deliveries / --artifacts scope to a single pass", async () => {
+  // The default dry-run touches both passes. Scoped --dry-run --deliveries
+  // must NOT enumerate artifact candidates; the artifact pass is skipped.
+  // This is what an operator uses to inspect a single dimension of an
+  // upcoming destructive run.
+  const { db, cleanup } = freshDb();
+  const home = mkdtempSync(join(tmpdir(), "vacuum-dry-scope-"));
+  const artDir = join(home, "vault", "artifacts");
+  mkdirSync(artDir, { recursive: true });
+  const orphan = join(artDir, "orphan.png");
+  writeFileSync(orphan, "O".repeat(80));
+  try {
+    await run(db, "init");
+    const directDb = new Database(db);
+    const now = Math.floor(Date.now() / 1000);
+    const old = now - 40 * 24 * 3600;
+    insertPrompt(directDb, "p-old", "answered", old);
+    directDb.run(
+      `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-old','arc-tui','retracted')`,
+    );
+    directDb.close();
+
+    const delivOnly = await $`HOME=${home} bun ${cli} vacuum --dry-run --deliveries --db ${db}`.quiet();
+    const d = JSON.parse(delivOnly.stdout.toString()) as {
+      dry_run: boolean;
+      deliveries: { would_delete: number; candidates: { prompt_id: string }[] };
+      artifacts?: unknown;
+    };
+    expect(d.dry_run).toBe(true);
+    expect(d.deliveries.would_delete).toBe(1);
+    expect(d.deliveries.candidates[0]!.prompt_id).toBe("p-old");
+    // Artifact pass was not requested; must be absent.
+    expect(d.artifacts).toBeUndefined();
+
+    const artOnly = await $`HOME=${home} bun ${cli} vacuum --dry-run --artifacts --db ${db}`.quiet();
+    const a = JSON.parse(artOnly.stdout.toString()) as {
+      dry_run: boolean;
+      artifacts: { would_unlink: number; candidates: { path: string; size: number }[] };
+      deliveries?: unknown;
+    };
+    expect(a.dry_run).toBe(true);
+    expect(a.artifacts.would_unlink).toBe(1);
+    expect(a.artifacts.candidates[0]!.path).toBe(orphan);
+    expect(a.artifacts.candidates[0]!.size).toBe(80);
+    expect(a.deliveries).toBeUndefined();
+    // The orphan is still on disk: dry-run mutates nothing.
+    expect(existsSync(orphan)).toBe(true);
+  } finally {
+    cleanup();
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("vacuum (no flags) + --dry-run: explicit negative — apply is gated, not just unimplemented", async () => {
+  // Make sure the existing default (apply) path is NOT affected: a destructive
+  // run with the same fixture as the dry-run test still wipes the rows.
+  // This guards against a regression where --dry-run accidentally poisons
+  // the normal path (e.g. caching the candidate set and skipping the DELETE).
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const directDb = new Database(db);
+    const now = Math.floor(Date.now() / 1000);
+    const old = now - 40 * 24 * 3600;
+    insertPrompt(directDb, "p-wipe", "answered", old);
+    directDb.run(
+      `INSERT INTO hitl_deliveries (prompt_id, module_name, state) VALUES ('p-wipe','arc-tui','retracted')`,
+    );
+    directDb.close();
+
+    // First: dry-run. Deliveries row count unchanged.
+    await run(db, "vacuum", "--dry-run");
+    const afterDry = new Database(db);
+    const c1 = afterDry.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_deliveries").get()!.c;
+    afterDry.close();
+    expect(c1).toBe(1);
+
+    // Then: real run. Row is gone.
+    const real = (await run(db, "vacuum")) as { deliveries_deleted: number };
+    expect(real.deliveries_deleted).toBe(1);
+    const afterApply = new Database(db);
+    const c2 = afterApply.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_deliveries").get()!.c;
+    afterApply.close();
+    expect(c2).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
 // hitl emit must persist expires_at so arc-tui (and any future reconciler) can
 // reap prompts whose requesting worker has given up. Without it, a NULL
 // expires_at is treated as "live forever" by every consumer query.
