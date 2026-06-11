@@ -706,21 +706,53 @@ switch (cmd) {
   }
 
   case "vacuum": {
-    // Three-pass GC (ADR 0006 §4 — file pending):
+    // Three-pass GC (ADR 0006 §4):
     //   (1) --deliveries: prune hitl_deliveries on terminal prompts older than --older-than days
     //   (2) --artifacts:  unlink ~/vault/artifacts/ blobs unreferenced by any live delivery's prompt payload
     //   (3) default (no sub-flag): run both passes + SQLite VACUUM
+    // --events: separate retention pass for issue_events on terminal (merged/
+    //   cancelled) rows; preserves row + last merged event as audit anchor.
+    // --dry-run: collect candidate lists for the same passes and return them
+    //   as JSON WITHOUT mutating; never runs SQLite VACUUM. Combinable with
+    //   any sub-flag (or none). Useful for inspecting before a destructive
+    //   run — the count + candidate list is the operator's "are you sure".
     // Terminal prompt states per actual schema (009_hitl_prompts): answered,
     // user_confirmed, user_diverged, timeout_locked, cancelled.
     // Live delivery = state IN ('pending','delivered'). Artifact reachability
     // is by payload path field; sha-keyed dedup not yet a schema feature.
     const db = openWithMigrate(getFlag("db"));
+    const dryRun = args.includes("--dry-run");
     if (args.includes("--events")) {
       // Retention GC for issue_events on terminal (merged/cancelled) rows.
       // Deletes events older than cutoff while preserving the row and its
       // last terminal event (merged/cancelled) as an audit anchor.
       const days = parseInt(getFlag("older-than") ?? "30", 10);
       const cutoff = Math.floor(Date.now() / 1000) - days * 86400;
+      // Always compute the candidate set from the same WHERE clause as the
+      // delete — single source of truth. In dry-run, return it; otherwise
+      // run the DELETE and return the count (preserves pre-dry-run output
+      // shape for the existing `vacuum --events` consumer).
+      const candidates = db
+        .query<{ seq: number; issue_id: string; kind: string; ts: number }, [number]>(
+          `SELECT seq, issue_id, kind, ts FROM issue_events
+           WHERE ts < ?
+             AND issue_id IN (SELECT id FROM issues WHERE state IN ('merged','cancelled'))
+             AND seq NOT IN (
+               SELECT MAX(seq) FROM issue_events
+               WHERE kind = 'merged'
+               GROUP BY issue_id
+             )
+           ORDER BY issue_id, seq`,
+        )
+        .all(cutoff);
+      if (dryRun) {
+        out({
+          dry_run: true,
+          older_than_days: days,
+          events: { would_delete: candidates.length, candidates },
+        });
+        break;
+      }
       const r = db.run(
         `DELETE FROM issue_events
          WHERE ts < ?
@@ -741,23 +773,45 @@ switch (cmd) {
     const onlyArtifacts = args.includes("--artifacts");
     const runDeliveries = onlyDeliveries || (!onlyDeliveries && !onlyArtifacts);
     const runArtifacts = onlyArtifacts || (!onlyDeliveries && !onlyArtifacts);
-    const runVacuum = !onlyDeliveries && !onlyArtifacts;
+    // SQLite VACUUM is non-mutating of user data (reclaims pages) but still a
+    // multi-second operation; skip it in dry-run so the verb stays a no-op
+    // observable. Sub-flag selectors still gate the destructive passes as
+    // before — --dry-run just toggles collect vs delete.
+    const runVacuum = !dryRun && !onlyDeliveries && !onlyArtifacts;
 
     const TERMINAL = "('answered','user_confirmed','user_diverged','timeout_locked','cancelled')";
     const cutoff = Math.floor(Date.now() / 1000) - olderDays * 24 * 3600;
 
-    const result: Record<string, unknown> = {};
+    const result: Record<string, unknown> = { dry_run: dryRun, older_than_days: olderDays };
 
     if (runDeliveries) {
-      const r = db.run(
-        `DELETE FROM hitl_deliveries
-         WHERE prompt_id IN (
-           SELECT id FROM hitl_prompts
-           WHERE state IN ${TERMINAL} AND created_at < ?
-         )`,
-        [cutoff],
-      );
-      result.deliveries_deleted = r.changes;
+      // Collect candidates with the same WHERE the DELETE would use, joined
+      // explicitly so the row identity is recoverable for the operator.
+      const candidates = db
+        .query<
+          { prompt_id: string; module_name: string; state: string },
+          [number]
+        >(
+          `SELECT d.prompt_id, d.module_name, d.state
+           FROM hitl_deliveries d
+           JOIN hitl_prompts p ON p.id = d.prompt_id
+           WHERE p.state IN ${TERMINAL} AND p.created_at < ?
+           ORDER BY d.prompt_id, d.module_name`,
+        )
+        .all(cutoff);
+      if (dryRun) {
+        result.deliveries = { would_delete: candidates.length, candidates };
+      } else {
+        const r = db.run(
+          `DELETE FROM hitl_deliveries
+           WHERE prompt_id IN (
+             SELECT id FROM hitl_prompts
+             WHERE state IN ${TERMINAL} AND created_at < ?
+           )`,
+          [cutoff],
+        );
+        result.deliveries_deleted = r.changes;
+      }
     }
 
     if (runArtifacts) {
@@ -785,8 +839,12 @@ switch (cmd) {
             // Skip malformed payload — log path for operator review.
           }
         }
-        let unlinked = 0;
-        let bytes = 0;
+        // Build the candidate list once, then either return it (dry-run) or
+        // unlink it (apply). Splitting the IO from the decision means a bug
+        // in the unlink loop can't poison the candidate set a dry-run user
+        // sees — they get the answer to "what would happen" before any fs
+        // mutation.
+        const candidates: { path: string; size: number }[] = [];
         for (const name of readdirSync(dir)) {
           const full = pjoin(dir, name);
           let st;
@@ -797,19 +855,36 @@ switch (cmd) {
           }
           if (!st.isFile()) continue;
           if (reachable.has(full)) continue;
-          bytes += st.size;
-          try {
-            unlinkSync(full);
-            unlinked += 1;
-          } catch {
-            // Best-effort; continue.
-          }
+          candidates.push({ path: full, size: st.size });
         }
-        result.artifacts_unlinked = unlinked;
-        result.artifacts_bytes_freed = bytes;
+        if (dryRun) {
+          result.artifacts = {
+            would_unlink: candidates.length,
+            would_free_bytes: candidates.reduce((s, c) => s + c.size, 0),
+            candidates,
+          };
+        } else {
+          let unlinked = 0;
+          let bytes = 0;
+          for (const c of candidates) {
+            bytes += c.size;
+            try {
+              unlinkSync(c.path);
+              unlinked += 1;
+            } catch {
+              // Best-effort; continue.
+            }
+          }
+          result.artifacts_unlinked = unlinked;
+          result.artifacts_bytes_freed = bytes;
+        }
       } else {
-        result.artifacts_unlinked = 0;
-        result.artifacts_bytes_freed = 0;
+        if (dryRun) {
+          result.artifacts = { would_unlink: 0, would_free_bytes: 0, candidates: [] };
+        } else {
+          result.artifacts_unlinked = 0;
+          result.artifacts_bytes_freed = 0;
+        }
       }
     }
 
@@ -1228,13 +1303,20 @@ switch (cmd) {
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue
   compact                              archive merged/cancelled > 30d
-  vacuum [--events | --deliveries | --artifacts] [--older-than N]
+  vacuum [--events | --deliveries | --artifacts] [--older-than N] [--dry-run]
                                        Default (no sub-flag): GC HITL deliveries
                                        on terminal prompts, unlink unreachable
                                        ~/vault/artifacts/ blobs, then SQLite VACUUM.
                                        --events: GC issue_events on merged/cancelled
                                        rows older than N days (default 30); retains
                                        row + last merged event as audit anchor.
+                                       --dry-run: collect candidate lists (per-pass
+                                       would_delete/would_unlink + row ids + paths)
+                                       and return as JSON WITHOUT mutating; never
+                                       runs SQLite VACUUM. Combinable with any
+                                       sub-flag (or none). Output shape adds
+                                       dry_run:true and a per-pass candidates
+                                       array.
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
   doctor [--stale-hours N --worktree-root P --repo-prefix S --json --strict]
