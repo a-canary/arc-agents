@@ -31,43 +31,56 @@ generalises that to 8–10 configs and 5/6/7/9/13 tasks.
 | # | Slice | Status |
 |---|-------|--------|
 | 1 | task YAML selection (5/6/7/9/13 tasks) | HITL |
-| 2 | **scaffold the tree** (this slice) | **done** |
-| 3 | wire the 8 configs into `harness.py` | not started |
+| 2 | scaffold the tree | done |
+| 3 | **wire the 8 configs + 6 tasks into `harness.py`** | **done** |
 | 4 | statistics + Elo writers + backfill runner | not started |
 
 ## Quick start
 
 ```bash
-# smoke — empty scaffold, expect exit 0 and a header
-python memory-bench/audit_coverage.py
-
-# run the smoke test
+# run all tests
 python -m pytest memory-bench/tests/ -v
 
-# help on the orchestrators
-python memory-bench/harness.py --help
-python memory-bench/harness_multi.py --list-configs    # → []
-python memory-bench/harness_multi.py --list-tasks      # → []
+# show the registered sets
+python memory-bench/harness.py --list-configs       # → 8 lines
+python memory-bench/harness.py --list-tasks         # → 6 lines
+
+# preview the full matrix without burning API budget
+python memory-bench/harness_multi.py --dry-run
+
+# run a 1×1 backfill (slice #3 stub; slice #4 wires the real LLM call)
+python memory-bench/harness_multi.py \
+    --configs memory-bench-builtin \
+    --tasks t01 \
+    --reps 1
+
+# print the config × task coverage matrix
+python memory-bench/audit_coverage.py
 ```
 
-## Adding a config (slice #3)
+## Registries
 
-Once the 8-config list is fixed, edit `harness.py` and replace the stub
-registries with the real names:
+The canonical CONFIGS and TASKS are defined in `harness.py` and
+documented in [`CONFIG_TASK_SET.md`](./CONFIG_TASK_SET.md). Summary:
 
-```python
-CONFIGS: List[str] = [
-    "memory-bench-builtin",
-    "memory-bench-flowstate",
-    "memory-bench-plur",
-    "memory-bench-wiki",
-    # ... 4-6 more
-]
-TASKS: List[str] = ["t01", "t02", "t03", "t04", "t05"]
-```
+- **8 configs**: `memory-bench-builtin`, `memory-bench-flowstate`,
+  `memory-bench-ke`, `memory-bench-mem0`, `memory-bench-noledge`,
+  `memory-bench-obsidian`, `memory-bench-plur`, `memory-bench-wiki`.
+  `memory-bench-hermes` and `memory-bench-holographic` are excluded
+  (they are control surfaces, not memory backends).
+- **6 tasks**: `t01`…`t06` (mirrors `hermes-memory-bench/scripts/
+  run_benchmark.py:TASK_IDS`).
 
-Then `harness_multi.py --list-configs` will print the registered names
-and `audit_coverage.py` will size the matrix accordingly.
+## Adding a config (future slice)
+
+The slice #3 registries are the source of truth. To add a new config in
+a downstream slice (e.g. when a new memory backend ships):
+
+1. Edit `harness.py` and append to `CONFIGS: List[str]`.
+2. Mirror the new config in `CONFIG_TASK_SET.md`.
+3. Update `EXPECTED_CONFIG_COUNT` in
+   `tests/test_audit_coverage.py::test_registries_are_populated`.
+4. Re-run the test suite.
 
 ## Idempotency
 

@@ -27,23 +27,79 @@ import audit_coverage         # noqa: E402
 import harness_multi          # noqa: E402
 
 
-# ── Registry shape (scaffold contract) ──────────────────────────────────────
-def test_registries_are_empty_in_scaffold():
-    """Slice #3 owns the wiring. Until then, both registries are empty."""
-    assert harness.CONFIGS == []
-    assert harness.TASKS == []
+# ── Registry shape (slice #3 contract) ─────────────────────────────────────
+# Slice #3 wires the canonical 8 configs and 6 tasks. The exact
+# contents are the source of truth — see `CONFIG_TASK_SET.md`. These
+# tests guard the shape (count, prefixes, uniqueness) so a future edit
+# can't silently drop a config or task without a test failure.
+
+EXPECTED_CONFIG_COUNT = 8
+EXPECTED_TASK_COUNT = 6
 
 
-# ── audit_coverage: matrix on the empty scaffold ────────────────────────────
-def test_audit_empty_scaffold_exits_zero():
-    """With CONFIGS=[] and TASKS=[], the matrix is empty and the gate is green."""
+def test_registries_are_populated():
+    """Slice #3 wires 8 configs and 6 tasks; see CONFIG_TASK_SET.md."""
+    assert len(harness.CONFIGS) == EXPECTED_CONFIG_COUNT, (
+        f"expected {EXPECTED_CONFIG_COUNT} configs, got {len(harness.CONFIGS)}: "
+        f"{harness.CONFIGS}"
+    )
+    assert len(harness.TASKS) == EXPECTED_TASK_COUNT, (
+        f"expected {EXPECTED_TASK_COUNT} tasks, got {len(harness.TASKS)}: "
+        f"{harness.TASKS}"
+    )
+
+
+def test_config_names_use_canonical_prefix():
+    """Every registered config must start with `memory-bench-`."""
+    for c in harness.CONFIGS:
+        assert c.startswith("memory-bench-"), f"non-canonical config name: {c!r}"
+
+
+def test_task_ids_use_t_prefix():
+    """Every registered task must start with `t` followed by 2 digits."""
+    import re
+    pat = re.compile(r"^t\d{2}$")
+    for t in harness.TASKS:
+        assert pat.match(t), f"non-canonical task id: {t!r}"
+
+
+def test_registries_have_no_duplicates():
+    assert len(harness.CONFIGS) == len(set(harness.CONFIGS)), \
+        f"duplicate configs: {harness.CONFIGS}"
+    assert len(harness.TASKS) == len(set(harness.TASKS)), \
+        f"duplicate tasks: {harness.TASKS}"
+
+
+def test_hermes_and_holographic_excluded_by_default():
+    """The 8-config default excludes `memory-bench-hermes` and
+    `memory-bench-holographic` per the slice brief and CONFIG_TASK_SET.md."""
+    assert "memory-bench-hermes" not in harness.CONFIGS
+    assert "memory-bench-holographic" not in harness.CONFIGS
+
+
+def test_task_files_exist_on_disk():
+    """Every registered task must have a Markdown file in tasks/."""
+    for t in harness.TASKS:
+        matches = sorted(harness.TASKS_DIR.glob(f"{t}*"))
+        assert matches, f"no task file for {t} in {harness.TASKS_DIR}"
+
+
+# ── audit_coverage: matrix on the empty registry ───────────────────────────
+def test_audit_empty_registry_renders_placeholder_header():
+    """With CONFIGS=[] and TASKS=[], the renderer emits a valid placeholder
+    header (no cells). The full registry's run-state is exercised by the
+    scaffold-acceptance tests below."""
     md = audit_coverage.render_markdown([], [], [], threshold=3)
     # Always emits a parseable header + separator, even when empty.
     assert md.startswith("| config \\ task |")
     assert "|---|---|" in md
 
-    rc = audit_coverage.main(["--quiet"])
-    assert rc == 0
+
+def test_audit_full_registry_exits_nonzero_with_no_runs():
+    """The wired registry (8 configs × 6 tasks) is populated but the
+    runs/ tree is empty → 48 cells below threshold → exit 1."""
+    rc = audit_coverage.main(["--quiet", "--runs-dir", str(ROOT / "runs")])
+    assert rc == 1
 
 
 def test_audit_header_line_is_valid_markdown(tmp_path):
@@ -132,53 +188,60 @@ def test_harness_help_exits_zero():
     assert "memory-bench" in result.stdout
 
 
-def test_harness_list_configs_returns_empty():
+def test_harness_list_configs_returns_all_registered():
     result = subprocess.run(
         [sys.executable, str(ROOT / "harness.py"), "--list-configs"],
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0
-    assert result.stdout.strip() == ""
+    out = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert out == list(harness.CONFIGS)
 
 
-def test_harness_list_tasks_returns_empty():
+def test_harness_list_tasks_returns_all_registered():
     result = subprocess.run(
         [sys.executable, str(ROOT / "harness.py"), "--list-tasks"],
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0
-    assert result.stdout.strip() == ""
+    out = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert out == list(harness.TASKS)
 
 
 # ── harness_multi CLI surface ───────────────────────────────────────────────
-def test_harness_multi_list_configs_returns_empty():
+def test_harness_multi_list_configs_returns_all_registered():
     result = subprocess.run(
         [sys.executable, str(ROOT / "harness_multi.py"), "--list-configs"],
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0
-    assert result.stdout.strip() == ""
+    out = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert out == list(harness.CONFIGS)
 
 
-def test_harness_multi_list_tasks_returns_empty():
+def test_harness_multi_list_tasks_returns_all_registered():
     result = subprocess.run(
         [sys.executable, str(ROOT / "harness_multi.py"), "--list-tasks"],
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0
-    assert result.stdout.strip() == ""
+    out = [ln for ln in result.stdout.splitlines() if ln.strip()]
+    assert out == list(harness.TASKS)
 
 
-def test_harness_multi_dry_run_empty_registry():
+def test_harness_multi_dry_run_walks_full_matrix():
     result = subprocess.run(
         [sys.executable, str(ROOT / "harness_multi.py"), "--dry-run"],
         capture_output=True, text=True, check=False,
     )
     assert result.returncode == 0
-    # No cells to print on an empty registry — every cell line has a tab
-    # separating config \t task \t rep. Count those to confirm zero.
+    # Each cell line is `<config>\t<task>\trep-NN`. With 1 rep default
+    # the count equals |CONFIGS| * |TASKS|.
     cell_lines = [ln for ln in result.stdout.splitlines() if "\t" in ln]
-    assert cell_lines == [], f"unexpected cell rows: {cell_lines}"
+    expected = len(harness.CONFIGS) * len(harness.TASKS) * 1
+    assert len(cell_lines) == expected, (
+        f"expected {expected} cell rows, got {len(cell_lines)}: {cell_lines[:3]}…"
+    )
 
 
 def test_harness_multi_filter_warns_on_unknown_config(capsys):
@@ -211,8 +274,10 @@ def test_run_one_idempotent(tmp_path, monkeypatch):
         try:
             r1 = harness.run_one("idem-cfg", "idem-t01", 1)
             r2 = harness.run_one("idem-cfg", "idem-t01", 1)
-            assert r1["error"] and "scaffold" in r1["error"]
-            assert r2["error"] and "scaffold" in r2["error"]
+            # Slice #3 marks the no-orchestrator case with a different
+            # sentinel than the slice #2 "scaffold" message.
+            assert r1["error"] and "slice-#3" in r1["error"]
+            assert r2["error"] and "slice-#3" in r2["error"]
             # The rep dir is still there, with a single result.json.
             rep = tmp_path / "idem-cfg" / "idem-t01" / "rep-01"
             assert rep.is_dir()

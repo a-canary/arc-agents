@@ -1,11 +1,12 @@
 #!/usr/bin/env python3
 """
-memory-bench — multi-config orchestrator (scaffold)
+memory-bench — multi-config orchestrator
 
 Slurps the config + task registries from `harness.py` and runs the
 cross product, optionally filtered by ``--configs`` and/or ``--tasks``.
-Slice #3 wires the registries; this scaffold makes the CLI surface
-and the filter contract stable.
+The ``--dry-run`` flag prints the would-execute matrix without making
+any LLM calls. Slice #3 wires the registries; slice #4 wires the real
+LLM orchestrator on top of the slice #3 stub.
 
 Idempotent: a (config, task, rep) cell that has a result.json already
 is skipped unless ``--force`` is passed.
