@@ -1,14 +1,24 @@
 #!/usr/bin/env python3
 """
-memory-bench — single-config single-task orchestrator (scaffold)
+memory-bench — single-config single-task orchestrator
 
-This is the scaffold slice. It defines the CLI surface, the run-dir
-layout, and the per-run result schema. The actual config registry
-(CONFIGS, TASKS) is intentionally empty here — slice #3 wires the
-8-10 memory-bench-* profiles in.
+This is slice #3 (config + task registry wiring). It defines the CLI
+surface, the run-dir layout, the per-run result schema, and the
+canonical CONFIGS / TASKS registries used by `harness_multi.py` and
+`audit_coverage.py`. Slice #4 wires the real LLM orchestrator on top.
 
 The structural model is `hermes-memory-bench/scripts/run_benchmark.py`
 (tmux + hermes chat pattern, JSONL result stream, summary.json writer).
+
+## Registries
+
+CONFIGS — the 8 `memory-bench-*` Hermes profiles registered for the
+memory-bench sweep. `hermes-baseline` and `holographic-baseline` are
+intentionally excluded; see `CONFIG_TASK_SET.md` for the rationale.
+
+TASKS — the 6 canonical complex-reasoning tasks mirrored from
+`hermes-memory-bench/scripts/run_benchmark.py:TASK_IDS`. Each task
+is a Markdown file under `tasks/<task_id>*.md`.
 """
 
 from __future__ import annotations
@@ -28,10 +38,32 @@ BENCH_BASE   = Path(__file__).resolve().parent
 TASKS_DIR    = BENCH_BASE / "tasks"
 RUNS_DIR     = BENCH_BASE / "runs"
 SCRIPTS_DIR  = BENCH_BASE
+HERMES_HOME  = Path.home() / ".hermes"
+PROFILES_DIR = HERMES_HOME / "profiles"
 
-# Stub registries — slice #3 fills these.
-CONFIGS: List[str] = []
-TASKS:   List[str] = []
+# Canonical registries. Source of truth: see `CONFIG_TASK_SET.md` and
+# the slice #3 PR description. Mirror of `hermes-memory-bench/scripts/
+# run_benchmark.py:TASK_IDS` for tasks; the 8-config set excludes
+# memory-bench-hermes and memory-bench-holographic per the slice brief.
+CONFIGS: List[str] = [
+    "memory-bench-builtin",
+    "memory-bench-flowstate",
+    "memory-bench-ke",
+    "memory-bench-mem0",
+    "memory-bench-noledge",
+    "memory-bench-obsidian",
+    "memory-bench-plur",
+    "memory-bench-wiki",
+]
+
+TASKS: List[str] = [
+    "t01",  # Multi-Hop Reasoning Chain
+    "t02",  # Research Gap Analysis & Literature Synthesis
+    "t03",  # Counterfactual Design Critique
+    "t04",  # Archival Knowledge Retrieval Under Degradation
+    "t05",  # Cross-Temporal Analogical Reasoning
+    "t06",  # Error Propagation Analysis in Multi-Agent Pipelines
+]
 
 TIMEOUT_SEC = 600
 
@@ -97,15 +129,51 @@ def write_result(rd: Path, result: dict) -> None:
 
 
 # ── Orchestration (stub) ────────────────────────────────────────────────────
+def isolate_profile_workspace(config: str) -> None:
+    """Wipe the config's hermes profile workspace before a run.
+
+    Per the slice #3 config-isolation guarantee: a backfill for config X
+    must NEVER touch another config's state. This function only operates
+    on the path ``~/.hermes/profiles/<config>/``; it asserts the
+    resolved path is a direct child of PROFILES_DIR with a registered
+    config name so a malformed config string can't escape the
+    profiles root.
+    """
+    if config not in CONFIGS:
+        raise ValueError(f"refuse to wipe unknown config: {config!r}")
+    profile_root = (PROFILES_DIR / config).resolve()
+    profiles_root = PROFILES_DIR.resolve()
+    # Defence-in-depth: profile_root must be a direct child of profiles_root.
+    if profile_root.parent != profiles_root:
+        raise RuntimeError(
+            f"refuse to wipe: {profile_root} is not a direct child of {profiles_root}"
+        )
+    if not profile_root.exists():
+        # No profile on this machine yet — nothing to wipe.
+        return
+    workspace = profile_root / "workspace"
+    if workspace.is_dir():
+        shutil.rmtree(workspace)
+    log(f"isolate: wiped {workspace}")
+
+
 def run_one(config: str, task_id: str, rep: int, *, force: bool = False) -> dict:
     """Run a single (config, task, rep) cell.
 
-    The scaffold returns a stub result without invoking Hermes — the
-    real orchestration is wired in slice #3 / slice #4 alongside the
-    config registry.
+    Config isolation: wipes the config's own hermes profile workspace
+    (idempotent, in-place — never touches another config's state) and
+    the rep dir (when ``force=True``). Returns a stub result without
+    invoking Hermes — the real LLM orchestrator lands in slice #4.
     """
-    log(f"run_one({config}, {task_id}, rep={rep}) — scaffold stub")
+    log(f"run_one({config}, {task_id}, rep={rep}) — slice #3 stub")
     rd = run_dir(config, task_id, rep, force=force)
+    try:
+        isolate_profile_workspace(config)
+    except Exception as e:
+        result = make_result(task_id, config, rep, 0.0,
+                             error=f"isolate: {e}")
+        write_result(rd, result)
+        return result
     try:
         task_content = load_task(task_id)
     except FileNotFoundError as e:
@@ -114,11 +182,11 @@ def run_one(config: str, task_id: str, rep: int, *, force: bool = False) -> dict
         return result
 
     start = time.time()
-    # Scaffold: no LLM call. Mark with a clear sentinel.
+    # Slice #3: no LLM call. Mark with a clear sentinel.
     elapsed_ms = (time.time() - start) * 1000.0
     result = make_result(
         task_id, config, rep, elapsed_ms,
-        error="scaffold: no orchestrator wired (slice #3)",
+        error="slice-#3: orchestrator stub (slice #4 wires the LLM call)",
         response_text=task_content[:200],
     )
     write_result(rd, result)
