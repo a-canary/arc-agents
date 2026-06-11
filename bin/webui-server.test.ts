@@ -1,12 +1,15 @@
 import { test, expect } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, mkdirSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
 import {
   buildHandler,
+  getArtifactDir,
+  listArtifactFiles,
   queryAfkRows,
   queryHitlRows,
+  resolveArtifactFile,
   resolveIfaceAddr,
   sseStream,
 } from "./webui-server";
@@ -239,6 +242,160 @@ test("sseStream re-emits snapshot on row change", async () => {
     expect(saw).toBe(true);
     await reader.cancel();
   } finally {
+    cleanup();
+  }
+});
+
+function freshArtifactDir() {
+  const dir = mkdtempSync(join(tmpdir(), "webui-art-"));
+  return { dir, cleanup: () => rmSync(dir, { recursive: true, force: true }) };
+}
+
+test("listArtifactFiles returns relative paths sorted, recursive", () => {
+  const { dir, cleanup } = freshArtifactDir();
+  try {
+    writeFileSync(join(dir, "a.txt"), "hello");
+    mkdirSync(join(dir, "sub"));
+    writeFileSync(join(dir, "sub", "b.md"), "world");
+    const files = listArtifactFiles(dir);
+    const paths = files.map((f) => f.path);
+    expect(paths).toEqual(["a.txt", "sub/b.md"]);
+    expect(files[0]!.size).toBe(5);
+  } finally {
+    cleanup();
+  }
+});
+
+test("listArtifactFiles respects cap", () => {
+  const { dir, cleanup } = freshArtifactDir();
+  try {
+    for (let i = 0; i < 10; i++) writeFileSync(join(dir, `f${i}.txt`), "x");
+    const files = listArtifactFiles(dir, 3);
+    expect(files.length).toBe(3);
+  } finally {
+    cleanup();
+  }
+});
+
+test("resolveArtifactFile rejects traversal", () => {
+  const { dir, cleanup } = freshArtifactDir();
+  try {
+    expect(resolveArtifactFile(dir, "../etc/passwd")).toBeNull();
+    expect(resolveArtifactFile(dir, "/etc/passwd")).toBeNull();
+    expect(resolveArtifactFile(dir, "")).toBeNull();
+    writeFileSync(join(dir, "ok.txt"), "x");
+    expect(resolveArtifactFile(dir, "ok.txt")).toBe(join(dir, "ok.txt"));
+  } finally {
+    cleanup();
+  }
+});
+
+test("getArtifactDir returns null for missing row, dir otherwise", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "row1", title: "t", state: "ready" });
+    db.exec("UPDATE issues SET artifact_dir = '/tmp/x' WHERE id = 'row1'");
+    expect(getArtifactDir(db, "row1")).toEqual({ kind: "ok", dir: "/tmp/x" });
+    expect(getArtifactDir(db, "missing")).toEqual({ kind: "missing" });
+    insertIssue(db, { id: "row2", title: "t", state: "ready" });
+    expect(getArtifactDir(db, "row2")).toEqual({ kind: "unset" });
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /artifacts/:row_id returns 404 for missing row", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const res = buildHandler(db)(new Request("http://x/artifacts/nope"));
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toMatch(/row not found/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /artifacts/:row_id returns 404 when artifact_dir unset", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, { id: "r", title: "t", state: "ready" });
+    const res = buildHandler(db)(new Request("http://x/artifacts/r"));
+    expect(res.status).toBe(404);
+    const body = await res.json();
+    expect(body.error).toMatch(/no artifact_dir/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("handler /artifacts/:row_id lists files", async () => {
+  const { db, cleanup } = freshDb();
+  const art = freshArtifactDir();
+  try {
+    insertIssue(db, { id: "r", title: "t", state: "ready" });
+    db.exec(`UPDATE issues SET artifact_dir = ? WHERE id = 'r'`, [art.dir] as never);
+    writeFileSync(join(art.dir, "a.txt"), "hi");
+    writeFileSync(join(art.dir, "b.txt"), "yo");
+    const res = buildHandler(db)(new Request("http://x/artifacts/r"));
+    expect(res.status).toBe(200);
+    const body = await res.json();
+    expect(body.row_id).toBe("r");
+    expect(body.artifact_dir).toBe(art.dir);
+    expect(body.files.map((f: any) => f.path)).toEqual(["a.txt", "b.txt"]);
+    expect(body.truncated).toBe(false);
+  } finally {
+    art.cleanup();
+    cleanup();
+  }
+});
+
+test("handler /artifacts/:row_id/file returns contents", async () => {
+  const { db, cleanup } = freshDb();
+  const art = freshArtifactDir();
+  try {
+    insertIssue(db, { id: "r", title: "t", state: "ready" });
+    db.exec(`UPDATE issues SET artifact_dir = ? WHERE id = 'r'`, [art.dir] as never);
+    writeFileSync(join(art.dir, "a.txt"), "payload");
+    const res = buildHandler(db)(
+      new Request("http://x/artifacts/r/file?path=a.txt"),
+    );
+    expect(res.status).toBe(200);
+    expect(await res.text()).toBe("payload");
+  } finally {
+    art.cleanup();
+    cleanup();
+  }
+});
+
+test("handler /artifacts/:row_id/file rejects traversal", async () => {
+  const { db, cleanup } = freshDb();
+  const art = freshArtifactDir();
+  try {
+    insertIssue(db, { id: "r", title: "t", state: "ready" });
+    db.exec(`UPDATE issues SET artifact_dir = ? WHERE id = 'r'`, [art.dir] as never);
+    const res = buildHandler(db)(
+      new Request("http://x/artifacts/r/file?path=../../etc/passwd"),
+    );
+    expect(res.status).toBe(400);
+  } finally {
+    art.cleanup();
+    cleanup();
+  }
+});
+
+test("handler /artifacts/:row_id/file 404 for missing file", async () => {
+  const { db, cleanup } = freshDb();
+  const art = freshArtifactDir();
+  try {
+    insertIssue(db, { id: "r", title: "t", state: "ready" });
+    db.exec(`UPDATE issues SET artifact_dir = ? WHERE id = 'r'`, [art.dir] as never);
+    const res = buildHandler(db)(
+      new Request("http://x/artifacts/r/file?path=nope.txt"),
+    );
+    expect(res.status).toBe(404);
+  } finally {
+    art.cleanup();
     cleanup();
   }
 });
