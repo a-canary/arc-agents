@@ -314,6 +314,13 @@ switch (cmd) {
     const branch = getFlag("branch");
     const worktree = getFlag("worktree");
     const hitl = getFlag("hitl");
+    // --blocked-by is intentionally NOT honoured on `update` — silent drops
+    // masked real decomposition attempts as successful no-ops. The
+    // purpose-built `decompose` verb wires parent.blocked_by + parent.state
+    // atomically alongside child inserts; use that for fan-out.
+    if (args.includes("--blocked-by")) {
+      die("--blocked-by is set by the `decompose` verb, not `update`. Use `ledger decompose <parent> --child \"<title>\"` to wire parent.blocked_by + parent.state=blocked atomically.");
+    }
     const db = openWithMigrate(getFlag("db"));
 
     if (state) {
