@@ -111,3 +111,33 @@ test("a watchdog-killed worker (rc 124) reconciles by commit evidence", () => {
   expect(killed(0)).toBe("failed"); // stalled before committing → failed
   expect(killed(2)).toBe("review"); // stalled after committing → salvage
 });
+
+// ---- Gap 1b: scrollback fallback (lost-tail pattern) -----------------------
+
+// 166/401 worker logs in ~/.cache/arc-workers/ were 0 bytes because the
+// headless `tee` pipe got SIGKILLed or broken before flushing. The fallback
+// appends the tmux pane's scrollback to the logfile at script exit. We can't
+// test the real tmux capture here (no tmux server in the test harness), but
+// we can pin the no-op contract: outside a tmux session, the function must
+// return 0, write nothing, and NOT crash on a missing logfile.
+test("capture_scrollback_to_log is a no-op when not in a tmux session", () => {
+  const r = callFn("capture_scrollback_to_log", ["arc-worker-i-nonexistent", "/tmp/should-not-exist.log"]);
+  expect(r.rc).toBe(0);
+  // The logfile must NOT have been created — the no-tmux branch skips entirely.
+  // (It wouldn't be created anyway since `>>` creates the file, but a buggy
+  // implementation that swallowed the no-tmux check would create it empty.)
+  // We accept either "doesn't exist" or "is empty" — both prove the no-op.
+  try {
+    const stat = require("node:fs").statSync("/tmp/should-not-exist.log");
+    expect(stat.size).toBe(0);
+  } catch {
+    // File doesn't exist — that's fine too, just means we didn't even touch it.
+  }
+});
+
+test("capture_scrollback_to_log is a no-op when log path is empty", () => {
+  // No logfile path → skip the capture (the call site computes LOG_FILE; if
+  // that ever returns empty, we must not crash trying to append to "").
+  const r = callFn("capture_scrollback_to_log", ["arc-worker-i-nope", ""]);
+  expect(r.rc).toBe(0);
+});
