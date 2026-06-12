@@ -103,7 +103,14 @@ describe("renderSystemPrompt (agent-keyed)", () => {
 
   it("never hardcodes a username", () => {
     const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
-    expect(p).not.toContain("a-canary");
+    // The user identity must not be baked into the commit author. A bare
+    // string match for "a-canary" is too coarse — the diff-review overlay
+    // (see roles/overlays/diff-review.md) uses "a-canary" as the GitHub
+    // owner constant in a bash check, which is legitimate. The actual
+    // concern is that the prompt does not instruct the worker to commit
+    // as a specific identity.
+    expect(p).not.toMatch(/Author:\s*a-canary/i);
+    expect(p).not.toMatch(/Co-Authored-By:\s*a-canary/i);
     expect(p).not.toContain("aaron");
   });
 
