@@ -49,6 +49,29 @@ capture_scrollback_to_log() {
   return 0
 }
 
+# Real-time pane capture via `tmux pipe-pane`. The factory runs each worker
+# inside its own tmux session (e.g. `arc-worker-a-0s5tnm`); this attaches
+# a pipe that mirrors the pane's content to the per-worker logfile AS IT
+# IS RENDERED, including interactive TUI output (`claude` writes to
+# /dev/tty, invisible to `tee`) and headless stdout (`pi -p`). The pipe is
+# attached to the PANE, not the script's process tree, so it survives the
+# interactive `exec "${CMD_PARTS[@]}"` (which replaces this script with
+# claude) AND the factory's SIGKILL reap (the pipe's `-o` flag closes it
+# when the pane exits, flushing whatever was buffered to disk). Without
+# this, an interactive worker that exits within 10-30s of its factory spawn
+# (the hygiene-claim profile) has a logfile containing only the bootstrap
+# "Model not found" warning — currently 85 bytes, vs. 0 for hygiene claims
+# where the capture_scrollback_to_log fallback races the factory reap.
+# Pure: $1=worker, $2=logfile → no-op when not in a tmux session, never
+# creates the logfile on its own (mkdir is the caller's job).
+setup_pipe_pane() {
+  local worker="$1" log="$2"
+  [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
+    && tmux pipe-pane -t "$worker" -o "cat >> $log" 2>/dev/null \
+    || true
+  return 0
+}
+
 # Wall-clock stall bound (seconds) for the headless child (Gap 2). pi has no
 # read/stall timeout, so a dropped upstream LLM stream epoll-hangs it forever;
 # wrapping it in `timeout` makes a wedged worker self-terminate → the post-exit
@@ -263,32 +286,48 @@ done
 
 if [[ "$HEADLESS" != "1" ]]; then
   # Interactive path — unchanged. Agent owns its terminal state via the bookie.
+  # The pipe-pane is attached to the PANE (not the process), so the pipe
+  # survives this `exec` and continues mirroring the tmux pane (now running
+  # claude) to the logfile for the worker's full lifetime.
   exec "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
 fi
+
+# Resolve the per-worker logfile path BEFORE we hand the TTY over, so the
+# pipe-pane is attached to the pane that claude is about to take over (the
+# pipe is on the pane, not the process, so order is in practice irrelevant —
+# but doing it here keeps the call site obvious and pinpoints the failure
+# mode to "if you got here, the pipe is wired"). Also keeps the headless
+# path's prior `tee` removed in favor of the single pane-side pipe (no
+# duplicate content, single source of capture truth).
+LOG_FILE="$(worker_log_path "$WORKER")"
+mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+setup_pipe_pane "$WORKER" "$LOG_FILE"
 
 # Headless path — run as a child, capture rc, then reconcile the row.
 #
 # Two guards the interactive path doesn't need (it execs claude, which owns the
 # TTY and has its own session timeout + bookie):
-#   (1) Log capture (Gap 1): tee the child's combined stdout/stderr to a
-#       per-worker logfile so a stalled headless worker leaves a forensic trail.
+#   (1) Log capture (Gap 1): pane-side `tmux pipe-pane` (set above) mirrors
+#       the worker's tmux pane to the per-worker logfile. Replaces the prior
+#       `tee` which only saw stdout (no TUI) and which could be SIGKILLed
+#       before flushing on a factory reap. `capture_scrollback_to_log` (below)
+#       remains as a last-resort fallback for cases where pipe-pane never
+#       attached (tmux server down at spawn, race on the pipe-pane call, etc).
 #   (2) Stall watchdog (Gap 2): wrap the child in `timeout` so a `pi` epoll-hung
 #       on a dropped upstream stream self-terminates. `timeout` SIGTERMs at the
 #       bound, then SIGKILLs after a 30s grace (-k) in case the hung child
 #       ignores SIGTERM. On expiry `timeout` exits 124 — a non-zero rc that
 #       flows through reconcile_decision exactly like any crash (commits→review,
 #       none→failed), so no special-casing is needed downstream.
-LOG_FILE="$(worker_log_path "$WORKER")"
-mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 STALL_SECS="$(stall_timeout_secs)"
 set +e
 # `timeout` runs the child in its own process group and kills the group on
-# expiry. PIPESTATUS[0] is the child/timeout rc (not tee's), so a full disk
-# writing the log can't mask the real exit code. `2>&1 |` merges stderr so the
-# log is the complete transcript a debugger would want.
-timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1 \
-  | tee "$LOG_FILE"
-AGENT_RC=${PIPESTATUS[0]}
+# expiry. `$?` is the child/timeout rc (no tee in the pipe anymore). `2>&1`
+# merges stderr into the pane (pipe-pane sees both); the redundant stdout is
+# intentionally not piped to `tee` (pipe-pane already captures it — tee would
+# duplicate every line).
+timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
+AGENT_RC=$?
 set -e
 
 # Did the agent already advance the row past the claim? If so, respect it.
