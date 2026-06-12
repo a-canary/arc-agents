@@ -93,3 +93,59 @@ test("verifyMergeTruth prefers local-sha route when both supplied", async () => 
   expect(r.ok).toBe(true);
   if (r.ok) expect(r.route).toBe("local");
 });
+
+// --in-place escape hatch ---------------------------------------------------
+//
+// Route 3: an explicit "I assert this is merged in-place, no PR" path. The
+// CLI refuses to set both --pr and --in-place; verifyMergeTruth therefore
+// sees inPlace only when prUrl is null and the row's pr_url has been
+// ignored. The function still accepts a local-sha alongside inPlace (local
+// route takes precedence — verifiable evidence wins over assertion).
+
+test("verifyMergeTruth accepts inPlace when no prUrl and no localSha", async () => {
+  const r = await verifyMergeTruth({ prUrl: null, localSha: null, inPlace: true, run: okRunner("") });
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    expect(r.route).toBe("in-place");
+    expect(r.detail).toContain("in-place");
+  }
+});
+
+test("verifyMergeTruth refuses when prUrl malformed and inPlace false", async () => {
+  // Strengthens the malformed-pr_url case: branch-shaped strings must be
+  // rejected even when localSha is set, unless the worker explicitly opts
+  // in via inPlace. The CLI mutex between --in-place and --pr is enforced
+  // one layer up; here we just exercise the function's contract.
+  const r = await verifyMergeTruth({
+    prUrl: "cli-proxy:worker/cli-proxy-harden-gitignore",
+    localSha: null,
+    inPlace: false,
+    run: okRunner("MERGED"),
+  });
+  expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.reason).toContain("does not look like a PR URL");
+});
+
+test("verifyMergeTruth refusal message mentions --in-place as an option", async () => {
+  const r = await verifyMergeTruth({ prUrl: null, localSha: null, run: okRunner("") });
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.reason).toContain("--pr");
+    expect(r.reason).toContain("--in-place");
+  }
+});
+
+test("verifyMergeTruth prefers local-sha route over inPlace when both supplied", async () => {
+  // local-sha is the strongest claim (verifiable on origin/main); inPlace
+  // is the assertion fallback. If a worker passes both, the verifiable
+  // route wins. CLI does not enforce a mutex between the two, only against
+  // --pr.
+  const r = await verifyMergeTruth({
+    prUrl: null,
+    localSha: "239838c",
+    inPlace: true,
+    run: okRunner("", 0),
+  });
+  expect(r.ok).toBe(true);
+  if (r.ok) expect(r.route).toBe("local");
+});

@@ -8,7 +8,7 @@
 // these returns ok. Pure-ish: side effects routed through injected runners so
 // tests can stub.
 
-export type MergeTruthOk = { ok: true; route: "pr" | "local"; detail: string };
+export type MergeTruthOk = { ok: true; route: "pr" | "local" | "in-place"; detail: string };
 export type MergeTruthFail = { ok: false; reason: string };
 export type MergeTruthResult = MergeTruthOk | MergeTruthFail;
 
@@ -65,13 +65,26 @@ export async function verifyLocalMerged(sha: string, run: Runner): Promise<Merge
 export async function verifyMergeTruth(args: {
   prUrl: string | null | undefined;
   localSha: string | null | undefined;
+  inPlace?: boolean;
   run: Runner;
 }): Promise<MergeTruthResult> {
   if (args.localSha) return verifyLocalMerged(args.localSha, args.run);
   if (args.prUrl) return verifyPrMerged(args.prUrl, args.run);
+  // Third route: explicit in-place acknowledgement. The CLI enforces a mutex
+  // between --in-place and --pr (bin/ledger.ts `update` verb), so by the time
+  // we reach this branch prUrl is guaranteed null. localSha and inPlace are
+  // allowed to coexist; the local-sha route is verifiable evidence, so it
+  // wins when both are supplied (handled by the early-return above).
+  if (args.inPlace) {
+    return {
+      ok: true,
+      route: "in-place",
+      detail: "explicit in-place acknowledgement (no PR/sha verification performed); worker must supply --evidence",
+    };
+  }
   return {
     ok: false,
-    reason: "marking state=merged requires either --pr <url-or-#num> (PR must be MERGED on GitHub) or --local-merged-sha <sha> (sha must be on origin/main).",
+    reason: "marking state=merged requires --pr <url-or-#num> (PR must be MERGED on GitHub), --local-merged-sha <sha> (sha must be on origin/main), or --in-place (explicit acknowledgement; supply --evidence).",
   };
 }
 

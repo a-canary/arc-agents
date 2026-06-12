@@ -313,6 +313,15 @@ switch (cmd) {
     const evidence = getFlag("evidence");
     const pr = getFlag("pr");
     const localSha = getFlag("local-merged-sha");
+    // --in-place is the third (explicit-assertion) merge-truth route. The CLI
+    // refuses to set both --in-place and --pr, so workers can no longer sneak
+    // a branch-shaped string through the PR route as an "in-place with no PR"
+    // acknowledgement. --in-place skips verifyMergeTruth's PR/sha checks; the
+    // worker's --evidence is the receipt. See bookie.md rule 2.
+    const inPlace = args.includes("--in-place");
+    if (inPlace && pr) {
+      die("--in-place is mutually exclusive with --pr. Use --in-place alone (with --evidence) for in-place merges, --pr to verify a PR, or --local-merged-sha to verify a sha.");
+    }
     const branch = getFlag("branch");
     const worktree = getFlag("worktree");
     const hitl = getFlag("hitl");
@@ -345,8 +354,12 @@ switch (cmd) {
         }
       }
       if (state === "merged" && process.env.ARC_SKIP_MERGE_TRUTH !== "1") {
-        const effectivePr = pr ?? cur.pr_url ?? null;
-        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, run: defaultRunner });
+        // --in-place overrides any stale pr_url on the row (the worker is
+        // asserting, not citing a PR). For all other paths, --pr wins over
+        // the row's stored pr_url; the row's pr_url is the fallback when no
+        // --pr is supplied this invocation.
+        const effectivePr = inPlace ? null : (pr ?? cur.pr_url ?? null);
+        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, inPlace, run: defaultRunner });
         if (!verdict.ok) {
           db.run(
             `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
@@ -1314,10 +1327,13 @@ switch (cmd) {
                                        to stdout for ops/debug; --type-filter
                                        includes the AND type=?2 variant
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
-  update <id> [--state --evidence --pr --local-merged-sha --branch --worktree --hitl 0|1 --agent]
-                                       state=merged requires --pr <url-or-#num>
-                                       (gh pr view must say MERGED) or
-                                       --local-merged-sha <sha> on origin/main.
+  update <id> [--state --evidence --pr --local-merged-sha --in-place --branch --worktree --hitl 0|1 --agent]
+                                       state=merged requires one of:
+                                         --pr <url-or-#num>        gh pr view must say MERGED
+                                         --local-merged-sha <sha>  sha must be on origin/main
+                                         --in-place                explicit in-place acknowledgement
+                                                                  (no PR/sha verification; --evidence
+                                                                  is the receipt; mutex with --pr).
                                        Override with ARC_SKIP_MERGE_TRUTH=1.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
