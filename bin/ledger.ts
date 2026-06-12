@@ -1396,7 +1396,7 @@ switch (cmd) {
   alias-cmd <aliasName>                   pure read: print full command string for alias
                                           (includes {prompt} placeholder)
 
-  global flags: --db <path>
+  --db <path>  (must come AFTER the verb; e.g. ledger show <id> --db /path/to/ledger.db)
 
 NOTE: agents must route all WRITES (create, update, decompose, event) through
 the bookie subagent. Direct CLI writes are reserved for bootstrap (worker-shell
