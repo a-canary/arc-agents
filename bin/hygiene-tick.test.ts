@@ -147,3 +147,226 @@ test("inserted row carries migration-017 tier='hygiene' + pool='ops' (not tier_u
   expect(got!.tier).toBe("hygiene");
   expect(got!.pool).toBe("ops");
 });
+
+// ── cadence (per-(repo, skill) cooldown) ────────────────────────────────
+//
+// Config schema extension lets maintenance-mode repos throttle low-signal
+// skills (e.g. discord-bridge, where `improve-architecture` and
+// `trash-retired-files` produce "still clean" reports) while keeping the
+// high-signal `analyse-recent-sessions` skill at the natural rotation rate.
+
+function seedCron(repo: string, skill: string, createdAt: number, state = "merged") {
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, created_at)
+     VALUES (?, ?, ?, '', 'cron', ?, 'task', 'hygiene', 'ops', ?)`,
+    [`seed-${repo}-${skill}`, repo, `hygiene: ${repo} — /${skill}`, state, createdAt],
+  );
+  db.close();
+}
+
+test("cadence: skips a (repo, skill) combo that fired within the cooldown window and picks the next eligible", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills:
+  - improve-architecture
+  - trash-retired-files
+  - analyse-recent-sessions
+repos: [ke]
+cadence:
+  ke:
+    improve-architecture: 30
+    trash-retired-files: 30
+`,
+  );
+  // Seed ke/improve-architecture AND ke/trash-retired-files 5 days ago (both
+  // within 30d cooldown). analyse-recent-sessions has no cadence override.
+  // n=2, rotation starts at idx 2 (= analyse) → eligible → pick.
+  const recent = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", recent);
+  seedCron("ke", "trash-retired-files", recent);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("ke");
+  expect(out.skill).toBe("analyse-recent-sessions");
+});
+
+test("cadence: skips a repo whose every skill is in cooldown and falls through to the next repo", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-architecture, trash-retired-files, analyse-recent-sessions]
+repos: [ke, arc-agents]
+cadence:
+  ke:
+    improve-architecture: 30
+    trash-retired-files: 30
+    analyse-recent-sessions: 30
+`,
+  );
+  // Seed all 3 (ke, skill) combos recently so every skill is in cooldown.
+  const recent = Math.floor(Date.now() / 1000) - 86400 * 5;
+  for (const skill of ["improve-architecture", "trash-retired-files", "analyse-recent-sessions"]) {
+    seedCron("ke", skill, recent);
+  }
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  // ke was the only repo with a last_created (any skill), so it sorts first,
+  // but its every skill is in cooldown → fall through to arc-agents.
+  expect(out.repo).toBe("arc-agents");
+});
+
+test("cadence: when every candidate repo has every skill in cooldown, output skipped:true", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-architecture, trash-retired-files]
+repos: [ke, arc-agents]
+cadence:
+  ke:
+    improve-architecture: 30
+    trash-retired-files: 30
+  arc-agents:
+    improve-architecture: 30
+    trash-retired-files: 30
+`,
+  );
+  const recent = Math.floor(Date.now() / 1000) - 86400 * 5;
+  for (const repo of ["ke", "arc-agents"]) {
+    for (const skill of ["improve-architecture", "trash-retired-files"]) {
+      seedCron(repo, skill, recent);
+    }
+  }
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBe(true);
+  // No new task created.
+  const db = new Database(dbPath);
+  const all = db.query<{ n: number }, []>(`SELECT COUNT(*) AS n FROM issues WHERE type='cron'`).get();
+  db.close();
+  expect(all!.n).toBe(4);
+});
+
+test("cadence: a (repo, skill) combo that has never fired is not in cooldown (first run fires on schedule)", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-architecture, analyse-recent-sessions]
+repos: [ke]
+cadence:
+  ke:
+    improve-architecture: 30
+`,
+  );
+  // No seeds. n=0, rotation starts at idx 0 = improve-architecture, which
+  // is in the cadence map. lastCreatedForSkill returns null → inCooldown
+  // returns false. Pick improve-architecture.
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("ke");
+  expect(out.skill).toBe("improve-architecture");
+});
+
+test("cadence: a skill missing from the repo's cadence map has no cooldown even if it has fired recently", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-architecture, analyse-recent-sessions]
+repos: [ke]
+cadence:
+  ke:
+    improve-architecture: 30
+    # analyse-recent-sessions intentionally omitted → no cooldown
+`,
+  );
+  // Seed both skills 5 days ago. n=2, idx 0 = improve (in cooldown), walk to
+  // idx 1 = analyse (not in cadence map → inCooldown returns false → pick).
+  const recent = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", recent);
+  seedCron("ke", "analyse-recent-sessions", recent);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("ke");
+  expect(out.skill).toBe("analyse-recent-sessions");
+});
+
+test("cadence: an existing (repo, skill) cron task with created_at past the cooldown window is eligible again", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-architecture, trash-retired-files]
+repos: [ke]
+cadence:
+  ke:
+    improve-architecture: 30
+    trash-retired-files: 30
+`,
+  );
+  // improve-architecture fired 31 days ago → cooldown expired → eligible.
+  // trash-retired-files fired 5 days ago → in cooldown.
+  // n=2, 2%2=0, startIdx=0=improve → eligible (cooldown expired) → pick.
+  const old = Math.floor(Date.now() / 1000) - 86400 * 31;
+  const recent = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", old);
+  seedCron("ke", "trash-retired-files", recent);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("ke");
+  expect(out.skill).toBe("improve-architecture");
+});
+
+test("cadence: config without a `cadence` key is treated as no cooldown (back-compat)", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-architecture, trash-retired-files]
+repos: [ke]
+`,
+  );
+  // Seed both skills 1 day ago (would be in cooldown if cadence were set).
+  // n=2, idx 0 = improve, no cadence → inCooldown returns false → pick.
+  const recent = Math.floor(Date.now() / 1000) - 86400;
+  seedCron("ke", "improve-architecture", recent);
+  seedCron("ke", "trash-retired-files", recent);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("ke");
+  expect(out.skill).toBe("improve-architecture");
+});
+
+test("cadence: a zero or negative days value disables cooldown for that skill", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-architecture, trash-retired-files]
+repos: [ke]
+cadence:
+  ke:
+    improve-architecture: 0
+    trash-retired-files: -1
+`,
+  );
+  const recent = Math.floor(Date.now() / 1000) - 86400;
+  seedCron("ke", "improve-architecture", recent);
+  seedCron("ke", "trash-retired-files", recent);
+
+  // n=2, idx 0 = improve (days=0 → not in cooldown) → pick.
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skill).toBe("improve-architecture");
+});

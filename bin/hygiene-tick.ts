@@ -6,6 +6,8 @@
 // Config: $ARC_HYGIENE_CONFIG (yaml) or ~/.config/arc/hygiene.yaml
 //   skills: [improve-codebase-architecture, ...]
 //   repos:  [ke, arc-agents, arc-webui, ...]
+//   cadence (optional): { <repo>: { <skill>: <days>, ... }, ... } — skip the
+//     (repo, skill) combo if its last cron task fired within `days` of now.
 //
 // Exit codes: 0 ok (incl. skipped:true), 2 config error
 
@@ -32,6 +34,22 @@ const repos: string[] = Array.isArray(cfg.repos) ? cfg.repos : [];
 if (skills.length === 0) die(2, "config: skills must be non-empty");
 if (repos.length === 0) die(2, "config: repos must be non-empty");
 
+// Optional per-(repo, skill) cooldown in days. When set, hygiene-tick skips
+// that (repo, skill) combo if its last cron task was created within `days` of
+// now. The cron still rotates through all skills in order; cooldowns just
+// re-route the pick to the next eligible skill (or skip the repo entirely).
+// Use this to throttle low-signal skills (e.g. `improve-architecture` and
+// `trash-retired-files` against a repo in maintenance mode).
+//   cadence:
+//     discord-bridge:
+//       improve-architecture: 30
+//       trash-retired-files: 30
+type CadenceMap = Record<string, Record<string, number>>;
+const cadence: CadenceMap =
+  cfg.cadence && typeof cfg.cadence === "object" && !Array.isArray(cfg.cadence)
+    ? (cfg.cadence as CadenceMap)
+    : {};
+
 const db = open();
 
 // Open = not in a terminal state.
@@ -49,14 +67,23 @@ function hasOpenHygiene(repo: string): boolean {
 }
 
 // Round-robin: count of cron tasks for repo determines which skill to run.
-function nextSkillFor(repo: string): string {
+// With per-(repo, skill) cooldowns, the rotation index is the starting point
+// and we walk forward to the first skill not in cooldown. Returns null if
+// every skill in the rotation is in cooldown (caller should treat the repo
+// as ineligible and try the next candidate).
+function nextSkillFor(repo: string, now: number): string | null {
   const row = db
     .query<{ n: number }, [string]>(
       `SELECT COUNT(*) AS n FROM issues WHERE type='cron' AND project=?`,
     )
     .get(repo);
   const n = row?.n ?? 0;
-  return skills[n % skills.length]!;
+  const startIdx = n % skills.length;
+  for (let off = 0; off < skills.length; off++) {
+    const skill = skills[(startIdx + off) % skills.length]!;
+    if (!inCooldown(repo, skill, now)) return skill;
+  }
+  return null;
 }
 
 // Rotation: pick the repo (a) without an open hygiene task and (b) whose last
@@ -71,7 +98,33 @@ function lastCreatedFor(repo: string): number | null {
   return row?.ts ?? null;
 }
 
+// Last cron task created for the specific (repo, skill) combo. We match on
+// the canonical title (`hygiene: <repo> — /<skill>`) since the issues table
+// has no dedicated `skill` column and we don't want to add a migration just
+// to throttle cron cadence.
+function lastCreatedForSkill(repo: string, skill: string): number | null {
+  const row = db
+    .query<{ ts: number | null }, [string, string]>(
+      `SELECT MAX(created_at) AS ts FROM issues WHERE type='cron' AND project=? AND title=?`,
+    )
+    .get(repo, `hygiene: ${repo} — /${skill}`);
+  return row?.ts ?? null;
+}
+
+// Is the (repo, skill) combo currently in cooldown? A repo with no entry, or
+// a skill missing from the repo's entry, has no cooldown (rotation cadence
+// applies). A combo that has never fired is also not in cooldown — the
+// first run of a new cadence override should still happen on schedule.
+function inCooldown(repo: string, skill: string, now: number): boolean {
+  const days = cadence[repo]?.[skill];
+  if (typeof days !== "number" || !Number.isFinite(days) || days <= 0) return false;
+  const last = lastCreatedForSkill(repo, skill);
+  if (last === null) return false;
+  return now - last < Math.floor(days * 86400);
+}
+
 let pick: { repo: string; skill: string } | null = null;
+const now = Math.floor(Date.now() / 1000);
 const candidates = repos
   .map((repo, idx) => ({ repo, idx, last: lastCreatedFor(repo) }))
   .filter((c) => !hasOpenHygiene(c.repo))
@@ -81,9 +134,12 @@ const candidates = repos
     if (a.last !== b.last) return (a.last ?? 0) - (b.last ?? 0);
     return a.idx - b.idx;
   });
-if (candidates.length > 0) {
-  const c = candidates[0]!;
-  pick = { repo: c.repo, skill: nextSkillFor(c.repo) };
+for (const c of candidates) {
+  const skill = nextSkillFor(c.repo, now);
+  if (skill) {
+    pick = { repo: c.repo, skill };
+    break;
+  }
 }
 
 if (!pick) {
