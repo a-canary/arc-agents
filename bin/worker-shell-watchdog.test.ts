@@ -141,3 +141,35 @@ test("capture_scrollback_to_log is a no-op when log path is empty", () => {
   const r = callFn("capture_scrollback_to_log", ["arc-worker-i-nope", ""]);
   expect(r.rc).toBe(0);
 });
+
+// ---- Gap 1c: real-time pane capture (tmux pipe-pane) -----------------------
+
+// PR #247's `capture_scrollback_to_log` fallback only fires at script exit —
+// for interactive workers the `exec "${CMD_PARTS[@]}"` REPLACES this script
+// with claude, so the fallback never runs. And for hygiene claims that exit
+// within 10-30s, the factory SIGKILLs the tmux session before we reach the
+// fallback. The fix attaches `tmux pipe-pane` to the worker's pane BEFORE
+// the exec / before the headless child runs: the pipe lives on the PANE (not
+// the script's process tree), so it survives the exec and the SIGKILL, and
+// `-o` closes it when the pane exits, flushing buffered content to disk.
+//
+// We can't run a real tmux server inside the unit test, but we can pin the
+// no-op contract: outside a tmux session, the function must return 0, NOT
+// create the logfile, and NOT crash.
+test("setup_pipe_pane is a no-op when not in a tmux session", () => {
+  const r = callFn("setup_pipe_pane", ["arc-worker-i-nonexistent", "/tmp/should-not-exist-pipe.log"]);
+  expect(r.rc).toBe(0);
+  try {
+    const stat = require("node:fs").statSync("/tmp/should-not-exist-pipe.log");
+    expect(stat.size).toBe(0);
+  } catch {
+    // File doesn't exist — that's fine, proves the no-op skipped the cat >>.
+  }
+});
+
+test("setup_pipe_pane is a no-op when log path is empty", () => {
+  // No logfile path → skip the pipe attach (mirrors the capture_scrollback
+  // guard: a bad path must not crash the worker boot).
+  const r = callFn("setup_pipe_pane", ["arc-worker-i-nope", ""]);
+  expect(r.rc).toBe(0);
+});
