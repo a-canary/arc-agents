@@ -26,6 +26,17 @@ bun bin/ledger.ts init
 bun bin/factory.ts
 ```
 
+> **Agents setting this up on a fresh or non-Linux host (Windows/macOS):** after
+> `bun install`, run the smoke test below before anything else. It is the
+> fastest signal that the harness can actually claim and isolate a task on this
+> OS. If it fails, fix the cause (PATH resolution, worktree paths, and shell
+> assumptions are the usual cross-platform culprits) and — if the fix belongs in
+> the install steps or scripts — open a PR so the next host doesn't hit it.
+>
+> ```
+> bun test bin/worker-shell-repo.test.ts   # repo routing + `pi` PATH resolution
+> ```
+
 Install bins on PATH (after merge to main):
 
 ```
