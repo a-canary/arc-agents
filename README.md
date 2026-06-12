@@ -62,7 +62,9 @@ bun link && bun link arc-agents     # registers ledger, wait-for-ledger
       heartbeats for liveness, `arc-tui` reference module
       (`heartbeat | list | answer`).
 - [x] **Hygiene cron** — `bin/hygiene-tick.ts`: round-robin repo list,
-      one `type=cron` task per tick, skip-not-stack semantics.
+      one `type=cron` task per tick, skip-not-stack semantics, optional
+      per-(repo, skill) cooldown via the `cadence` key in
+      `~/.config/arc/hygiene.yaml`.
 - [x] **Skills** — `bookie`, `ke-recall`, `ke-learn`, `claude-afk`,
       `to-ledger`, `triage-failed`.
 
