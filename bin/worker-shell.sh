@@ -126,6 +126,35 @@ resolve_repo() {
   fi
 }
 
+# Prepend the dir holding a globally-installed `pi` to PATH if `pi` isn't
+# already resolvable. Used to survive the stripped PATH that systemd --user
+# services inherit (no ~/.npm-global/bin). Probes, in priority order:
+#   1. node's sibling global bin (root-prefix npm)
+#   2. `npm prefix -g`/bin — authoritative for the active npm, and the ONLY
+#      probe that catches a per-user prefix (`npm config set prefix
+#      ~/.npm-global`, the recommended no-sudo install on macOS/Linux). The
+#      node-sibling heuristic alone missed it, so headless workers on such hosts
+#      died exit 127 `pi: command not found`.
+#   3. ~/.npm-global/bin — static fallback for when npm isn't on the PATH to
+#      answer `prefix -g`.
+# No-op when pi is already resolvable (e.g. interactive shells). Pure + sourced
+# so it can be unit-tested via ARC_WORKER_SHELL_SOURCE_ONLY=1.
+ensure_pi_on_path() {
+  command -v pi >/dev/null 2>&1 && return 0
+  local candidates=() node_bin npm_prefix d
+  node_bin="$(command -v node 2>/dev/null || true)"
+  [ -n "$node_bin" ] && candidates+=( "$(dirname "$node_bin")/../lib/node_modules/node/bin" )
+  if command -v npm >/dev/null 2>&1; then
+    npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+    [ -n "$npm_prefix" ] && candidates+=( "${npm_prefix}/bin" )
+  fi
+  candidates+=( "${HOME}/.npm-global/bin" )
+  for d in "${candidates[@]}"; do
+    if [ -x "${d}/pi" ]; then export PATH="${d}:${PATH}"; return 0; fi
+  done
+  return 0
+}
+
 # Sourced by the test harness — define functions, then stop before doing any
 # real work (claim, exec, ledger writes). Production never sets this.
 if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
@@ -137,20 +166,9 @@ fi
 # before the claim runs. Restore the user's bun install dir if missing.
 command -v bun >/dev/null 2>&1 || export PATH="${HOME}/.bun/bin:${PATH}"
 
-# Same stripped-PATH hazard for the headless engine `pi` (two-tier policy
-# G-0006: agent-less rows resolve to `pi -p ...`). `node` is on the systemd
-# PATH (/usr/local/bin) but its npm-global bin dir — which holds `pi` — is not,
-# so the headless child died `pi: command not found` (exit 127) and every
-# headless worker got reconciled to `failed`. Derive that dir from node's own
-# location (version-agnostic, no hardcoded path) and restore it if `pi` is
-# missing. No-op when pi is already resolvable (e.g. interactive shells).
-if ! command -v pi >/dev/null 2>&1; then
-  _node_bin="$(command -v node 2>/dev/null || true)"
-  if [ -n "$_node_bin" ]; then
-    _node_global_bin="$(dirname "$_node_bin")/../lib/node_modules/node/bin"
-    [ -x "${_node_global_bin}/pi" ] && export PATH="${_node_global_bin}:${PATH}"
-  fi
-fi
+# Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
+# has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.
+ensure_pi_on_path
 
 WORKER="${1:?worker name required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -217,6 +235,17 @@ WT_REPO="$(resolve_repo "$PROJECT")"
 # Slug = CLAIM_ID (already a unique, filesystem-safe kebab task id). Branch
 # worker/<slug> off main; worktree at ~/worktrees/<repo-basename>-<slug>/.
 # Idempotent: a pre-existing worktree (re-claim) is reused, not re-added.
+# A row whose project resolves to a repo that doesn't exist on this host (fresh
+# user who hasn't cloned it, or a name typo) would otherwise fail deep inside
+# `git -C "$WT_REPO" worktree add` with a cryptic "No such file or directory"
+# and strand the claimed row. Fail fast with an actionable message naming the
+# missing path AND the env var that overrides it.
+if [ ! -d "$WT_REPO" ]; then
+  _ov_var="ARC_PROJECT_REPO_$(echo "${PROJECT:-}" | tr '[:lower:]-' '[:upper:]_')"
+  echo "worker-shell: project repo not found: '$WT_REPO'" >&2
+  echo "  clone it there, or set ${_ov_var}=/path/to/repo to point at an existing checkout." >&2
+  exit 1
+fi
 REPO_NAME="$(basename "$WT_REPO")"
 WT_DIR="${HOME}/worktrees/${REPO_NAME}-${CLAIM_ID}"
 WT_BRANCH="worker/${CLAIM_ID}"
