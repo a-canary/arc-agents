@@ -20,6 +20,9 @@ bun.lockb
 .claude/history.jsonl
 .claude/settings.local.json
 
+# Worker heartbeat — cooperative anti-reaper lease, written per-session
+.worker-lease
+
 # Local DBs / env
 *.db
 *.db-shm

@@ -34,6 +34,16 @@ if boot:
 PY
 fi
 
+# --- Worker lease heartbeat ---------------------------------------------
+# Cooperative anti-reaper lease: write a heartbeat so the worktree-reaper
+# knows to skip this worktree for 10 min (exceeds the 5-min factory tick).
+# Guard: only write if this looks like a worker session (ARC_TASK_ID set,
+# i.e. the worktree path is the CWD).
+if [ -n "${ARC_TASK_ID:-}" ]; then
+  LEASE="$(pwd)/.worker-lease"
+  date +%s > "$LEASE" 2>/dev/null || true
+fi
+
 # --- AGENTS-GLOBAL.md collector ----------------------------------------------
 # Convention: AGENTS-GLOBAL.md = rules that must ESCAPE their repo to reach a
 # cross-repo orchestrator (e.g. a Director dispatching workers into siblings it

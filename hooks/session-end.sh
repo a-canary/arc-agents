@@ -12,4 +12,11 @@ if [ -f "$LEDGER" ] && command -v bun >/dev/null 2>&1 && [ -n "${ARC_ISSUE_ID:-}
   bun "$REPO/bin/ledger.ts" event "$ARC_ISSUE_ID" session-end "{\"role\":\"$ROLE\"}" >/dev/null 2>&1 || true
 fi
 
+# --- Worker lease cleanup -------------------------------------------------
+# Remove the anti-reaper heartbeat. The reaper's 10-min TTL is the
+# backstop if the worker crashes without running this hook.
+if [ -n "${ARC_TASK_ID:-}" ]; then
+  rm -f "$(pwd)/.worker-lease"
+fi
+
 exit 0

@@ -46,13 +46,16 @@ export type ReapedWorktree = {
   // linked worktree). `git worktree remove` can never delete a main tree, so
   // retrying every tick is a hot loop. We null the columns instead (the work
   // is merged; the path was misrecorded) so the row is never revisited.
+  // worker-active: a live tmux session holds a recent .worker-lease heartbeat
+  // (≤5 min old). The reaper must not steal a worktree from an active worker.
   outcome:
     | "removed"
     | "missing"
     | "git-remove-failed"
     | "no-parent-repo"
     | "has-commits"
-    | "main-working-tree";
+    | "main-working-tree"
+    | "worker-active";
   detail?: string;
 };
 
@@ -105,6 +108,26 @@ function commitsAheadOfMain(worktreePath: string): number {
   return Number.isFinite(n) ? n : 1;
 }
 
+// True when the worktree has a .worker-lease file updated ≤ 10 min ago.
+// Workers write the heartbeat in hooks/session-start.sh; it is the
+// cooperative anti-reaper signal. If present and fresh, skip the reap so
+// we don't delete a worktree out from under an active tmux session.
+// TTL is 10 min to exceed the 5-min factory tick, preventing a race where
+// the tick fires just before the lease expires and reaps a live session.
+const LEASE_TTL_SEC = 10 * 60;
+
+function hasActiveLease(worktreePath: string): boolean {
+  const leaseFile = join(worktreePath, ".worker-lease");
+  if (!existsSync(leaseFile)) return false;
+  try {
+    const mtimeSec = Math.floor(statSync(leaseFile).mtimeMs / 1000);
+    const ageSec = Math.floor(Date.now() / 1000) - mtimeSec;
+    return ageSec <= LEASE_TTL_SEC;
+  } catch {
+    return false;
+  }
+}
+
 // Count commits on main NOT reachable from the worktree's HEAD (`HEAD..main`).
 // >0 means main has advanced past HEAD (work integrated/superseded). On any
 // git failure return 0 — the caller only treats >0 as a removal fast-path, so
@@ -130,6 +153,16 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
   for (const row of rows) {
     const wt = row.worktree_path;
     const br = row.branch;
+
+    // Guard: a worker holds a live lease on this worktree — skip.
+    if (existsSync(wt) && hasActiveLease(wt)) {
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worktree-reaper', ?)`,
+        [row.id, JSON.stringify({ event: "worktree-reaped", outcome: "worker-active", worktree_path: wt, branch: br })],
+      );
+      reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "worker-active" });
+      continue;
+    }
 
     // (b) commit-guard: a failed/cancelled worktree with unmerged commits is
     // preserved for human salvage. merged rows skip this — their work is
@@ -243,6 +276,7 @@ export type BackstopOutcome =
   | "kept-has-commits"
   | "kept-live-row"
   | "kept-too-young"
+  | "kept-worker-active"
   | "not-a-worktree";
 
 export type BackstopResult = {
@@ -300,6 +334,12 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
     // A live ledger row owns it — defer to the row-driven reaper.
     if (tracked.has(dir)) {
       results.push({ worktree_path: dir, outcome: "kept-live-row" });
+      continue;
+    }
+
+    // A live lease (active worker) takes priority over the backstop.
+    if (hasActiveLease(dir)) {
+      results.push({ worktree_path: dir, outcome: "kept-worker-active" });
       continue;
     }
 

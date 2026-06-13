@@ -8,7 +8,7 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrate } from "./migrate";
@@ -463,4 +463,67 @@ test("(c) backstop is a no-op on an empty/absent root", () => {
     maxAgeSec: 7 * 86400,
   });
   expect(res.length).toBe(0);
+});
+
+// --- worker-lease heartbeat guard ---
+// Workers write .worker-lease (timestamp) on session start; the reaper must
+// not steal a worktree from an active session. The lease is valid for 5 min.
+// stale means no active worker — reaper proceeds normally.
+
+test("worker-lease: reapWorktrees skips a merged row with a fresh lease (worker-active)", () => {
+  const db = setupDb();
+  insertMergedIssue(db, "iss-lease", worktreeDir, BRANCH);
+  // Write a fresh heartbeat (now).
+  writeFileSync(join(worktreeDir, ".worker-lease"), String(Math.floor(Date.now() / 1000)));
+
+  const reaped = reapWorktrees(db);
+
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("worker-active");
+  // Row NOT touched — worker is still alive.
+  const row = db
+    .query<{ worktree_path: string | null; branch: string | null }, []>(
+      "SELECT worktree_path, branch FROM issues WHERE id='iss-lease'",
+    )
+    .get();
+  expect(row?.worktree_path).toBe(worktreeDir);
+  expect(row?.branch).toBe(BRANCH);
+  // Worktree intact.
+  expect(existsSync(worktreeDir)).toBe(true);
+});
+
+test("worker-lease: reapWorktrees proceeds when lease is stale (>5 min old)", () => {
+  const db = setupDb();
+  insertMergedIssue(db, "iss-stale", worktreeDir, BRANCH);
+  const stale = Math.floor(Date.now() / 1000) - 11 * 60;
+  writeFileSync(join(worktreeDir, ".worker-lease"), String(stale));
+  // Backdate the mtime so the reaper sees an 11-min-old heartbeat (>10-min TTL).
+  utimesSync(join(worktreeDir, ".worker-lease"), new Date(stale * 1000), new Date(stale * 1000));
+
+  const reaped = reapWorktrees(db);
+
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
+
+test("worker-lease: backstop keeps a worktree with a fresh lease (kept-worker-active)", () => {
+  const db = setupDb();
+  // No ledger row references the worktree — it would be a backstop candidate.
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = addWorktreeUnder(root, "lease-orphan", "lease-orphan-br");
+  // Write a fresh heartbeat.
+  writeFileSync(join(dir, ".worker-lease"), String(Math.floor(Date.now() / 1000)));
+
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("kept-worker-active");
+  expect(existsSync(dir)).toBe(true);
 });
