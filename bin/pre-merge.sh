@@ -9,11 +9,12 @@
 #   1. branch-clean   — no uncommitted changes, working tree clean
 #   2. rebased        — head is rebased on $BASE (no merge commits in branch)
 #   3. author-lint    — every commit author matches I-0006 (a-canary)
-#   4. api-key-guard — no hardcoded API keys / empty env var fallbacks in staged diff
-#   5. tdd-green      — colocated *.test.ts for every prod .ts in diff
-#   6. todo-sweep     — TODO/FIXME/XXX reference a ledger task or PR
-#   7. merge-gate     — fixture + typecheck + bun test (bin/merge-gate.sh)
-#   8. ci-green       — gh pr checks <num> all PASS (if --pr passed)
+#   4. slice-guard   — PR diff ≤2000 modified-line equivs + ≤1 top-level area (G-0005)
+#   5. api-key-guard — no hardcoded API keys / empty env var fallbacks in staged diff
+#   6. tdd-green      — colocated *.test.ts for every prod .ts in diff
+#   7. todo-sweep     — TODO/FIXME/XXX reference a ledger task or PR
+#   8. merge-gate     — fixture + typecheck + bun test (bin/merge-gate.sh)
+#   9. ci-green       — gh pr checks <num> all PASS (if --pr passed)
 #
 # Usage:
 #   bin/pre-merge.sh [--base <ref>] [--pr <num>] [--project <path>]
@@ -112,11 +113,25 @@ gate_author_lint() {
   pass "author-lint" "all commits authored by $expected_name"
 }
 
-# Gate 4: api-key-guard — no hardcoded API keys in staged diff
+# Gate 4: slice-guard — PR-scope G-0005 enforcement (2000-line cap + 1-area cap)
+gate_slice_guard() {
+  log "Gate 4: slice-guard"
+  if [ ! -x "$BIN/slice-guard.sh" ]; then
+    skip "slice-guard" "bin/slice-guard.sh not found"
+    return
+  fi
+  if "$BIN/slice-guard.sh" --base "$BASE" --project "$PROJECT" >/tmp/slice-guard-$$.log 2>&1; then
+    pass "slice-guard" "PR diff within G-0005 bounds"
+  else
+    fail "slice-guard" "PR exceeds G-0005 bounds — see /tmp/slice-guard-$$.log"
+  fi
+}
+
+# Gate 5: api-key-guard — no hardcoded API keys in staged diff
 # Pattern source: conjecture security incident (csk-hpr4... dead key in git history).
 # Matches bare key strings, empty env var fallbacks, and plain-text config values.
 gate_api_key_guard() {
-  log "Gate 4: api-key-guard"
+  log "Gate 5: api-key-guard"
   # Extract added lines from staged diff (skip diff headers)
   local staged_diff
   staged_diff=$(git diff --cached -U0 \
@@ -146,8 +161,8 @@ gate_api_key_guard() {
       break
     fi
     # os.environ.get / os.getenv with empty-fallback default (silent fail on unset)
-    if echo "$line" | grep -qE 'os\.environ\.get\([^)]*[\'\"].*[\"\']' || \
-       echo "$line" | grep -qE 'os\.getenv\([^)]*[\'\"].*[\"\']'; then
+    if echo "$line" | grep -qE $'os\\.getenv\\([^)]*["\'"]' || \
+       echo "$line" | grep -qE $'os\\.environ\\.get\\([^)]*["\'"]'; then
       fail "api-key-guard" "empty env-var default (silent fail): ${line:0:80}"
       found=1
       break
@@ -159,7 +174,7 @@ gate_api_key_guard() {
       break
     fi
     # API_KEY = "" / = '' (empty string assignment)
-    if echo "$line" | grep -qE '(API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|CEREBRAS_API_KEY)\s*=\s*["\']{2}'; then
+    if echo "$line" | grep -qE $'(API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|CEREBRAS_API_KEY)\s*=\s*["\']{2}'; then
       fail "api-key-guard" "empty API_KEY assignment found: ${line:0:80}"
       found=1
       break
@@ -171,7 +186,7 @@ gate_api_key_guard() {
   fi
 }
 
-# Gate 5: tdd-green
+# Gate 6: tdd-green
 gate_tdd_green() {
   log "Gate 5: tdd-green"
   if [ ! -x "$BIN/tdd-green.sh" ]; then
@@ -185,7 +200,7 @@ gate_tdd_green() {
   fi
 }
 
-# Gate 6: todo-sweep
+# Gate 7: todo-sweep
 gate_todo_sweep() {
   log "Gate 6: todo-sweep"
   if [ ! -x "$BIN/todo-sweep.sh" ]; then
@@ -199,9 +214,9 @@ gate_todo_sweep() {
   fi
 }
 
-# Gate 7: merge-gate (fixture + typecheck + bun test)
+# Gate 8: merge-gate (fixture + typecheck + bun test)
 gate_merge_gate() {
-  log "Gate 7: merge-gate (fixture+typecheck+test)"
+  log "Gate 8: merge-gate (fixture+typecheck+test)"
   if [ ! -x "$BIN/merge-gate.sh" ]; then
     fail "merge-gate" "bin/merge-gate.sh not found"
     return
@@ -218,9 +233,9 @@ gate_merge_gate() {
   fi
 }
 
-# Gate 8: ci-green (gh pr checks)
+# Gate 9: ci-green (gh pr checks)
 gate_ci_green() {
-  log "Gate 8: ci-green"
+  log "Gate 9: ci-green"
   if [ -z "$PR_NUM" ]; then
     skip "ci-green" "no --pr given"
     return
@@ -249,6 +264,7 @@ log "Starting pre-merge gate project=$PROJECT base=$BASE pr=${PR_NUM:-<none>}"
 gate_branch_clean
 gate_rebased
 gate_author_lint
+gate_slice_guard
 gate_api_key_guard
 gate_tdd_green
 gate_todo_sweep
