@@ -3,6 +3,7 @@
 // JSON to stdout when not a TTY; table otherwise.
 
 import { Database } from "bun:sqlite";
+import { readFileSync } from "node:fs";
 import { open, openWithMigrate, mintId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
@@ -17,6 +18,7 @@ import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
+import { parseFollowupTable } from "../src/ledger/followup-table";
 import { checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, resolveAlias } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
@@ -642,6 +644,36 @@ switch (cmd) {
       [id, agent, `hygiene-emit skill=${skill}${observed ? ` observed_in=${observed}` : ""}`],
     );
     out({ id, emitted: true, skill, state: "ready", tier: "hygiene" });
+    break;
+  }
+
+  case "followup-emit": {
+    // Parses the analyse-recent-sessions report's "Recommended follow-up
+    // rows to file" markdown table and emits one row per entry, tier=quality
+    // kind=task state=ready. The analyse-recent-sessions skill's Termination
+    // section requires workers to call this verb before flipping state=merged.
+    const ap = getFlag("analysis");
+    if (!ap) die("--analysis <md-path> required");
+    let md: string;
+    try { md = readFileSync(ap, "utf8"); } catch (e) { die(`cannot read --analysis ${ap}: ${(e as Error).message}`); }
+    const rows = parseFollowupTable(md);
+    if (rows.length === 0) die(`no follow-up table parsed from ${ap}`);
+    const db = openWithMigrate(getFlag("db"));
+    const observed = getFlag("observed-in-task");
+    const agent = getFlag("agent") ?? "bookie";
+    const project = getFlag("project") ?? "arc-agents";
+    const created: { id: string; title: string; type: string }[] = [];
+    for (const r of rows) {
+      const id = mintId(db, r.title);
+      const body = r.body + (observed ? `\n\nObserved in task: ${observed}\nSource: ${ap}` : `\n\nSource: ${ap}`);
+      db.run(
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, tier, pool, agent) VALUES (?, ?, NULL, ?, ?, '', ?, 'ready', 'task', 'quality', 'ops', 'developer')`,
+        [id, project, r.title, body, r.type],
+      );
+      db.run(`INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`, [id, agent, `followup-emit from ${ap}`]);
+      created.push({ id, title: r.title, type: r.type });
+    }
+    out({ emitted: created.length, rows: created });
     break;
   }
 
