@@ -42,7 +42,17 @@ export type ReapedWorktree = {
   branch: string | null;
   // has-commits: a failed/cancelled row whose worktree has unmerged commits —
   // preserved for human salvage, row untouched.
-  outcome: "removed" | "missing" | "git-remove-failed" | "no-parent-repo" | "has-commits";
+  // main-working-tree: worktree_path points at a repo's MAIN checkout (not a
+  // linked worktree). `git worktree remove` can never delete a main tree, so
+  // retrying every tick is a hot loop. We null the columns instead (the work
+  // is merged; the path was misrecorded) so the row is never revisited.
+  outcome:
+    | "removed"
+    | "missing"
+    | "git-remove-failed"
+    | "no-parent-repo"
+    | "has-commits"
+    | "main-working-tree";
   detail?: string;
 };
 
@@ -65,6 +75,22 @@ function findParentRepo(worktreePath: string): string | null {
   const abs = real.stdout.trim();
   // Parent repo = dir containing .git (strip trailing `/.git`).
   return abs.endsWith("/.git") ? abs.slice(0, -5) : abs;
+}
+
+// True when `path` is the MAIN working tree of its repo (not a linked
+// worktree). For a main tree, `--git-dir` and `--git-common-dir` resolve to
+// the SAME path; for a linked worktree, --git-dir is `.git/worktrees/<name>`
+// while --git-common-dir is the shared `.git`. `git worktree remove` refuses
+// to delete a main tree ("'<path>' is a main working tree"), so the reaper
+// must never attempt it — detect and skip. Any git failure returns false:
+// the caller then falls through to the normal remove path, which fails loudly
+// and is logged, rather than silently nulling a row we couldn't classify.
+function isMainWorktree(path: string): boolean {
+  const gitDir = git(path, ["rev-parse", "--absolute-git-dir"]);
+  if (!gitDir.ok) return false;
+  const commonDir = git(path, ["rev-parse", "--path-format=absolute", "--git-common-dir"]);
+  if (!commonDir.ok) return false;
+  return gitDir.out === commonDir.out;
 }
 
 // Count commits on the worktree's HEAD that are NOT reachable from main —
@@ -136,6 +162,29 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
       // detached, or git data corruption. Surfaces as a persistent row that
       // future detect-leaks work can handle.
       reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "no-parent-repo" });
+      continue;
+    }
+
+    // Guard: worktree_path points at a repo's MAIN checkout, not a linked
+    // worktree. `git worktree remove` can never delete a main tree, so the
+    // unguarded path below would fail every tick and never null the row — a
+    // hot loop (observed 2026-06-11: 4 merged rows pinned to main checkouts of
+    // llm-judge/discord-bridge/conjecture spun the factory tick forever). The
+    // work is merged; the path was misrecorded. Null the columns so the row is
+    // never revisited, and log it for leak-detection.
+    if (isMainWorktree(wt)) {
+      db.run(
+        `UPDATE issues SET worktree_path=NULL, branch=NULL, updated_at=strftime('%s','now') WHERE id=?`,
+        [row.id],
+      );
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worktree-reaper', ?)`,
+        [
+          row.id,
+          JSON.stringify({ event: "worktree-reaped", outcome: "main-working-tree", worktree_path: wt, branch: br }),
+        ],
+      );
+      reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "main-working-tree" });
       continue;
     }
 

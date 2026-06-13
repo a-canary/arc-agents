@@ -198,6 +198,56 @@ test("idempotent: second call is a no-op once the row is cleared", () => {
   expect(second.length).toBe(0);
 });
 
+// --- main-working-tree guard ---
+// Regression for the 2026-06-11 factory hot loop: 4 merged rows had a
+// worktree_path pointing at a repo's MAIN checkout (not a linked worktree).
+// `git worktree remove` can never delete a main tree, so the reaper failed
+// every tick and never nulled the row — an infinite loop. The guard must skip
+// the remove, null the columns (so the row is never revisited), and leave the
+// main checkout AND its branch fully intact.
+
+test("main-working-tree: skips removal, nulls the row, never touches the main checkout", () => {
+  const db = setupDb();
+  // repoDir IS the main working tree. The current branch there is 'main'.
+  insertMergedIssue(db, "iss-main", repoDir, "main");
+
+  // Capture the main checkout's HEAD so we can prove it's untouched.
+  const headBefore = git(repoDir, ["rev-parse", "HEAD"]).out;
+
+  const reaped = reapWorktrees(db);
+
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.issue_id).toBe("iss-main");
+  expect(reaped[0]!.outcome).toBe("main-working-tree");
+
+  // Main checkout dir still exists and HEAD is unchanged.
+  expect(existsSync(repoDir)).toBe(true);
+  expect(git(repoDir, ["rev-parse", "HEAD"]).out).toBe(headBefore);
+  // The 'main' branch was NOT deleted.
+  expect(git(repoDir, ["branch", "--list", "main"]).out).toContain("main");
+
+  // Row columns nulled so the row is never revisited → loop broken.
+  const row = db
+    .query<{ worktree_path: string | null; branch: string | null }, []>(
+      "SELECT worktree_path, branch FROM issues WHERE id='iss-main'",
+    )
+    .get();
+  expect(row?.worktree_path).toBeNull();
+  expect(row?.branch).toBeNull();
+
+  // Event logged with the new outcome.
+  const ev = db
+    .query<{ payload_md: string }, []>(
+      "SELECT payload_md FROM issue_events WHERE issue_id='iss-main' AND kind='note'",
+    )
+    .get();
+  expect(ev?.payload_md).toContain('"outcome":"main-working-tree"');
+
+  // And it's a one-shot: the now-nulled row is not revisited.
+  const second = reapWorktrees(db);
+  expect(second.length).toBe(0);
+});
+
 // --- Trigger (b): prune-after-triage-processes-a-failed-task ---
 // A failed/cancelled row whose worktree carries NO commits ahead of main is
 // scratch — nothing to salvage — so the reaper removes it. A failed/cancelled
