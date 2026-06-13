@@ -75,6 +75,13 @@ gate_typecheck() {
     pass "typecheck" "tsc --noEmit clean"
   else
     fail "typecheck" "bun run typecheck failed"
+    echo "" >&2
+    echo "================================================================" >&2
+    echo "[merge-gate] TYPECHECK FAILED" >&2
+    echo "  project: $PROJECT" >&2
+    echo "  branch:  $BRANCH" >&2
+    echo "  run \`bun run typecheck\` locally to see errors" >&2
+    echo "================================================================" >&2
     return 1
   fi
 }
@@ -117,8 +124,15 @@ gate_test() {
 main() {
   log "Starting merge gate project=$PROJECT branch=$BRANCH HEAD=$HEAD_HASH"
 
-  gate_fixture        || true
-  gate_typecheck      || true
+  # Fail fast: typecheck is cheap and a hard blocker — skip the slow test gate if it fails.
+  gate_fixture   || true
+  if ! gate_typecheck; then
+    echo ""
+    echo "=== SUMMARY ==="
+    printf '  %s\n' "${RESULTS[@]}"
+    echo "  Overall: FAIL (short-circuited after typecheck)"
+    return 1
+  fi
   gate_migration_lint || true
   gate_test           || true
 
