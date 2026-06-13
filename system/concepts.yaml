@@ -1,0 +1,192 @@
+# concepts.yaml — arc-agents core domain concepts
+# Generated from CONTEXT.md glossary
+# 20 concepts, one per entry
+
+concepts:
+  - name: Ledger
+    summary: SQLite database at ~/vault/ledger.db, system of record for all work
+    definition: |
+      The SQLite database at ~/vault/ledger.db that is the system of record for all work.
+      Two tables: issues (rows of work) and issue_events (append-only audit log).
+      Every meaningful state change goes through it.
+    tags: [core, storage, data-model]
+    related: [Issue, Factory, Bookie]
+
+  - name: Issue
+    summary: A row in the ledger representing a unit of work
+    definition: |
+      A row in the ledger representing a unit of work. Has a kind (task, event, reply, prd, prefetch),
+      a source_module (required for event/reply), a type (priority class), and a state
+      (ready → claimed → wip → review → merged, or → blocked / failed / cancelled).
+    tags: [core, data-model, workflow]
+    related: [Ledger, Worker, Claim, Decomposition]
+
+  - name: Worker
+    summary: Short-lived claude invocation that claims one task, executes it, and exits
+    definition: |
+      A short-lived claude invocation that claims one task, executes it, and exits.
+      Workers run inside ephemeral tmux sessions named arc-worker-<rand>.
+      One worker = one tmux session = one claude process = one task.
+      There is no long-lived worker.
+    tags: [core, runtime, execution]
+    related: [Factory, Claim, Worktree, Reap]
+
+  - name: Factory
+    summary: Supervisor daemon that reaps stale workers and spawns fresh ones
+    definition: |
+      The supervisor daemon (bin/factory.ts) that reaps stale worker sessions and spawns
+      fresh ones when the ledger has ready tasks. The factory is always-on; workers are not.
+    tags: [core, runtime, supervisor]
+    related: [Worker, Reap, Ledger]
+
+  - name: Interviewer
+    summary: Ephemeral claude session spawned by factory's fast-pass pool for chat interactions
+    definition: |
+      An ephemeral claude session spawned by the factory's fast-pass pool to service one
+      chat_in row. Same spawn path as workers — there is no long-lived interviewer.
+      The user posts via bin/arc-chat.ts post; the interviewer reads prior turns for the
+      same thread_id from the ledger, replies by creating a chat_out row, exits.
+    tags: [core, runtime, user-facing]
+    related: [Factory, Ledger, Bookie, Intake, HITL_Prompt]
+
+  - name: Bookie
+    summary: Subagent that is the sole authority for ledger writes inside an agent session
+    definition: |
+      A claude subagent (.claude/agents/bookie.md) that is the sole authority for ledger
+      writes (create, update, decompose, event) inside an agent session. Workers and the
+      interviewer delegate every write to the bookie via the Agent tool. Reads bypass the bookie.
+    tags: [core, agent, ledger]
+    related: [Ledger, Worker, Interviewer]
+
+  - name: Claim
+    summary: Atomic state transition ready → claimed performed by a single SQL UPDATE
+    definition: |
+      The atomic transition state=ready → state=claimed performed by a single SQL
+      UPDATE…RETURNING. Race-safe by construction — exactly one worker wins per task.
+      Performed in bash by worker-shell.sh before the agent boots; the only ledger write
+      that does not go through the bookie subagent.
+    tags: [core, concurrency, data-model]
+    related: [Worker, Ledger, Bookie]
+
+  - name: Decomposition
+    summary: Breaking a parent task into N HITL children atomically
+    definition: |
+      The act of breaking a parent task into N HITL children atomically: insert N child
+      issues + set parent.blocked_by=[childIds] + flip parent.state=blocked.
+      Used when an AFK worker discovers a blocker only a human can resolve.
+      Fanout cap = 5; recursion allowed.
+    tags: [core, workflow, HITL]
+    related: [Issue, Concern, HITL_Prompt]
+
+  - name: Worktree
+    summary: Git working copy under ~/worktrees/<repo>-<slug>/ for the lifetime of one task
+    definition: |
+      A git working copy under ~/worktrees/<repo>-<slug>/ created by a worker for the
+      lifetime of one task. Removed by the worker as part of AFK shutdown.
+    tags: [core, git, workspace]
+    related: [Worker, Reap]
+
+  - name: Reap
+    summary: Factory killing a worker tmux session that has exceeded the max-age threshold
+    definition: |
+      The factory's act of killing a worker tmux session that has exceeded the max-age
+      threshold (4hr). Independent of ledger state — a reaped worker's task remains
+      whatever state it last left.
+    tags: [core, runtime, lifecycle]
+    related: [Factory, Worker]
+
+  - name: UX_Module
+    summary: External installable that fulfills the UX Module Contract
+    definition: |
+      An external installable that fulfills the UX Module Contract. Surfaces HITL prompts
+      to the user in some medium (TUI, webui, Discord, email). Declared in
+      ~/.config/arc/config.yaml; liveness via ledger heartbeats.
+    tags: [core, ux, integration]
+    related: [HITL_Prompt, Delivery, Pusher]
+
+  - name: HITL_Prompt
+    summary: Row in hitl_prompts — vocabulary by which the interviewer asks the user something
+    definition: |
+      A row in hitl_prompts. The vocabulary by which the interviewer (or a class=taste worker)
+      asks the user something. Has a kind (ask_text, ask_choice, ask_confirm, notify, show_artifact),
+      a class (taste or impact), and the usual state machine.
+    tags: [core, HITL, user-facing]
+    related: [Interviewer, Delivery, Retract, Anchor]
+
+  - name: Delivery
+    summary: Row in hitl_deliveries tracking render/retract state per (prompt, alive module)
+    definition: |
+      A row in hitl_deliveries. One per (prompt, alive module) pair. Tracks render/retract
+      state and the module-specific external_ref (e.g. Discord message id) used to scrub
+      the surface when another module wins the reply.
+    tags: [core, HITL, routing]
+    related: [HITL_Prompt, UX_Module, Retract]
+
+  - name: Pusher
+    summary: Daemon shipped by async UX modules that watches the ledger for deliveries
+    definition: |
+      A daemon shipped by an async UX module (Discord, email) that watches the ledger for
+      deliveries addressed to its module and forwards them to the remote API.
+      The module's heartbeat liveness is the pusher's heartbeat.
+    tags: [core, ux, async]
+    related: [UX_Module, Delivery]
+
+  - name: Retract
+    summary: Undoing a prompt's render in one medium because the user answered in another
+    definition: |
+      The act of undoing a prompt's render in one medium because the user already answered
+      in another. Modules with can_retract: true edit/delete their external message;
+      others mark state=retracted without action. Triggered by SQL cascade when
+      hitl_prompts.state transitions to answered or user_diverged.
+    tags: [core, HITL, lifecycle]
+    related: [HITL_Prompt, Delivery, UX_Module]
+
+  - name: Anchor
+    summary: (repo, branch, HEAD sha) captured at insert time on a class=taste prompt
+    definition: |
+      The (repo, branch, HEAD sha) captured at insert time on a class=taste prompt.
+      Marks the divergence point: any commit on anchor_branch from anchor_commit..HEAD
+      descends from the speculative answer. Used to drive forward_fix or replay
+      reconciliation when the user picks a non-recommended option.
+    tags: [core, HITL, git]
+    related: [HITL_Prompt]
+
+  - name: Evidence-First
+    summary: Epistemological stance that every input is a thesis until verified by observation
+    definition: |
+      The epistemological stance that every input — from the user, from research, from
+      another agent, from a prior ledger event — is a thesis until verified by observation.
+      Workers and the interviewer never encode an unverified claim into a row body,
+      CHOICES entry, or PR description without naming it as a hypothesis.
+    tags: [core, doctrine, epistemology]
+    related: [Worker, Interviewer]
+
+  - name: Concern
+    summary: Worker's escalation of a decision outside its scope, risky action, or blocker
+    definition: |
+      A worker's escalation of a decision outside its scope, a risky action, or a blocker
+      only a human can resolve. In arc-agents the concern mechanism is HITL Decomposition:
+      the worker writes N HITL children + flips parent to blocked, rather than a separate
+      outbox/concern-*.md file (as in the predecessor ~/agents/ system).
+    tags: [core, workflow, escalation]
+    related: [Decomposition, Worker]
+
+  - name: Pattern
+    summary: Symptom observed across multiple rows, workers, or cycles — a first-class signal
+    definition: |
+      A symptom observed across multiple rows, workers, or cycles. Distinguished from a
+      one-off observation: a single state=failed row is an observation; the same failure
+      shape across N rows is a pattern. Patterns escalate to director-level review via
+      triage-failed, not per-row patching. Root-cause fixes only.
+    tags: [core, pattern, triage]
+    related: [Worker, Factory]
+
+  - name: Drift
+    summary: Active renames or convention-residues where the old name still appears somewhere
+    definition: |
+      Active renames or convention-residues where the old name still appears somewhere in
+      code, comments, columns, or docs. Each entry has a 7-day TTL from the originating
+      decision. After TTL expires, either the residue is gone or the rename is stuck —
+      file a task to track the blocker and keep the entry until cleared.
+    tags: [core, hygiene, naming]
+    related: [Evidence-First]
