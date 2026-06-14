@@ -58,10 +58,15 @@ An issue state from which there is no exit: `merged` and `cancelled`. Once a row
 The checklist a worker runs through before exiting its claude session: drive the task to a terminal state (merged + evidence + pr, or failed + evidence), or decompose it into HITL children (state=blocked). Suggested but not enforced: verify in-scope docs are still accurate; commit as the configured git user; remove the worktree. The Stop hook (`hooks/stop.sh`) reminds the worker of this checklist; it does not enforce stale-doc checks.
 
 ## Worktree
-A git working copy under `~/worktrees/<repo>-<slug>/` created by a worker for the lifetime of one task. Removed by the worker as part of AFK shutdown.
+A git working copy under `~/worktrees/<repo>-<slug>/` created by a worker for the lifetime of one task. Lifecycle:
+1. Worker creates it from `main` on a feature branch.
+2. Worker does work, commits locally.
+3. **Before merging to `main` in git**: worker must push the feature branch to origin. Unpushed commits on a reaped worktree are unrecoverable — `git worktree remove` deletes the `.git` and all commits not reachable from a remote branch.
+4. Worker merges to `main` in git, updates the ledger row to `state=merged`.
+5. The worktree is removed by `worktree-reaper` on the next factory tick.
 
 ## Reap
-The factory's act of killing a worker tmux session that has exceeded the max-age threshold (4hr). Independent of ledger state — a reaped worker's task remains whatever state it last left.
+The factory's act of killing a worker tmux session that has exceeded the max-age threshold (4hr). Independent of ledger state — a reaped worker's task remains whatever state it last left. The reaper also removes worktrees for `merged`/`failed`/`cancelled` rows (see `worktree-reaper.ts`).
 
 ## UX Module
 An external installable that fulfills the [UX Module Contract](docs/adr/0002-ux-module-contract.md). Surfaces HITL prompts to the user in some medium (TUI, webui, Discord, email). Declared in `~/.config/arc/config.yaml`; liveness via ledger heartbeats. The harness owns no transport code — modules pull from the ledger (sync mediums) or ship their own pusher daemon (async mediums).

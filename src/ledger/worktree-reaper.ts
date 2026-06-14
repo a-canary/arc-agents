@@ -3,7 +3,14 @@
 //
 // Three triggers (Aaron's reap policy, 2026-05-27):
 //   (a) prune-after-merge   — state=merged rows: work is in main, worktree is
-//       scratch, always safe to remove.
+//       scratch, safe to remove. The worktree's branch is the feature branch;
+//       its unpushed commits would be lost on worktree remove. Workers must
+//       push the feature branch to origin BEFORE merging the ledger row:
+//       `git push -u origin <branch> && git checkout main && git merge <branch>`.
+//       Observed loss (2026-06): iter20 write-child committed df29124 to a
+//       worktree branch that was reaped before the branch was pushed — commit
+//       unrecoverable. See CONTEXT.md "Worktree" and "Reap" for the full
+//       lifecycle expectation.
 //   (b) prune-after-triage  — state IN (failed,cancelled) rows: the triage/
 //       reconcile flow has finished with them. Remove ONLY if the worktree has
 //       zero commits ahead of main (nothing to salvage). A failed/cancelled
