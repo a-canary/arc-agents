@@ -126,10 +126,15 @@ function behindMain(worktreePath: string): number {
 export function reapWorktrees(db: Db): ReapedWorktree[] {
   // (a) merged + (b) failed/cancelled. blocked stays excluded (decomposition
   // parents). ready/wip/claimed/review are live — never reaped here.
+  // 021: merged rows are gated on hygiene_complete=1 — the hygiene phase must
+  // finish before the worktree is reaped so workers can still emit hygiene
+  // followups in the same session. Failed/cancelled rows have no hygiene phase
+  // and are reaped unconditionally.
   const rows = db
     .query(
       `SELECT id, state, worktree_path, branch FROM issues
-       WHERE state IN ('merged','failed','cancelled') AND worktree_path IS NOT NULL`,
+       WHERE state IN ('merged','failed','cancelled') AND worktree_path IS NOT NULL
+         AND (state != 'merged' OR hygiene_complete = 1)`,
     )
     .all() as { id: string; state: string; worktree_path: string; branch: string | null }[];
 
