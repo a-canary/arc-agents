@@ -116,14 +116,28 @@ resolve_repo() {
     cd "$(dirname "$0")/.." && pwd
     return
   fi
+
+  # Env override takes priority even for hardcoded projects — lets the factory
+  # or a test harness redirect without editing this script.
   local var
   var="ARC_PROJECT_REPO_$(echo "$project" | tr '[:lower:]-' '[:upper:]_')"
   local override="${!var:-}"
   if [ -n "$override" ]; then
     echo "$override"
-  else
-    echo "${HOME}/repos/${project}"
+    return
   fi
+
+  # Hardcoded project → repo mappings (hygiene: keep synced with task brief).
+  # cli-proxy: /home/aaron/repos/cli-proxy
+  # expert-horde: /home/aaron/repos/expert-horde
+  # starlight: /home/aaron/repos/expert-horde  (same checkout, different project name)
+  case "$project" in
+    cli-proxy)     echo "${HOME}/repos/cli-proxy";     return ;;
+    expert-horde)  echo "${HOME}/repos/expert-horde";  return ;;
+    starlight)     echo "${HOME}/repos/expert-horde";  return ;;
+  esac
+
+  echo "${HOME}/repos/${project}"
 }
 
 # Prepend the dir holding a globally-installed `pi` to PATH if `pi` isn't
