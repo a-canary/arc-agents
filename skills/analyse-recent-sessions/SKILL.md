@@ -49,6 +49,6 @@ Do **not** use this skill to debug a single failed row — use `triage-failed` f
 
 ## Termination
 
-- **merged** — analysis report committed (or staged in vault), follow-up rows auto-filed via `ledger followup-emit --analysis <report-path>` (REQUIRED — the verb parses the "Recommended follow-up rows to file" table and emits one `bookie create` per row, so the next worker sees them on the kanban, not in a journal file), evidence rows annotated, PR (if any) merged. The follow-up-emit step is a hard gate: if the table is missing or empty, exit `failed` (the analysis was incomplete) and re-write the table before re-trying the merge.
+<- **merged** — analysis report committed (or staged in vault), follow-up rows filed manually via `bin/ledger.ts hygiene-emit --skill <s> --title <t> --body <path-to-report> [--observed-in-task <id>]` (one call per row; skills: clarify-docs, improve-architecture, trash-retired-files, analyse-recent-sessions; dedups automatic), evidence rows annotated, PR (if any) merged. This step is a hard gate: if there are no follow-up rows to file, the analysis is complete and the task may merge without any hygiene-emit call.
 - **failed** — couldn't find a pattern with N≥3 evidence; record the negative result in evidence (still useful — it rules out a hypothesis) and exit failed.
 - **blocked** — pattern points at a decision only the human can make (e.g. "switch model tier for class=hygiene"); decompose into a HITL child carrying the analysis report and the proposed action.
