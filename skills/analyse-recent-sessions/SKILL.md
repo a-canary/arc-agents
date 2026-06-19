@@ -52,3 +52,9 @@ Do **not** use this skill to debug a single failed row — use `triage-failed` f
 <- **merged** — analysis report committed (or staged in vault), follow-up rows filed manually via `bin/ledger.ts hygiene-emit --skill <s> --title <t> --body <path-to-report> [--observed-in-task <id>]` (one call per row; skills: clarify-docs, improve-architecture, trash-retired-files, analyse-recent-sessions; dedups automatic), evidence rows annotated, PR (if any) merged. This step is a hard gate: if there are no follow-up rows to file, the analysis is complete and the task may merge without any hygiene-emit call.
 - **failed** — couldn't find a pattern with N≥3 evidence; record the negative result in evidence (still useful — it rules out a hypothesis) and exit failed.
 - **blocked** — pattern points at a decision only the human can make (e.g. "switch model tier for class=hygiene"); decompose into a HITL child carrying the analysis report and the proposed action.
+
+## Pattern shortlist (already documented — point future analyses here)
+
+If a new analysis surfaces a pattern that matches one of these, the analysis should cite the existing ADR and recommend either (a) refining the doc with new evidence, or (b) filing a follow-up row for a layered defense. Do **not** re-litigate the design.
+
+- **30-min watchdog vs compute-heavy ML tasks** → `docs/adr/0008-vast-operator-pattern.md` (operator runs the compute on a vast.ai lease; worker lands the finding). The 11-row evidence base (4 successful + 7 eventually-successful) is in `~/vault/agents/director/journal/analysis-1780697137.md` Pattern 3. A new analysis that sees `exit 124` + `tier=compute`-shaped + a KE note mentioning "operator" or "vast" should reference ADR 0008, not re-propose the design.
