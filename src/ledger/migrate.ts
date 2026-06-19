@@ -1105,6 +1105,26 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_blog_origin_task_id ON blog(origin_task_id) WHERE origin_task_id IS NOT NULL");
     },
   },
+  {
+    id: "021_hygiene_complete",
+    // Fix worktree-reaper / hygiene-emit race. After `update --state=merged`, the
+    // reaper could delete the cwd before hygiene-emit fires, leaving workers unable
+    // to log hygiene followups. Gate: merged rows are reaped only when
+    // hygiene_complete=1. The merged update sets hygiene_complete=0; hygiene-emit
+    // flips it to 1 when --observed-in-task is provided. Failed/cancelled rows are
+    // unaffected (no hygiene phase).
+    up: (db) => {
+      const cols = db
+        .query<{ name: string }, []>("PRAGMA table_info(issues)")
+        .all()
+        .map((r) => r.name);
+      if (!cols.includes("hygiene_complete")) {
+        db.exec(
+          "ALTER TABLE issues ADD COLUMN hygiene_complete INTEGER NOT NULL DEFAULT 1 CHECK (hygiene_complete IN (0,1))",
+        );
+      }
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

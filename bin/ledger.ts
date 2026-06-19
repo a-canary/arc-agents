@@ -393,6 +393,11 @@ switch (cmd) {
         sets.push("claimed_by=NULL");
         sets.push("claimed_at=NULL");
       }
+      // 021: gate worktree reaper on hygiene phase. Merged rows are reaped only
+      // after hygiene_complete=1 (set by hygiene-emit). Default 0 on merge.
+      if (state === "merged") {
+        sets.push("hygiene_complete=0");
+      }
     }
     if (evidence) {
       sets.push("evidence_md=?");
@@ -643,6 +648,16 @@ switch (cmd) {
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
       [id, agent, `hygiene-emit skill=${skill}${observed ? ` observed_in=${observed}` : ""}`],
     );
+    // 021: flip hygiene_complete=1 on the parent task so the worktree reaper
+    // can proceed. Only applies when --observed-in-task is provided (workers
+    // use it to tag the task that triggered the hygiene observation).
+    if (observed) {
+      db.run(
+        `UPDATE issues SET hygiene_complete=1, updated_at=strftime('%s','now') WHERE id=? AND hygiene_complete=0`,
+        [observed],
+      );
+    }
+
     out({ id, emitted: true, skill, state: "ready", tier: "hygiene" });
     break;
   }
