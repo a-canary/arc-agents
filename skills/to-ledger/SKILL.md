@@ -14,7 +14,7 @@ Use when the owner wants to file a single ledger row by hand (one task, one PRD,
 | `--kind` | `task`, `chat_in`, `encounter_reply`, `prd` |
 | `--type` | `HITL`, `cron`, `mvp`, `security`, `quality`, `scale`, `efficiency`, `deferred` |
 | `--title` | Free text. Slug minted from this. |
-| `--project` | Repo name (`arc-agents`, `arc-webui`, …). Defaults to `arc-agents`. |
+| `--project` | Repo name (`arc-agents`, `arc-framework`, …). Defaults to `arc-agents`. |
 
 ## Optional
 

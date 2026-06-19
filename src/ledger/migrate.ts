@@ -520,7 +520,7 @@ export const migrations: Migration[] = [
   },
   {
     id: "012_webui_columns",
-    // SLICE-PLAN-arc-webui.md S1. Add columns the webui needs:
+    // Add columns the webui needs:
     //   priority      INT  — numeric priority. Lower = sooner. Backfilled
     //                        from TYPE_PRIORITY (interactive=0…deferred=8)*10
     //                        so /triage-failed and /defer can mutate without

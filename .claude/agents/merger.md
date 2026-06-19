@@ -181,7 +181,7 @@ Return soft-deny ack and stop.
 
 ## Failure → HITL routing
 
-Hard-gate refusals MUST result in a bookie call so the user (via arc-tui/arc-webui) sees the block:
+Hard-gate refusals MUST result in a bookie call so the user (via arc-tui or other UX module) sees the block:
 
 - **Hard gate FAIL** (tdd-green, todo-sweep, merge-gate, author-lint, rebased, branch-clean): `hitl emit --class taste --kind ask_choice --prompt "PR #<num> failed <gate>; how to proceed?" --option retry --option reject --option override-hitl --recommended retry --agent bookie`
 - **slice-guard FAIL** (oversized or multi-area PR): `hitl emit --class taste --kind ask_choice --prompt "PR #<num> failed slice-guard: <detail>; how to proceed?" --option split --option reject --option override-hitl --recommended split --agent bookie`. Default recommendation is **split** — the worker should land the slice in pieces, one PR per thin-vertical. `override-hitl` exists for legit accumulated changes (e.g. squashing 30 mechanical commits) but should be rare.

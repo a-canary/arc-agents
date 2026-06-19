@@ -21,7 +21,7 @@
       "properties": {
         "name": {
           "type": "string",
-          "description": "Unique module id (e.g. arc-webui, arc-tui, arc-discord). Used as module_name in hitl_deliveries.",
+          "description": "Unique module id (e.g. arc-tui, arc-discord). Used as module_name in hitl_deliveries.",
           "pattern": "^[a-z][a-z0-9-]*$"
         },
         "implements": {

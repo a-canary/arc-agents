@@ -5,7 +5,7 @@
 //
 // Config: $ARC_HYGIENE_CONFIG (yaml) or ~/.config/arc/hygiene.yaml
 //   skills: [improve-codebase-architecture, ...]
-//   repos:  [ke, arc-agents, arc-webui, ...]
+//   repos:  [ke, arc-agents, arc-framework, ...]
 //   cadence (optional): { <repo>: { <skill>: <days>, ... }, ... } — skip the
 //     (repo, skill) combo if its last cron task fired within `days` of now.
 //

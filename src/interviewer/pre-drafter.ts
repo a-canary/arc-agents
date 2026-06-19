@@ -1,4 +1,4 @@
-// S8 — Interviewer pre-drafter (SLICE-PLAN-arc-webui.md).
+// Interviewer pre-drafter.
 //
 // On chat-in rows arriving at rank ≤ TOP_N, generate `draft_md` containing a
 // recommended draft plus 2-3 alternatives. Result is cached on the row.
