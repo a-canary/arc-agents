@@ -82,6 +82,15 @@ Factory dispatches on the `pool` column (not `type`). Slot model: 4-any (any poo
 ### S-0002: Skills Location
 `~/repos/arc-agents/skills/`.
 
+### S-0006: commit-review Task Routing
+`source_module=commit-review` (ADR 0011) emits rows that may target any repo in the portfolio (e.g. `project=Conjecture`, `project=arc-agents`). Because `worker-shell.sh` isolates every worker into the **arc-agents** worktree (by deriving the worktree root from `~/repos/arc-agents`), a `commit-review`-sourced task with `project≠arc-agents` will silently run in the wrong repo.
+
+**Decision:** `commit-review` tasks MUST verify the target repo **before** becoming `state=ready`. Two valid patterns:
+1. The `commit-review` module self-validates: emit rows only after confirming the target repo's worktree exists or can be created (preferred — ADR 0011 governs this).
+2. A hygiene pre-flight row: on `hygiene-emit`, the skill checks `source_module=commit-review` and the row's `project` field. If `project ≠ ARC_AGENTS_REPO`, the hygiene row is marked `hitl=1` with a `kind=HITL` class or emits a HITL prompt asking the user to confirm the correct worktree, THEN creates the task with the correct `worktree_path`.
+
+**Current gap (2026-05-27):** Pattern 2 is not implemented. `hygiene-emit` for `source_module=commit-review` observations produces rows in `pool=explore, agent=developer` without verifying the `project` column. Workers subsequently claim these into `arc-agents` worktrees and find nothing to do — forcing a decomposition into a HITL child for director review. The fix requires a CHOICES update to lock the decision and a separate task to implement pattern 2 in `hygiene-dedup.ts` or `bookie-validator.ts`.
+
 ### S-0003: Replay-Shadow as the Confidence Primitive
 Capture one real worker turn → replay against candidate config in an isolated sandbox → diff transcript + ledger writes + quality signals. Run on a corpus (~30) before promoting prompt/template/model/skill-set changes. Generic dev practice, not arc-specific; harness is per-system (`bin/arc-replay.ts` for arc-agents). Skill defines contract, system wires it. Not a substitute for live shadow on concurrency/UX/scale regressions. See `skills/replay-shadow/SKILL.md`.
 
