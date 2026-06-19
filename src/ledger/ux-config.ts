@@ -32,7 +32,7 @@ const moduleSchema = z.object({
   cli: z.string().optional(),
   pusher: z.string().optional(),
   implements: z.array(hitlKind).default([]),
-  renders: z.record(ARTIFACT_TYPE, RENDER_STRATEGY).default({}),
+  renders: z.record(z.string(), RENDER_STRATEGY).default({}),
   can_retract: z.boolean().default(false),
 });
 export type UxModule = z.infer<typeof moduleSchema> & { name: string };
