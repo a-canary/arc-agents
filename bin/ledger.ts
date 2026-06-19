@@ -420,6 +420,16 @@ switch (cmd) {
       sets.push("hitl=?");
       vals.push(Number(hitl));
     }
+    const agentFlag = getFlag("agent-set") ?? (state ? undefined : getFlag("agent"));
+    if (agentFlag !== undefined) {
+      sets.push("agent=?");
+      vals.push(agentFlag);
+    }
+    const projectFlag = getFlag("project");
+    if (projectFlag !== undefined) {
+      sets.push("project=?");
+      vals.push(projectFlag);
+    }
     vals.push(id);
     db.run(`UPDATE issues SET ${sets.join(", ")} WHERE id=?`, vals);
     if (state) {
@@ -1383,7 +1393,7 @@ switch (cmd) {
                                        to stdout for ops/debug; --type-filter
                                        includes the AND type=?2 variant
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
-  update <id> [--state --evidence --pr --local-merged-sha --in-place --branch --worktree --hitl 0|1 --agent]
+  update <id> [--state --evidence --pr --local-merged-sha --in-place --branch --worktree --hitl 0|1 --agent --project]
                                        state=merged requires one of:
                                          --pr <url-or-#num>        gh pr view must say MERGED
                                          --local-merged-sha <sha>  sha must be on origin/main
@@ -1391,6 +1401,9 @@ switch (cmd) {
                                                                   (no PR/sha verification; --evidence
                                                                   is the receipt; mutex with --pr).
                                        Override with ARC_SKIP_MERGE_TRUTH=1.
+                                       --agent/--project patch the row (metadata update, no
+                                       --state). With --state, --agent names the event author;
+                                       use --agent-set to reassign the row's agent alongside a state change.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
