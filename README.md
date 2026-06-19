@@ -1,115 +1,199 @@
 # arc-agents
 
-> **Status: WIP / pre-alpha.** Personal research harness, evolving in public.
-> APIs, schemas, and CLIs will break without notice. Not packaged for external
-> use yet — clone and read if curious; expect rough edges. Assumes a specific
-> `~/vault/`, `~/worktrees/`, `~/.config/arc/` layout on the host.
->
-> **Trading (MS-001):** Alpha. Strategies are personal, proprietary — excluded from all OSS sweeps. Not in this repo.
+> **Status: early-access.** APIs, schemas, and CLIs may break between releases.
+> Designed for single-operator (aaron) on one host — not yet packaged for
+> external use. Clone and read if curious.
 
-Universal agent harness. SQLite ledger + small CLI shims for running ephemeral
-Claude Code workers off a shared message bus. Every state change is an atomic
-SQL transition: no daemons, no IPC, no queues — just rows.
+Universal agent harness. **SQLite ledger as the message bus.** Every unit of
+work — task, chat, human-in-the-loop prompt — is a row. State transitions are
+atomic SQL. No daemons, no IPC, no queues — just the ledger.
 
-See [`CONTEXT.md`](./CONTEXT.md) glossary, [`CHOICES.md`](./CHOICES.md) scoped
-decisions, [`PRD-v1.md`](./PRD-v1.md) product spec, and
+Workers are ephemeral `claude` sessions (interactive panes, not headless
+processes). Each worker boots into its own git worktree, claims one task,
+executes, and exits. The factory daemon supervises: reaps stale sessions,
+spawns fresh ones when work is ready.
+
+See [`CONTEXT.md`](./CONTEXT.md) glossary, [`CHOICES.md`](./CHOICES.md)
+scoped decisions, [`PRD-v1.md`](./PRD-v1.md) product spec, and
 [`docs/adr/`](./docs/adr/) for architecture decisions.
 
-## Stack
+---
 
-Bun + TypeScript. SQLite via `bun:sqlite`. zod for schemas. yaml for config.
-
-## Quickstart
+## Architecture
 
 ```
+User (Discord IRC) ──► arc-chat.ts ──► ledger ──► interviewer (claude pane)
+                                                    │
+                                              hitl_prompts
+                                                    │
+                          UX modules ◄──────────────┘
+                         (arc-webui, arc-tui, …)
+
+Factory daemon ──► worker-shell.sh ──► worker (claude pane) ──► ledger
+     │                      atomic claim (no bookie)
+     │◄─────────────────── reaps stale sessions (4hr+ old)
+     │
+     └───────────────────── spawns fresh workers up to N=4 concurrent
+```
+
+### Core concepts
+
+| Concept | What it is |
+|---|---|
+| **Ledger** | `~/vault/ledger.db` — SQLite WAL. Two tables: `issues` + `issue_events`. Single source of truth for all work. |
+| **Issue** | A row in the ledger. `kind` = task / event / reply. `state` = ready → claimed → wip → review → merged (terminal). |
+| **Worker** | Ephemeral `claude` session in a tmux pane. One task → one worker → one worktree. Exits when done. |
+| **Factory** | Always-on supervisor daemon. Reaps stale tmux sessions, spawns fresh workers. |
+| **Bookie** | Subagent that validates and routes all ledger writes inside a worker session. |
+| **Interviewer** | Ephemeral `claude` pane spawned by factory for new chat threads. Owns Intake (UX_1) and HITL prompts (UX_2). |
+| **Worktree** | Git working copy at `~/worktrees/<repo>-<slug>/`. One per task. Removed on completion. |
+
+### HITL (Human-In-The-Loop)
+
+Tasks that need a human decision emit rows to `hitl_prompts`. UX modules
+(TUI, webui, Discord) surface the prompt to the user. First reply wins;
+losing deliveries retract via SQL cascade.
+
+- **Taste** — 60s timeout, recommended answer, dependent work proceeds speculatively. Workers can emit directly.
+- **Impact** — no timeout, blocks dependents. Requires interviewer (not worker).
+
+### Model policy
+
+Two tiers: **Opus 4.7** for synthesis and design reasoning (hard $10/day cap).
+**minimax-m2.7** for bulk implementation (unlimited, direct API).
+
+---
+
+## Install
+
+```bash
+git clone git@github.com:a-canary/arc-agents.git
+cd arc-agents
 bun install
-bun test
+```
+
+Initialize the ledger (first time only):
+
+```bash
 bun bin/ledger.ts init
+```
+
+Run the factory:
+
+```bash
 bun bin/factory.ts
 ```
 
-> **Agents setting this up on a fresh or non-Linux host (Windows/macOS):** after
-> `bun install`, run the smoke test below before anything else. It is the
-> fastest signal that the harness can actually claim and isolate a task on this
-> OS. If it fails, fix the cause (PATH resolution, worktree paths, and shell
-> assumptions are the usual cross-platform culprits) and — if the fix belongs in
-> the install steps or scripts — open a PR so the next host doesn't hit it.
->
-> ```
-> bun test bin/worker-shell-repo.test.ts   # repo routing + `pi` PATH resolution
-> ```
+Create your first task:
+
+```bash
+bun bin/ledger.ts create task a-title "A description"
+```
+
+List ready tasks:
+
+```bash
+bun bin/ledger.ts list --state ready
+```
+
+Show a task:
+
+```bash
+bun bin/ledger.ts show <id-or-slug>
+```
+
+Update state or add events:
+
+```bash
+bun bin/ledger.ts update <id> --state merged --evidence "Done, PR ready"
+bun bin/ledger.ts event <id> note "Follow-up filed as arc-agents-foo"
+```
 
 Install bins on PATH (after merge to main):
 
-```
-bun link && bun link arc-agents     # registers ledger, wait-for-ledger
-```
-
-## Shipped
-
-- [x] **Ledger core** — `issues` + `issue_events` tables, atomic claim
-      (`UPDATE ... RETURNING`), cascade-on-merge SQL trigger.
-- [x] **CLI** — `ledger {init,create,claim,update,event,list,show,tick,…}`,
-      flag-only `create` per PRD-v1 §4.
-- [x] **Bookie validator** — single authority for ledger writes inside an
-      agent session; subagent at `.claude/agents/bookie.md`.
-- [x] **Factory** — supervisor daemon: reaps workers >4hr old, spawns up to
-      N=4 ephemeral tmux worker sessions when ready tasks exist; sweeps
-      stale claims each tick.
-- [x] **HITL schema** — two-table model (`hitl_prompts` + `hitl_deliveries`
-      + `ux_heartbeats`); first-reply-wins atomic update; loser deliveries
-      cascade to `retracted` via SQL trigger.
-- [x] **UX Module Contract (ADR 0002)** — `arc-ux` verb shim,
-      config-declared verbs + render strategies joined with ledger
-      heartbeats for liveness, `arc-tui` reference module
-      (`heartbeat | list | answer`).
-- [x] **Hygiene cron** — `bin/hygiene-tick.ts`: round-robin repo list,
-      one `type=cron` task per tick, skip-not-stack semantics, optional
-      per-(repo, skill) cooldown via the `cadence` key in
-      `~/.config/arc/hygiene.yaml`.
-- [x] **Skills** — `bookie`, `ke-recall`, `ke-learn`, `claude-afk`,
-      `to-ledger`, `triage-failed`.
-
-## Coming soon
-
-- [ ] **arc-discord** — async push module for HITL prompts.
-- [ ] **Decomposition flow** — AFK workers atomically insert N HITL
-      children + flip parent to `blocked`; fanout cap = 5, recursion ok.
-- [ ] **Render strategies beyond `native`/`ascii-degrade`** —
-      `rasterize-png`, `link-out` for non-graphical surfaces.
-- [ ] **Impact-class HITL backpressure** — interviewer-only gate on
-      `class=impact` prompts; workers must decompose instead.
-- [ ] **Public packaging** — split into installable plugin + bootstrap
-      interview; today everything assumes the host's `~/vault/`,
-      `~/worktrees/`, `~/.config/arc/` layout.
-- [ ] **Docs pass** — runnable quickstart, contributor guide, ADR index.
-
-## Layout
-
-```
-bin/         executable entrypoints (ledger, factory, arc-chat, arc-ux, arc-tui, hygiene-tick, …)
-src/        library code (ledger/, profiles/)
-profiles/   role JSON (developer, director, admin)
-skills/     skill definitions
-docs/adr/   architecture decisions
-.private/   gitignored local state
+```bash
+bun link && bun link arc-agents
 ```
 
-External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine),
-`~/vault/agents/<role>/` (memory, inbox, journal, outbox),
-`~/worktrees/<repo>-<slug>/` (worker scratch).
+Registers `ledger` and `wait-for-ledger` commands.
 
-## Hard constraints (excerpted from `CHOICES.md`)
+---
 
-- Interactive Claude panes only — no `claude -p` headless subprocesses
-  (`M-0002`, billing-driven).
-- One SQL `UPDATE ... RETURNING` decides every race — no locks, no retry
-  loops (`G-0002`).
-- All ledger writes route through the bookie subagent, except the
-  bootstrap claim in `worker-shell.sh`.
-- No symlinks during migrations (`G-0007`); move files, fix refs.
-- Vault overrides repo where both exist; vault never pushed (`A-0004`).
-- TypeScript default (`G-0008`), Bun runtime.
+## Test
+
+```bash
+bun test
+bun run typecheck
+```
+
+Run the merge gate:
+
+```bash
+./bin/merge-gate.sh
+```
+
+---
+
+## Project layout
+
+```
+bin/          CLI entrypoints (ledger, factory, arc-chat, arc-ux, arc-tui, …)
+src/          library code (ledger/, profiles/)
+profiles/     role JSON (developer, director, admin) — context, boot skills, model
+skills/       skill definitions (bookie, ke-recall, ke-learn, spawn, …)
+docs/adr/     architecture decision records
+```
+
+External state — not in the repo:
+
+```
+~/vault/ledger.db     ← the ledger
+~/vault/ke/           ← knowledge engine (FTS5 + Qdrant)
+~/vault/agents/<role>/  ← per-role memory, inbox, journal, outbox
+~/worktrees/<repo>-<slug>/  ← worker scratch (one per task)
+~/.config/arc/       ← UX module config
+```
+
+---
+
+## Status
+
+### Shipped
+
+- [x] Ledger core (`issues` + `issue_events`, atomic UPDATE…RETURNING claim,
+      cascade-on-merge trigger)
+- [x] CLI (`ledger {init,create,claim,update,event,list,show,tick,…}`)
+- [x] Bookie validator (sole authority for ledger writes inside agent sessions)
+- [x] Factory (supervisor: reaps stale workers, spawns up to N=4 ephemeral
+      tmux sessions for ready tasks)
+- [x] HITL schema (two-table: `hitl_prompts` + `hitl_deliveries`,
+      first-reply-wins, SQL-cascade retract)
+- [x] UX Module Contract (ADR 0002 — template pattern, pluggable modules)
+- [x] arc-tui and arc-webui reference implementations
+- [x] Hygiene cron (`bin/hygiene-tick.ts`)
+- [x] Skills (bookie, ke-recall, ke-learn, claude-afk, spawn, to-ledger,
+      triage-failed, diff-review)
+
+### Coming soon
+
+- [ ] `arc-discord` — async pusher for HITL prompts
+- [ ] Decomposition flow (workers write HITL children + flip parent to blocked)
+- [ ] Public packaging (bootstrap + installable plugin)
+- [ ] Full contributor guide
+
+---
+
+## Key docs
+
+- [`CONTEXT.md`](./CONTEXT.md) — domain glossary (Ledger, Issue, Worker,
+  Factory, Bookie, HITL, …)
+- [`CHOICES.md`](./CHOICES.md) — scoped decisions (M–mission, A–arch,
+  G–design, S–skills, D–data, I–implementation)
+- [`PRD-v1.md`](./PRD-v1.md) — product spec
+- [`PRD-arc-webui.md`](./PRD-arc-webui.md) — webui slice spec
+- [`docs/adr/`](./docs/adr/) — architecture decision records
+
+---
 
 ## License
 
