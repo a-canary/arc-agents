@@ -1,5 +1,5 @@
 import { describe, test, expect } from "bun:test";
-import { mkdtempSync, writeFileSync, chmodSync, mkdirSync, readFileSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, chmodSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
@@ -26,24 +26,28 @@ function extractFn(name: string): string {
 // Run gate_merge_gate by sourcing the function against a stub merge-gate.sh.
 function runGate(stubBody: string): string {
   const dir = mkdtempSync(join(tmpdir(), "pre-merge-test-"));
-  const bin = join(dir, "bin");
-  mkdirSync(bin);
-  const stub = join(bin, "merge-gate.sh");
-  writeFileSync(stub, `#!/bin/bash\n${stubBody}\n`);
-  chmodSync(stub, 0o755);
-  const fnBody = extractFn("gate_merge_gate");
-  const driver = [
-    `BIN='${bin}'`,
-    `PROJECT='${dir}'`,
-    `pass() { echo "PASS:$1:$2"; }`,
-    `fail() { echo "FAIL:$1:$2"; }`,
-    `skip() { echo "SKIP:$1:$2"; }`,
-    `log() { :; }`,
-    fnBody,
-    `gate_merge_gate`,
-  ].join("\n");
-  const res = spawnSync("bash", ["-c", driver], { encoding: "utf8" });
-  return res.stdout + res.stderr;
+  try {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const stub = join(bin, "merge-gate.sh");
+    writeFileSync(stub, `#!/bin/bash\n${stubBody}\n`);
+    chmodSync(stub, 0o755);
+    const fnBody = extractFn("gate_merge_gate");
+    const driver = [
+      `BIN='${bin}'`,
+      `PROJECT='${dir}'`,
+      `pass() { echo "PASS:$1:$2"; }`,
+      `fail() { echo "FAIL:$1:$2"; }`,
+      `skip() { echo "SKIP:$1:$2"; }`,
+      `log() { :; }`,
+      fnBody,
+      `gate_merge_gate`,
+    ].join("\n");
+    const res = spawnSync("bash", ["-c", driver], { encoding: "utf8" });
+    return res.stdout + res.stderr;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
 }
 
 // TS re-implementation of gate_api_key_guard patterns for unit testing.
