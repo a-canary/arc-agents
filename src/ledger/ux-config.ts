@@ -2,12 +2,62 @@
 // See ADR 0002 (U-0001, U-0005). Config declares verbs + render strategies;
 // ledger heartbeats hold liveness. This module is the join point.
 
+import { homedir } from "node:os";
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { z } from "zod";
 import type { Database } from "bun:sqlite";
 import { hitlKind, type HitlKind } from "./hitl-schemas";
 import type { ValidationError } from "./bookie-validator";
+
+/**
+ * Resolve ARC_VAULT_HOME following XDG Base Directory Specification.
+ *
+ * Resolution order (first non-empty wins):
+ *   1. $ARC_VAULT_HOME  (explicit override, per-project)
+ *   2. $XDG_DATA_HOME/arc/vault  (XDG_DATA_HOME defaults to ~/.local/share)
+ *   3. ~/.local/share/arc/vault
+ *   4. ~/vault  (legacy fallback — preserves existing installations)
+ *
+ * Rationale: vault content (notes, evidence, run data) belongs in XDG_DATA_HOME,
+ * not mixed with config (XDG_CONFIG_HOME) or runtime/cache (XDG_CACHE_HOME).
+ *
+ * Cross-repo convention (I-0012):
+ *   arc-agents   → ARC_VAULT_HOME / XDG_DATA_HOME/arc/vault
+ *   ke           → KE_VAULT_HOME  / XDG_DATA_HOME/ke/vault
+ *   pipeliner    → PIPELINER_VAULT_HOME / XDG_DATA_HOME/pipeliner/vault
+ *   cli-proxy    → CLI_PROXY_VAULT_HOME / XDG_DATA_HOME/cli-proxy/vault
+ */
+export function resolveVaultHome(): string {
+  const home = homedir();
+  if (process.env.ARC_VAULT_HOME) return process.env.ARC_VAULT_HOME;
+  const xdg = process.env.XDG_DATA_HOME ?? `${home}/.local/share`;
+  const xdgVault = `${xdg}/arc/vault`;
+  if (existsSync(xdgVault)) return xdgVault; // early exit if XDG path already populated
+  const legacy = `${home}/vault`;
+  if (existsSync(legacy) && !existsSync(xdgVault)) return legacy; // prefer existing legacy
+  return xdgVault;
+}
+
+/**
+ * Resolve the ledger SQLite path.
+ *
+ * Resolution order:
+ *   1. $ARC_LEDGER_DB   (explicit override — full path)
+ *   2. resolveVaultHome()/ledger.db
+ *   3. ~/vault/ledger.db  (legacy fallback)
+ *
+ * Note: the legacy fallback is intentionally the last resort, not the default.
+ * Existing installations without XDG migration will silently get ~/vault/ledger.db
+ * only when neither ARC_LEDGER_DB nor ARC_VAULT_HOME is set and neither the
+ * XDG path nor the legacy path exists — meaning first-run uses the XDG path.
+ */
+export function resolveLedgerDb(): string {
+  if (process.env.ARC_LEDGER_DB) return process.env.ARC_LEDGER_DB;
+  const vaultHome = resolveVaultHome();
+  return `${vaultHome}/ledger.db`;
+}
+
 
 const RENDER_STRATEGY = z.enum([
   "native",
