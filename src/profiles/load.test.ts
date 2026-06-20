@@ -50,3 +50,42 @@ test("sprint profile: worktree=true", () => {
 test("triage profile: exec_cli_alias === minimax-build", () => {
   expect(loadProfile("triage").exec_cli_alias).toBe("minimax-build");
 });
+
+// render-prompt's catch discriminates ENOENT (no profile → fallback) from
+// parse/schema errors (deploy defect → fail loud). Pin that discriminant.
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+
+test("missing profile throws an ENOENT-coded error (→ caller falls back)", () => {
+  const root = mkdtempSync(join(tmpdir(), "prof-"));
+  try {
+    mkdirSync(join(root, "profiles"));
+    let code: string | undefined;
+    try {
+      loadProfile("nope", root);
+    } catch (e) {
+      code = (e as NodeJS.ErrnoException).code;
+    }
+    expect(code).toBe("ENOENT");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});
+
+test("malformed profile throws a NON-ENOENT error (→ caller fails loud)", () => {
+  const root = mkdtempSync(join(tmpdir(), "prof-"));
+  try {
+    mkdirSync(join(root, "profiles"));
+    writeFileSync(join(root, "profiles", "bad.json"), "{ not valid json");
+    let code: string | undefined = "UNSET";
+    try {
+      loadProfile("bad", root);
+    } catch (e) {
+      code = (e as NodeJS.ErrnoException).code;
+    }
+    expect(code).not.toBe("ENOENT");
+  } finally {
+    rmSync(root, { recursive: true, force: true });
+  }
+});

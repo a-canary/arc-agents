@@ -806,8 +806,13 @@ switch (cmd) {
       const profile = loadProfile(row.agent);
       boot_skills = profile.boot_skills;
       stop_skills = profile.stop_skills;
-    } catch {
-      // no profile for this agent — fallback handled in templates
+    } catch (e) {
+      // Missing file (chat/bookie/unset have no profile) → fall back to
+      // AGENT_TABLE. But a malformed/schema-invalid *committed* profile is a
+      // deploy defect; fail loud rather than silently demote every worker —
+      // that silent degrade is the exact failure this single-source change
+      // exists to prevent.
+      if ((e as NodeJS.ErrnoException)?.code !== "ENOENT") throw e;
     }
     process.stdout.write(
       renderSystemPrompt({
