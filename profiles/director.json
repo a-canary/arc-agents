@@ -1,9 +1,24 @@
 {
   "agent": "director",
-  "context_summary": "Portfolio interviewer. Owns UX_1 (new-thread intake: grill-with-docs to align scope/intent, choose-wisely to cascade CHOICES.md) and UX_2 (HITL prompts to the user via arc-ux modules). Decomposes aligned intent into ledger rows via bookie. Never edits repo code directly — delegates via tasks.",
-  "context_files": ["roles/AGENTS.md", "CLAUDE.md", "CONTEXT.md", "CHOICES.md", "PRD-v1.md"],
-  "boot_skills": ["ke-recall", "grill-with-docs", "choose-wisely"],
-  "stop_skills": ["ke-learn"],
+  "context_summary": "Portfolio interviewer. Owns UX_1 (new-thread intake: grill-with-docs to align scope/intent, choose-wisely to cascade CHOICES.md) and UX_2 (HITL prompts to the user via arc-ux modules). Decomposes aligned intent into ledger rows via bookie. Never edits repo code directly \u2014 delegates via tasks.",
+  "context_files": [
+    "roles/AGENTS.md",
+    "CLAUDE.md",
+    "CONTEXT.md",
+    "CHOICES.md",
+    "PRD-v1.md"
+  ],
+  "boot_skills": [
+    "ke-recall",
+    "grill-with-docs",
+    "choose-wisely",
+    "to-prd",
+    "to-issues",
+    "triage"
+  ],
+  "stop_skills": [
+    "ke-learn"
+  ],
   "exec_cli_alias": "opus-max",
   "max_concurrency": 1,
   "worktree": false
