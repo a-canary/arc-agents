@@ -171,3 +171,18 @@ describe("renderSystemPrompt (agent-keyed)", () => {
     expect(p).toContain("prior-cycle handoffs");
   });
 });
+
+describe("renderSystemPrompt handoff (P1 resume)", () => {
+  const base = { worker: "arc-worker-i-abc", task: "i-xyz", kind: "task", agent: "developer", pool: "build" };
+
+  it("renders a Prior work section when handoff is provided", () => {
+    const p = renderSystemPrompt({ ...base, handoff: "did step 1; next do step 2" });
+    expect(p).toContain("## Prior work — resume from here");
+    expect(p).toContain("did step 1; next do step 2");
+  });
+
+  it("omits the section when handoff is absent or blank", () => {
+    expect(renderSystemPrompt({ ...base })).not.toContain("## Prior work");
+    expect(renderSystemPrompt({ ...base, handoff: "   " })).not.toContain("## Prior work");
+  });
+});

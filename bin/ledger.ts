@@ -779,11 +779,20 @@ switch (cmd) {
     const worker = getFlag("worker") ?? "unknown";
     const db = openWithMigrate(getFlag("db"));
     const row = db
-      .query<{ kind: string; agent: string; pool: string; thread_id: string | null }, [string]>(
-        `SELECT kind, agent, pool, thread_id FROM issues WHERE id=?`,
+      .query<{ kind: string; agent: string; pool: string; thread_id: string | null; state: string; evidence_md: string | null }, [string]>(
+        `SELECT kind, agent, pool, thread_id, state, evidence_md FROM issues WHERE id=?`,
       )
       .get(id);
     if (!row) die(`no issue ${id}`);
+    // Handoff resume: a non-terminal row that already carries evidence_md was
+    // worked before (worker died/blocked and left a handoff via /handoff or
+    // `update --evidence`). Surface it so the re-claiming worker continues
+    // instead of restarting. Terminal rows shouldn't be re-rendered, but guard
+    // anyway so a stale merged/cancelled row never leaks evidence into a prompt.
+    const handoff =
+      row.evidence_md && row.state !== "merged" && row.state !== "cancelled"
+        ? row.evidence_md
+        : undefined;
     // Thread replay: for chat threads, include prior turns so the cold
     // interviewer has conversational continuity. SQL filter + speaker mapping
     // live together in src/worker/thread-context.ts.
@@ -797,6 +806,7 @@ switch (cmd) {
         task: id,
         thread_id: row.thread_id ?? undefined,
         thread_replay,
+        handoff,
       }),
     );
     break;

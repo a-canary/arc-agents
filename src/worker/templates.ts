@@ -134,6 +134,12 @@ export type RenderInput = {
    * merges cleanly when this branch FF-merges to main.
    */
   brief?: string;
+  /**
+   * Prior-work handoff (the row's evidence_md) surfaced when a task is
+   * re-claimed after a worker died or blocked mid-task. Rendered as a
+   * "## Prior work" section so the cold worker resumes instead of restarting.
+   */
+  handoff?: string;
 };
 
 export function renderSystemPrompt(input: RenderInput): string {
@@ -150,6 +156,9 @@ export function renderSystemPrompt(input: RenderInput): string {
   const briefSection = input.brief?.trim()
     ? `## Brief\n\n${input.brief.trim()}`
     : "";
+  const handoffSection = input.handoff?.trim()
+    ? `## Prior work — resume from here\n\nThis task was worked before. Continue it; do not restart.\n\n${input.handoff.trim()}`
+    : "";
   return [
     header,
     frame,
@@ -157,6 +166,7 @@ export function renderSystemPrompt(input: RenderInput): string {
     skillsLine,
     ...doctrine,
     input.thread_replay ?? "",
+    handoffSection,
     briefSection,
     ...(t.extras ?? []),
   ]
