@@ -100,6 +100,8 @@ Takes raw `issues` + `issue_events`, returns `{ hitl: Thread[]; afk: DAG }`. Enc
 **2. `dag-layout` (pure)**
 Takes DAG nodes/edges, returns positioned coordinates. Layered Sugiyama with in-flight center, completed left, pending right. Cache keyed by topology hash; invalidate only on add/remove/state-transition events.
 
+> ⚠️ **Design spec blocker (HITL):** `webui-afk-dag-panel-d3-dag-sugiyama-layo` (body_md empty, type=HITL) blocks the S6 implementation. Open questions: column mapping, window scoping (last-10 completed vs 1-deep parents), zoom/pan target (canvas vs overlay), hover content, click target (HITL panel vs modal), artifact gallery location/lazy-vdom strategy. See `s6-afk-dag-panel-write-design-spec` for the full design spec template and acceptance criteria.
+
 **3. `draft-policy` (pure)**
 Takes ledger state + current top-3, returns `{ regenerate: ChatInRow[]; keep: ChatInRow[] }`. Rules: rank change triggers regen of displaced rows; on-focus generation for top-2/top-3 when missing; cached draft considered fresh until rank shuffles.
 

@@ -59,6 +59,8 @@ Sugiyama layout. Zoom/pan. Hover 10-word. Click node → flips to HITL with thre
 **Role:** developer
 **Depends:** S2, S4
 
+> ⚠️ **Blocked on HITL design spec:** `webui-afk-dag-panel-d3-dag-sugiyama-layo` (empty body_md, type=HITL) must be resolved before S6 implementation starts. Open decisions: column mapping, window scoping, zoom/pan target, hover content, click target, artifact gallery strategy. See `s6-afk-dag-panel-write-design-spec` for the spec template.
+
 ### S7 — Pause/defer wiring
 Pause button on AFK node → `state=paused`. Defer button → `priority -= 100`, rejoin queue. Waiter respects both.
 **Role:** developer
