@@ -464,3 +464,70 @@ test("(c) backstop is a no-op on an empty/absent root", () => {
   });
   expect(res.length).toBe(0);
 });
+
+// --- P0b: merged worktree with uncommitted changes must not be force-deleted.
+test("reapWorktrees PRESERVES a merged worktree with uncommitted changes (no data loss)", () => {
+  const db = setupDb();
+  insertMergedIssue(db, "iss-dirty", worktreeDir, BRANCH);
+  // Uncommitted edit in the merged worktree — `-f -f` would force-delete it.
+  writeFileSync(join(worktreeDir, "scratch.txt"), "unsaved work\n");
+
+  const reaped = reapWorktrees(db);
+  const mine = reaped.find((r) => r.issue_id === "iss-dirty");
+  expect(mine?.outcome).toBe("dirty-uncommitted");
+  expect(existsSync(worktreeDir)).toBe(true);
+  // Row left intact so a later clean reap can still find & remove it.
+  const row = db
+    .query<{ worktree_path: string | null }, [string]>("SELECT worktree_path FROM issues WHERE id=?")
+    .get("iss-dirty");
+  expect(row?.worktree_path).toBe(worktreeDir);
+});
+
+// --- P0a: backstop must reap orphans owned by a DIFFERENT repo than parentRepo.
+test("(c) backstop reaps an orphan worktree owned by a different repo than parentRepo", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  // A second, independent repo whose worktree lands under the same root.
+  const repo2 = join(workDir, "repo2");
+  spawnSync("git", ["init", "-q", "-b", "main", repo2], { encoding: "utf8" });
+  git(repo2, ["config", "user.email", "t@e.com"]);
+  git(repo2, ["config", "user.name", "t"]);
+  writeFileSync(join(repo2, "README"), "seed2\n");
+  git(repo2, ["add", "README"]);
+  git(repo2, ["commit", "-q", "-m", "seed2"]);
+  const dir = join(root, "foreign");
+  const r = git(repo2, ["worktree", "add", "-q", dir, "-b", "foreign-br"]);
+  if (!r.ok) throw new Error(`foreign wt add failed: ${r.out}`);
+
+  // parentRepo is the FIRST repo; the foreign dir is not its worktree. The old
+  // code ran `git -C repoDir worktree remove <foreign>` → fail → never reaped.
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+  });
+  const mine = res.find((x) => x.worktree_path === dir);
+  expect(mine?.outcome).toBe("removed");
+  expect(existsSync(dir)).toBe(false);
+});
+
+// --- P0b: backstop preserves an orphan with uncommitted (0-commit) changes.
+test("(c) backstop PRESERVES an aged, no-row orphan that has only uncommitted changes", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = addWorktreeUnder(root, "orphan-dirty", "orphan-dirty-br");
+  writeFileSync(join(dir, "wip.txt"), "uncommitted, untracked\n"); // 0 commits ahead
+
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+  });
+  const mine = res.find((x) => x.worktree_path === dir);
+  expect(mine?.outcome).toBe("kept-has-commits");
+  expect(existsSync(dir)).toBe(true);
+});

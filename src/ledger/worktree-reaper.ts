@@ -59,6 +59,9 @@ export type ReapedWorktree = {
     | "git-remove-failed"
     | "no-parent-repo"
     | "has-commits"
+    // dirty-uncommitted: working tree has uncommitted/untracked changes that
+    // `worktree remove -f -f` would force-delete. Preserved for human review.
+    | "dirty-uncommitted"
     | "main-working-tree";
   detail?: string;
 };
@@ -121,6 +124,17 @@ function behindMain(worktreePath: string): number {
   if (!r.ok) return 0;
   const n = parseInt(r.out.trim(), 10);
   return Number.isFinite(n) ? n : 0;
+}
+
+// True when the worktree has uncommitted or untracked changes (`git status
+// --porcelain` non-empty). `git worktree remove -f -f` force-deletes these,
+// so the reaper must skip a dirty tree even when the row is merged — a merged
+// row only means the BRANCH landed, not that scratch edits on top were saved.
+// Any git failure returns true (can't prove clean → preserve).
+function hasUncommittedChanges(worktreePath: string): boolean {
+  const r = git(worktreePath, ["status", "--porcelain"]);
+  if (!r.ok) return true;
+  return r.out.trim() !== "";
 }
 
 export function reapWorktrees(db: Db): ReapedWorktree[] {
@@ -200,6 +214,14 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
       continue;
     }
 
+    // Uncommitted/untracked changes would be force-deleted by `-f -f`. Preserve
+    // for human review — a merged row only proves the branch landed, not that
+    // working-tree edits on top were saved.
+    if (hasUncommittedChanges(wt)) {
+      reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "dirty-uncommitted" });
+      continue;
+    }
+
     // `-f -f` overrides the claude-agent lock that some worktrees carry.
     const rm = git(parent, ["worktree", "remove", "-f", "-f", wt]);
     if (!rm.ok) {
@@ -271,7 +293,9 @@ export type BackstopOpts = {
 };
 
 export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResult[] {
-  const { worktreesRoot, parentRepo, maxAgeSec } = opts;
+  // parentRepo (opts) intentionally unused: removal resolves each dir's OWN
+  // owner repo via findParentRepo — `~/worktrees` is multi-repo.
+  const { worktreesRoot, maxAgeSec } = opts;
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const results: BackstopResult[] = [];
 
@@ -303,8 +327,12 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
     }
     if (!st.isDirectory()) continue;
 
-    // Confirm git actually manages this as a worktree before touching it.
-    if (!findParentRepo(dir)) {
+    // Confirm git manages this as a worktree AND resolve its OWN parent repo.
+    // `~/worktrees` holds worktrees of many repos, so the remove must run in
+    // each dir's owner, not a single fixed parentRepo (old bug: foreign-repo
+    // orphans never reaped because `git -C <arc-agents> worktree remove` fails).
+    const dirParent = findParentRepo(dir);
+    if (!dirParent) {
       results.push({ worktree_path: dir, outcome: "not-a-worktree" });
       continue;
     }
@@ -335,7 +363,13 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
       continue;
     }
 
-    const rm = git(parentRepo, ["worktree", "remove", "-f", "-f", dir]);
+    // Uncommitted/untracked changes → never force-delete; preserve for salvage.
+    if (hasUncommittedChanges(dir)) {
+      results.push({ worktree_path: dir, outcome: "kept-has-commits", detail: "uncommitted changes" });
+      continue;
+    }
+
+    const rm = git(dirParent, ["worktree", "remove", "-f", "-f", dir]);
     if (!rm.ok) {
       results.push({ worktree_path: dir, outcome: "kept-too-young", detail: `git-remove-failed: ${rm.out}` });
       continue;
