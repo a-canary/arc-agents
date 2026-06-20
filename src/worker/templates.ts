@@ -140,6 +140,14 @@ export type RenderInput = {
    * "## Prior work" section so the cold worker resumes instead of restarting.
    */
   handoff?: string;
+  /**
+   * Skills from the agent's profile (profiles/<agent>.json). When present these
+   * are the single source of truth — boot_skills overrides AGENT_TABLE's
+   * opening_skills, stop_skills renders a "run before exit" line. Omitted for
+   * agents that have no profile (chat, bookie, unset) → AGENT_TABLE fallback.
+   */
+  boot_skills?: string[];
+  stop_skills?: string[];
 };
 
 export function renderSystemPrompt(input: RenderInput): string {
@@ -147,8 +155,15 @@ export function renderSystemPrompt(input: RenderInput): string {
   const frame = readMd(`frames/${t.frame}.md`);
   const overlays = t.overlays.map((o) => readMd(`overlays/${o}.md`));
   const doctrine = t.doctrine.map((d) => readMd(d));
-  const skillsLine = t.opening_skills.length
-    ? `Opening skills (load on first turn): ${t.opening_skills.map((s) => `/${s}`).join(", ")}.`
+  // Profile is authoritative when supplied; AGENT_TABLE is the fallback for
+  // profile-less agents. Keeps the prompt in sync with hooks/session-start.sh,
+  // which prints the same profile.boot_skills.
+  const openingSkills = input.boot_skills?.length ? input.boot_skills : t.opening_skills;
+  const skillsLine = openingSkills.length
+    ? `Opening skills (load on first turn): ${openingSkills.map((s) => `/${s}`).join(", ")}.`
+    : "";
+  const closingSkillsLine = input.stop_skills?.length
+    ? `Closing skills (run before exit): ${input.stop_skills.map((s) => `/${s}`).join(", ")}.`
     : "";
   const header = input.thread_id
     ? `kind=${input.kind}; agent=${input.agent}; pool=${input.pool}; worker=${input.worker}; task=${input.task}; thread=${input.thread_id}; ephemeral.`
@@ -164,6 +179,7 @@ export function renderSystemPrompt(input: RenderInput): string {
     frame,
     ...overlays,
     skillsLine,
+    closingSkillsLine,
     ...doctrine,
     input.thread_replay ?? "",
     handoffSection,
