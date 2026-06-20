@@ -186,3 +186,25 @@ describe("renderSystemPrompt handoff (P1 resume)", () => {
     expect(renderSystemPrompt({ ...base, handoff: "   " })).not.toContain("## Prior work");
   });
 });
+
+describe("renderSystemPrompt profile skills (P2b: profile is source of truth)", () => {
+  const base = { worker: "arc-worker-i-abc", task: "i-xyz", kind: "task", agent: "developer", pool: "build" };
+
+  it("boot_skills override AGENT_TABLE opening skills", () => {
+    const p = renderSystemPrompt({ ...base, boot_skills: ["tdd", "coding-standards"] });
+    expect(p).toContain("Opening skills (load on first turn): /tdd, /coding-standards.");
+    // AGENT_TABLE.developer skill not in the profile must not leak.
+    expect(p).not.toContain("/triage-failed");
+  });
+
+  it("renders a Closing skills line from stop_skills", () => {
+    const p = renderSystemPrompt({ ...base, stop_skills: ["ke-learn", "simplify"] });
+    expect(p).toContain("Closing skills (run before exit): /ke-learn, /simplify.");
+  });
+
+  it("falls back to AGENT_TABLE when no profile skills are passed", () => {
+    const p = renderSystemPrompt({ ...base });
+    expect(p).toContain("Opening skills");
+    expect(p).not.toContain("Closing skills");
+  });
+});

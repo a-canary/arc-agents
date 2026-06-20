@@ -797,6 +797,18 @@ switch (cmd) {
     // interviewer has conversational continuity. SQL filter + speaker mapping
     // live together in src/worker/thread-context.ts.
     const thread_replay = row.thread_id ? loadThreadContext(db, row.thread_id, id) : "";
+    // Profile skills are the single source of truth (also printed by
+    // hooks/session-start.sh). Agents without a profile (chat/bookie/unset)
+    // throw here → leave undefined → templates falls back to AGENT_TABLE.
+    let boot_skills: string[] | undefined;
+    let stop_skills: string[] | undefined;
+    try {
+      const profile = loadProfile(row.agent);
+      boot_skills = profile.boot_skills;
+      stop_skills = profile.stop_skills;
+    } catch {
+      // no profile for this agent — fallback handled in templates
+    }
     process.stdout.write(
       renderSystemPrompt({
         kind: row.kind,
@@ -807,6 +819,8 @@ switch (cmd) {
         thread_id: row.thread_id ?? undefined,
         thread_replay,
         handoff,
+        boot_skills,
+        stop_skills,
       }),
     );
     break;
