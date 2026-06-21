@@ -28,14 +28,18 @@ Universal agent harness. Ledger-dispatched, interactive-pane runtime. Replaces `
 
 **arc- prefix** for user-owned repos: `arc-agents`. Third-party repos keep upstream name.
 
-### A-2. Three roles
-| Role | Scope | Workspace |
-|---|---|---|
-| **Director** | Portfolio orchestration, user comms, delegation. Sole human interface. | `~/vault/agents/director/` |
-| **Developer** | Code execution within a repo's CHOICES.md. Spawned per worktree. | `~/worktrees/<repo>-<slug>/` |
-| **Admin** | System, infra, secrets, security. Watches others for leaks/runaway-spend. | `~/vault/agents/admin/` |
+### A-2. Five profiles
+Five dispatch profiles (`profiles/*.json`):
 
-Agent selection by cwd priority:
+| Profile | Scope | Workspace |
+|---|---|---|
+| **Director** | Portfolio interviewer; new-thread intake (grill-with-docs), HITL prompts. Sole human interface. | `~/vault/agents/director/` |
+| **Developer** | Implements ledger-dispatched tasks within a repo's CHOICES.md. Spawned per worktree. | `~/worktrees/<repo>-<slug>/` |
+| **Admin** | System health: cron, vault backup, ledger compact, budget rotation, KE reindex. Watches for leaks/runaway-spend. | `~/vault/agents/admin/` |
+| **Sprint** | Re-entrant thin-vertical supervisor; drives ONE slice to evidence-backed done. | `~/worktrees/<repo>-<slug>/` |
+| **Triage** | Drains `*_unset` ledger rows; batch-assigns {tier,pool,agent} via bookie. | (ledger-side, no worktree) |
+
+Three profiles (admin · director · developer) are also session **roles** selected by cwd; sprint + triage are dispatch-only (assigned by ledger pool, not cwd):
 1. `~/vault/agents/admin/` → Admin
 2. `~/vault/agents/director/` → Director
 3. `~/worktrees/<repo>-*/` → Developer

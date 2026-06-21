@@ -25,8 +25,15 @@ Workers are one-shot tmux sessions, not long-lived panes. `bin/factory.ts` super
 ### A-0001: Three-Tier Layout
 `~/repos/` (canonical) · `~/worktrees/<repo>-<slug>/` (dev) · `~/vault/` (portfolio state) · `<repo>/.private/` (gitignored local).
 
-### A-0002: Three Roles
-Director (portfolio, user comms) · Developer (per-worktree code) · Admin (system, secrets).
+### A-0002: Five Profiles
+Five dispatch profiles (`profiles/*.json`, loaded by `loadAll()`):
+- **Director** — portfolio interviewer; UX_1 new-thread intake (grill-with-docs) + UX_2 HITL. User-facing.
+- **Developer** — implements ledger-dispatched tasks in per-task worktrees; claims oldest ready, PRs, marks merged.
+- **Admin** — system health: cron, vault backup, ledger compact/vacuum, budget rotation, KE reindex. Never claims dev tasks.
+- **Sprint** — re-entrant thin-vertical supervisor; drives ONE slice to evidence-backed done across re-entries.
+- **Triage** — drains `*_unset` ledger rows; batch-assigns {tier,pool,agent} via bookie.
+
+Three (admin · director · developer) are also cwd-selected session roles (A-0003); sprint + triage are dispatch-only (ledger pool, not cwd).
 
 ### A-0003: Agent Selection by CWD
 1. `~/vault/agents/admin/` → Admin
