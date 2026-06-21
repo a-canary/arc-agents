@@ -4,7 +4,7 @@
 
 import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
-import { open, openWithMigrate, mintId } from "../src/ledger/db";
+import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
@@ -454,6 +454,23 @@ switch (cmd) {
       payload,
     ]);
     out({ id, kind, logged: true });
+    break;
+  }
+
+  case "feedback": {
+    // Trust-tiered friction/feedback intake (PRD self-guided-portal §Feedback).
+    // Flag-only. --source defaults to ai-agent (agents reporting friction outside
+    // their task); --context anchors it to a page/topic; --task links an origin issue.
+    const source = getFlag("source") ?? "ai-agent";
+    const project = getFlag("project") ?? die("--project required");
+    const body = getFlag("body") ?? die("--body required");
+    const id = `fb-${shortId()}`;
+    const db = openWithMigrate(getFlag("db"));
+    db.run(
+      `INSERT INTO feedback (id, project, source, body_md, context, origin_task_id) VALUES (?, ?, ?, ?, ?, ?)`,
+      [id, project, source, body, getFlag("context") ?? null, getFlag("task") ?? null],
+    );
+    out({ id, source, project, logged: true });
     break;
   }
 

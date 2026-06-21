@@ -1125,6 +1125,49 @@ export const migrations: Migration[] = [
       }
     },
   },
+  {
+    id: "022_feedback_table",
+    // Feedback intake for the self-guided portal. SUPERSET schema reconciling two
+    // writers on the shared ledger.db: arc-webui's /feedback form (project, source,
+    // submitter, body_md, theme_id) and the agent friction CLI (context, origin_task_id).
+    // Idempotent: CREATE for fresh DBs, then ALTER-ADD any column a prior writer's
+    // table lacked (arc-webui bootstraps its own subset via CREATE IF NOT EXISTS, so
+    // this table may pre-exist with fewer columns).
+    // ponytail: source is a free string, not CHECK'd. The CONTEXT.md domain model says
+    // source == trust tier (end-user-untrusted|...|mission) but arc-webui's form writes
+    // channels (direct|public|github). Unifying that vocabulary is the gated L1 domain
+    // migration — add a CHECK (and/or a separate channel column) once it's decided.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS feedback (
+          id             TEXT PRIMARY KEY,
+          project        TEXT NOT NULL DEFAULT '',
+          source         TEXT NOT NULL DEFAULT 'ai-agent',
+          submitter      TEXT,
+          body_md        TEXT NOT NULL,
+          context        TEXT,
+          origin_task_id TEXT REFERENCES issues(id),
+          theme_id       TEXT,
+          state          TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','resolved')),
+          created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+      `);
+      // Backfill columns onto a table an earlier writer created with a narrower shape.
+      const cols = new Set(
+        db.query<{ name: string }, []>("PRAGMA table_info(feedback)").all().map((r) => r.name),
+      );
+      const add = (name: string, decl: string) => {
+        if (!cols.has(name)) db.exec(`ALTER TABLE feedback ADD COLUMN ${name} ${decl}`);
+      };
+      add("submitter", "TEXT");
+      add("context", "TEXT");
+      add("origin_task_id", "TEXT REFERENCES issues(id)");
+      add("theme_id", "TEXT");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at DESC)");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_state ON feedback(state)");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
