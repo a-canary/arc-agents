@@ -28,11 +28,12 @@ Nothing else — no event log, no chat history, no prior reasoning. Independence
   "consequences": ["predicted runtime/API/schema/hook/test/caller/doc effect"],
   "surprises_vs_brief": ["diff content not implied by brief or referenced ADRs"],
   "gaps_vs_brief": ["brief/ADR requirement not delivered by the diff"],
-  "adr_conflicts": ["diff content that contradicts a touched ADR's stated rule"]
+  "adr_conflicts": ["diff content that contradicts a touched ADR's stated rule"],
+  "axi_violations": ["agent-facing output that violates an AXI principle (only when the diff changes such output)"]
 }
 ```
 
-Empty arrays are valid (expected for clean, in-scope diffs).
+Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is empty whenever the diff touches no agent-consumed CLI/tool output — most diffs. The ledger gate checks only that a `diff_review` event exists, not its fields, so the extra key is backward-compatible.
 
 ## Procedure (worker side)
 
@@ -57,7 +58,8 @@ Return ONLY a JSON object matching this schema:
   "consequences": string[],
   "surprises_vs_brief": string[],
   "gaps_vs_brief": string[],
-  "adr_conflicts": string[]
+  "adr_conflicts": string[],
+  "axi_violations": string[]
 }
 
 - consequences: predicted runtime shifts, API/schema/migration effects, hook
@@ -66,6 +68,11 @@ Return ONLY a JSON object matching this schema:
   the brief did not name.
 - gaps_vs_brief: missed acceptance criteria, tests not added, docs not updated.
 - adr_conflicts: diff content that contradicts a rule in a touched ADR.
+- axi_violations: ONLY if the diff changes output an agent consumes (CLI/tool
+  results, status, query answers). Flag against AXI (axi.md): redundant fields
+  the consumer restates, unbounded bodies dumped with no gist/--full escape
+  hatch, missing empty-state/exit-code, no next-step template. Empty [] for any
+  diff that touches no agent-facing output — do not invent violations.
 
 No editorializing. No output outside the JSON object.
 

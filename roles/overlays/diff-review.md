@@ -1,7 +1,8 @@
 Before `git add` / `git commit`, run the `/diff-review` skill: spawn an
 independent subagent (no shared reasoning trace) that reviews the finalized
 diff against the task brief + touched ADRs and returns a structured report
-of consequences, surprises_vs_brief, gaps_vs_brief, and adr_conflicts.
+of consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts, and
+axi_violations (the last only when the diff changes agent-facing output).
 
 **Project-field verification (mandatory, pre-review).** Before spawning
 the reviewer, capture the row's `project` field from
