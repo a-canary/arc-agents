@@ -5,6 +5,7 @@ import { join } from "node:path";
 import {
   loadConfig,
   resolveAlias,
+  getAliasCommands,
   resolveFast,
   resolveSmart,
   type Config,
@@ -19,16 +20,38 @@ test("loadConfig parses the real repo config.json", () => {
   expect(typeof cfg.pool_caps).toBe("object");
 });
 
-test("resolveAlias returns the right command for a known alias", () => {
+test("resolveAlias returns the primary command of a known alias group", () => {
   const cfg = loadConfig(repoRoot);
-  const cmd = resolveAlias("opus-max", cfg);
-  expect(cmd).toContain("--model opus");
+  // `smart` is a failover group; resolveAlias returns the first candidate.
+  const cmd = resolveAlias("smart", cfg);
+  expect(cmd).toBe(getAliasCommands("smart", cfg)[0]!);
   expect(cmd).toContain("{prompt}");
 });
 
-test("resolveAlias falls back to default_alias command for unknown alias", () => {
+test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  const fallback = cfg.exec_cli_alias[cfg.default_alias]!;
+  const cmds = getAliasCommands("smart", cfg);
+  // The real config's smart tier escalates fable → opus → minimax.
+  expect(cmds.length).toBeGreaterThan(1);
+  expect(cmds[0]).toContain("fable");
+  expect(cmds[cmds.length - 1]).toContain("pi -p");
+  for (const c of cmds) expect(c).toContain("{prompt}");
+});
+
+test("getAliasCommands normalizes a bare-string alias to a one-element group", () => {
+  const cfg: Config = {
+    exec_cli_alias: { solo: "claude --model opus {prompt}" },
+    pool_caps: { default: 4 },
+    default_alias: "solo",
+  };
+  expect(getAliasCommands("solo", cfg)).toEqual([
+    "claude --model opus {prompt}",
+  ]);
+});
+
+test("resolveAlias falls back to default_alias group for unknown alias", () => {
+  const cfg = loadConfig(repoRoot);
+  const fallback = getAliasCommands(cfg.default_alias, cfg)[0]!;
   const cmd = resolveAlias("nonexistent-alias-xyz", cfg);
   expect(cmd).toBe(fallback);
 });
@@ -46,6 +69,26 @@ test("loadConfig throws when an alias command is missing {prompt}", () => {
     };
     writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
     expect(() => loadConfig(dir)).toThrow("bad-alias");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig throws when one candidate in a group is missing {prompt}", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const bad = {
+      exec_cli_alias: {
+        grp: [
+          "pi -p --provider minimax --model MiniMax-M3 {prompt}",
+          "claude --model opus", // missing {prompt}
+        ],
+      },
+      pool_caps: { default: 4 },
+      default_alias: "grp",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
+    expect(() => loadConfig(dir)).toThrow(/grp.*\{prompt\} exactly once/);
   } finally {
     rmSync(dir, { recursive: true, force: true });
   }
@@ -70,13 +113,35 @@ test("loadConfig rejects a `claude --model` alias naming a non-Claude (provider)
   }
 });
 
-test("loadConfig allows provider models via `pi -p --provider` and real claude models", () => {
+test("loadConfig rejects a non-Claude model on any candidate within a group", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const bad = {
+      exec_cli_alias: {
+        grp: [
+          "claude --model opus {prompt}",
+          "claude --model minimax-m2.7 {prompt}", // bad second candidate
+        ],
+      },
+      pool_caps: { default: 4 },
+      default_alias: "grp",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
+    expect(() => loadConfig(dir)).toThrow("not a known Claude model");
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig allows provider models via `pi -p --provider` and real claude models (incl. fable)", () => {
   const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
   try {
     const ok = {
       exec_cli_alias: {
+        "claude-fable": "claude --model fable {prompt}",
         "opus-max": "claude --model opus --effort max {prompt}",
-        "minimax-build": "pi -p --provider minimax --model MiniMax-M2.7 {prompt}",
+        "minimax-build":
+          "pi -p --provider minimax --model MiniMax-M2.7 {prompt}",
       },
       pool_caps: { default: 4 },
       default_alias: "opus-max",
@@ -85,6 +150,53 @@ test("loadConfig allows provider models via `pi -p --provider` and real claude m
     expect(() => loadConfig(dir)).not.toThrow();
   } finally {
     rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("ARC_DISABLE_CLAUDE drops claude/claude-afk candidates (ProgramBench overlay)", () => {
+  const cfg: Config = {
+    exec_cli_alias: {
+      smart: [
+        "claude-afk --model fable -p {prompt}",
+        "claude-afk --model opus -p {prompt}",
+        "pi -p --provider minimax --model MiniMax-M3 --thinking high {prompt}",
+      ],
+    },
+    pool_caps: { default: 4 },
+    default_alias: "smart",
+  };
+  const prev = process.env.ARC_DISABLE_CLAUDE;
+  try {
+    process.env.ARC_DISABLE_CLAUDE = "1";
+    expect(getAliasCommands("smart", cfg)).toEqual([
+      "pi -p --provider minimax --model MiniMax-M3 --thinking high {prompt}",
+    ]);
+  } finally {
+    if (prev === undefined) delete process.env.ARC_DISABLE_CLAUDE;
+    else process.env.ARC_DISABLE_CLAUDE = prev;
+  }
+});
+
+test("ARC_DISABLE_CLAUDE throws when it empties a claude-only group", () => {
+  const cfg: Config = {
+    exec_cli_alias: {
+      "claude-only": [
+        "claude-afk --model fable -p {prompt}",
+        "claude --model opus {prompt}",
+      ],
+    },
+    pool_caps: { default: 4 },
+    default_alias: "claude-only",
+  };
+  const prev = process.env.ARC_DISABLE_CLAUDE;
+  try {
+    process.env.ARC_DISABLE_CLAUDE = "1";
+    expect(() => getAliasCommands("claude-only", cfg)).toThrow(
+      "no runnable engine remains",
+    );
+  } finally {
+    if (prev === undefined) delete process.env.ARC_DISABLE_CLAUDE;
+    else process.env.ARC_DISABLE_CLAUDE = prev;
   }
 });
 
@@ -169,26 +281,36 @@ test("loadConfig accepts a config with neither fast_alias nor smart_alias set", 
   }
 });
 
-test("resolveFast / resolveSmart return the resolved alias and command", () => {
+test("resolveFast / resolveSmart return alias, primary command, and full failover group", () => {
   const cfg: Config = {
     exec_cli_alias: {
-      "opus-max": "claude --model opus --effort max {prompt}",
+      smart: [
+        "claude --model fable {prompt}",
+        "claude --model opus --effort max {prompt}",
+      ],
       "minimax-fast":
-        "pi -p --provider minimax --model MiniMax-M2.7 --thinking low {prompt}",
+        "pi -p --provider minimax --model MiniMax-M3 --thinking low {prompt}",
     },
     pool_caps: { default: 4 },
     default_alias: "minimax-fast",
     fast_alias: "minimax-fast",
-    smart_alias: "opus-max",
+    smart_alias: "smart",
   };
   expect(resolveFast(cfg)).toEqual({
     alias: "minimax-fast",
     command:
-      "pi -p --provider minimax --model MiniMax-M2.7 --thinking low {prompt}",
+      "pi -p --provider minimax --model MiniMax-M3 --thinking low {prompt}",
+    commands: [
+      "pi -p --provider minimax --model MiniMax-M3 --thinking low {prompt}",
+    ],
   });
   expect(resolveSmart(cfg)).toEqual({
-    alias: "opus-max",
-    command: "claude --model opus --effort max {prompt}",
+    alias: "smart",
+    command: "claude --model fable {prompt}",
+    commands: [
+      "claude --model fable {prompt}",
+      "claude --model opus --effort max {prompt}",
+    ],
   });
 });
 

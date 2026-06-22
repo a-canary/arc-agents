@@ -20,7 +20,7 @@ import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
 import { parseFollowupTable } from "../src/ledger/followup-table";
 import { checkMergeGuard } from "../src/ledger/merge-guard";
-import { loadConfig as loadAppConfig, resolveAlias } from "../src/config/load";
+import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
 
 const KNOWN_HYGIENE_SKILLS = [
@@ -1426,11 +1426,14 @@ switch (cmd) {
 
   case "alias-cmd": {
     // alias-cmd <aliasName>
-    // Pure read: prints the full command string for the given alias (with
-    // {prompt} placeholder intact) to stdout.
+    // Pure read: prints the alias GROUP — one failover candidate command per
+    // line, in priority order (with {prompt} placeholder intact). A bare-string
+    // alias prints one line. worker-shell.sh reads these into a bash array and
+    // tries each in turn (G-0006 N-tier escalation). Respects ARC_DISABLE_CLAUDE
+    // (ProgramBench overlay): claude/claude-afk candidates are dropped.
     const aliasName = positionalAfterVerb()[0] ?? die("alias name required");
     const appCfg = loadAppConfig();
-    process.stdout.write(resolveAlias(aliasName, appCfg) + "\n");
+    process.stdout.write(getAliasCommands(aliasName, appCfg).join("\n") + "\n");
     break;
   }
 
