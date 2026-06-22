@@ -1,0 +1,138 @@
+#!/usr/bin/env bun
+// plan-agent.ts — the L6 Planning Agent (ADR-0010). arc-webui /chat spawns this as
+// a detached subprocess (never inside the Hono process). It turns a free-text dev
+// request into a real PRD + decomposed tracer slices, then emits them through the
+// deterministic plan.ts gate-writer. It PRODUCES proposals only — never spawns
+// implementation workers, merges, or deploys.
+//
+//   plan-agent.ts --request "<text>" [--thread T] [--project P]
+//
+// Design (proven by experiment, see commit msg): a headless tool-driving agent loop
+// (read files / ke recall / bash plan.ts) times out unreliably under MiniMax. A
+// single no-tools generation is fast and reliable. So the I/O is deterministic here
+// in the wrapper, and the model does exactly one thing it is good at headlessly:
+// generate a structured plan as JSON. On any model/parse failure we fall back to the
+// deterministic emitter shape, so a bad run degrades to slice-1/2 behaviour, never
+// to a dropped request. The human approval gate keeps any weak draft harmless.
+
+import { spawnSync } from "node:child_process";
+import { join } from "node:path";
+
+export type Plan = { title: string; body_md: string; tracers: string[] };
+
+// Baked grill-with-docs grounding: the architecture a plan must respect. Kept as a
+// constant (not a file read) because it produces excellent plans on its own (proven)
+// and avoids I/O in the hot path.
+// ponytail: richer grounding — read CONTEXT.md/ADRs + `ke recall <request>` and inject
+// them here — is a follow-up enrichment (slice 4). The gate keeps thinner drafts safe.
+export const ARCH_CONTEXT =
+  "PROJECT CONTEXT: arc-webui is a Hono/Bun server-rendered developer portal. Pages " +
+  "render to HTML through a shell() helper; there is no client build step. Prefer plain " +
+  "CSS and small server routes over any JS framework or new dependency. Every change " +
+  "must be small and independently reversible.";
+
+function clamp(s: string, n: number): string {
+  return s.length > n ? s.slice(0, n - 3) + "..." : s;
+}
+
+// The prompt describes the JSON shape in WORDS. A literal json template or a code
+// fence in the prompt makes headless MiniMax loop to timeout (proven); never embed one.
+export function buildPlanningPrompt(request: string, context: string): string {
+  return [
+    "You are a planning agent for the arc-webui project. Turn the development request below into a plan.",
+    "",
+    "REQUEST: " + request,
+    "",
+    context,
+    "",
+    "Output a single JSON object and nothing else — no prose, no code fences. Use exactly these keys:",
+    "- title: a concise plan title, a string under 80 characters",
+    "- body_md: a markdown PRD body containing the sections Problem, Solution, and Decisions, as a string",
+    "- tracers: an array of 1 to 3 strings; each a small vertical slice, smallest first, each shippable on its own",
+  ].join("\n");
+}
+
+// Defensive parse: the model may wrap the object in prose or a fence despite the
+// instruction. Strip a fence if present, else take the outermost braces, then validate.
+export function parsePlanJson(stdout: string): Plan | null {
+  if (!stdout) return null;
+  let s = stdout.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence && fence[1]) s = fence[1].trim();
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return null;
+  s = s.slice(start, end + 1);
+  let obj: { title?: unknown; body_md?: unknown; tracers?: unknown };
+  try { obj = JSON.parse(s); } catch { return null; }
+  if (!obj || typeof obj.title !== "string" || !obj.title.trim()) return null;
+  if (!Array.isArray(obj.tracers) || obj.tracers.length === 0) return null;
+  const tracers = obj.tracers
+    .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
+    .map((t) => t.trim());
+  if (tracers.length === 0) return null;
+  return {
+    title: obj.title.trim(),
+    body_md: typeof obj.body_md === "string" ? obj.body_md : "",
+    tracers: tracers.slice(0, 5),
+  };
+}
+
+// Deterministic degrade path (== slice-1/2 emitter): request becomes a thin PRD + one
+// tracer. Used when the model run fails, times out, or returns unparseable output.
+export function buildFallbackPlan(request: string): Plan {
+  const title = clamp(request, 80);
+  return { title, body_md: request, tracers: [`Implement: ${title}`] };
+}
+
+export function planToPlanArgs(plan: Plan, project: string, thread: string): string[] {
+  const argv = [
+    "--project", project,
+    "--thread", thread,
+    "--title", clamp(plan.title, 80),
+    "--body", plan.body_md,
+  ];
+  for (const t of plan.tracers) argv.push("--tracer", t);
+  return argv;
+}
+
+function getFlag(argv: string[], name: string): string | undefined {
+  const i = argv.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+  if (i === -1) return undefined;
+  const a = argv[i]!;
+  return a.includes("=") ? a.slice(a.indexOf("=") + 1) : argv[i + 1];
+}
+
+// Generate the plan via one no-tools MiniMax call (policy: pi -p --provider minimax).
+// Returns null on non-zero exit, timeout, or unparseable output → caller falls back.
+function generatePlan(prompt: string): Plan | null {
+  const pi = Bun.which("pi") ?? "pi";
+  const r = spawnSync(
+    pi,
+    ["-p", "--no-tools", "--provider", "minimax", "--model", "MiniMax-M3", "--thinking", "high", prompt],
+    { encoding: "utf8", timeout: 150_000 },
+  );
+  if (r.status !== 0 || !r.stdout) return null;
+  return parsePlanJson(r.stdout);
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const request = (getFlag(argv, "request") ?? "").trim();
+  if (!request) { process.stderr.write("plan-agent: --request is required\n"); process.exit(2); }
+  const thread = getFlag(argv, "thread") ?? "t-" + Math.random().toString(36).slice(2, 10);
+  const project = getFlag(argv, "project") ?? "arc-webui";
+
+  const prompt = buildPlanningPrompt(request, ARCH_CONTEXT);
+  const plan = generatePlan(prompt) ?? buildFallbackPlan(request);
+
+  const planBin = join(import.meta.dir, "plan.ts");
+  const r = spawnSync(process.execPath, [planBin, ...planToPlanArgs(plan, project, thread)], {
+    encoding: "utf8",
+    env: process.env,
+  });
+  if (r.status !== 0) { process.stderr.write(`plan-agent: plan.ts failed: ${r.stderr || r.stdout}\n`); process.exit(1); }
+  process.stdout.write(r.stdout);
+}
+
+if (import.meta.main) { await main(); }
