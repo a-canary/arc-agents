@@ -168,3 +168,44 @@ test("claimOnce does NOT claim a kind='prd' ready row", () => {
 test("CLAIMABLE_KINDS_SQL contains sprint for claim SQL inclusion", () => {
   expect(CLAIM_SQL).toContain("'sprint'");
 });
+
+// ── HITL guard: human-decision tasks must never enter the worker claim pool ──
+// Regression: a hitl=1 'task' row was claimable (claim SQL filtered only state +
+// kind), so workers claimed it, couldn't execute the human decision, their tmux
+// session died, the stale-sweeper reset claimed->ready, and it reclaimed forever
+// (220 cycles/600s observed live). The claim SELECT now carries `AND hitl=0`.
+
+function insertReadyHitl(db: Database, title: string, tier: string, pool: string): string {
+  const id = mintId(db, title);
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, hitl, kind, tier, pool)
+     VALUES (?, 'arc-agents', ?, '', '', 'mvp', 'ready', 1, 'task', ?, ?)`,
+    [id, title, tier, pool],
+  );
+  return id;
+}
+
+test("claimOnce does NOT claim a hitl=1 ready row even as the only/highest-priority candidate", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertReadyHitl(db, "human-decision", "prod", "interactive");
+    expect(claimOnce(db, "w-hitl")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("claimOnce skips a higher-priority hitl=1 row and claims the next hitl=0 row", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertReadyHitl(db, "human-decision", "prod", "interactive"); // outranks on tier/pool
+    const ok = insertReady(db, "normal-work", "mvp", "pool_unset");
+    expect(claimOnce(db, "w-skip")?.id).toBe(ok);
+  } finally {
+    cleanup();
+  }
+});
+
+test("CLAIM_SQL carries the hitl=0 guard", () => {
+  expect(CLAIM_SQL).toContain("hitl=0");
+});

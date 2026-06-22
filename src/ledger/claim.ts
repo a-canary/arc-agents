@@ -15,6 +15,10 @@ import { CLAIMABLE_KINDS_SQL } from "./kinds";
 
 export type ClaimRow = { id: string };
 
+// HITL guard: `hitl=0` keeps human-decision tasks out of the worker pool.
+// Without it a hitl=1 row is claimed, can't be executed, its tmux dies,
+// the stale-sweeper resets claimed->ready, and it reclaims forever.
+//
 // Build the canonical claim SQL. With `poolFilter=true`, the inner SELECT
 // gains `AND pool=?2` so the fast-pass pool can restrict the claim to one
 // pool lane without burning a reserved slot on backlog work.
@@ -23,7 +27,7 @@ export type ClaimRow = { id: string };
 export function buildClaimSQL(poolFilter: boolean): string {
   const poolClause = poolFilter ? "AND pool=?2 " : "";
   return `UPDATE issues SET state='claimed', claimed_by=?1, claimed_at=strftime('%s','now')
-         WHERE id=(SELECT id FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${poolClause}ORDER BY ${SORT_KEY_SQL} LIMIT 1)
+         WHERE id=(SELECT id FROM issues WHERE state='ready' AND hitl=0 AND kind IN (${CLAIMABLE_KINDS_SQL}) ${poolClause}ORDER BY ${SORT_KEY_SQL} LIMIT 1)
          RETURNING id`;
 }
 
