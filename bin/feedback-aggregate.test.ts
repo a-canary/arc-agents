@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
-import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal, parseCategoriesJson, summarizeCategories, type FeedbackRow } from "./feedback-aggregate";
+import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal, parseCategoriesJson, summarizeCategories, recordCollection, type FeedbackRow } from "./feedback-aggregate";
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "fb-agg-"));
@@ -191,4 +191,28 @@ test("summarizeCategories: a category with a trusted voice confirms", () => {
 test("summarizeCategories: three distinct untrusted submitters in one category confirm", () => {
   const sums = summarizeCategories(ROWS, [{ label: "mobile", pattern: "p", ids: ["fb-1", "fb-2", "fb-3"] }]);
   expect(sums[0]!.gate).toMatchObject({ confirmed: true, untrusted: 3 });
+});
+
+
+// --- Slice 3a: persist the collector's round to the feedback_theme ledger ---
+// CAM: the Collector's per-category output (incl. un-confirmed categories) is the
+// audit/evidence the portal surfaces. It lands in the ledger, never a side-channel file.
+test("recordCollection persists every category for a round, readable by project", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    recordCollection(db, "arc-webui", "fbr-1", [
+      { label: "mobile feed", pattern: "feed unreadable on phones", count: 3, confirmed: true, trusted: 0, untrusted: 3, prdId: "prd-9" },
+      { label: "kanban", pattern: "columns wrap", count: 1, confirmed: false, trusted: 0, untrusted: 1, prdId: null },
+    ]);
+    const rows = db
+      .query<{ label: string; count: number; confirmed: number; prd_id: string | null; round_id: string }, [string]>(
+        "SELECT label, count, confirmed, prd_id, round_id FROM feedback_theme WHERE project=? ORDER BY id",
+      )
+      .all("arc-webui");
+    expect(rows.map((r) => r.label)).toEqual(["mobile feed", "kanban"]);
+    expect(rows[0]).toMatchObject({ count: 3, confirmed: 1, prd_id: "prd-9", round_id: "fbr-1" });
+    expect(rows[1]).toMatchObject({ count: 1, confirmed: 0, prd_id: null });
+  } finally {
+    cleanup();
+  }
 });

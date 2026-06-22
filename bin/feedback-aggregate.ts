@@ -185,6 +185,30 @@ export function markAggregated(db: DB, ids: string[], themeId: string): void {
   db.run(`UPDATE feedback SET state='resolved', theme_id=? WHERE id IN (${ph})`, [themeId, ...ids]);
 }
 
+/** A category enriched with its gate + the PRD it drafted (or null). The shape main()
+ *  emits and recordCollection persists. */
+export type CollectedCategory = {
+  label: string;
+  pattern: string;
+  count: number;
+  confirmed: boolean;
+  trusted: number;
+  untrusted: number;
+  prdId: string | null;
+};
+
+/** Append one collector run's categories to the feedback_theme ledger (CAM audit,
+ *  keyed project x round) — including un-confirmed ones — so the portal can surface
+ *  counts/patterns regardless of the gate. */
+export function recordCollection(db: DB, project: string, roundId: string, cats: CollectedCategory[]): void {
+  for (const c of cats) {
+    db.run(
+      "INSERT INTO feedback_theme (round_id, project, label, pattern, count, confirmed, trusted, untrusted, prd_id) VALUES (?,?,?,?,?,?,?,?,?)",
+      [roundId, project, c.label, c.pattern, c.count, c.confirmed ? 1 : 0, c.trusted, c.untrusted, c.prdId],
+    );
+  }
+}
+
 /** Run the Planning Agent on `request`; return its minted PRD id, or null on failure. */
 function runPlanner(request: string, project: string): string | null {
   const planAgent = join(import.meta.dir, "plan-agent.ts");
@@ -221,8 +245,9 @@ async function main(): Promise<void> {
   // transparency to /feed and /approvals.
   const summaries = summarizeCategories(rows, collectCategories(project, rows));
 
+  const roundId = "fbr-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
   let aggregated = 0;
-  const categories = summaries.map((sm) => {
+  const categories: CollectedCategory[] = summaries.map((sm) => {
     let prdId: string | null = null;
     if (sm.gate.confirmed) {
       prdId = runPlanner(buildAggregateRequest(project, sm.rows), project);
@@ -234,7 +259,8 @@ async function main(): Promise<void> {
     return { label: sm.label, pattern: sm.pattern, count: sm.count, ...sm.gate, prdId };
   });
 
-  process.stdout.write(JSON.stringify({ aggregated, categories }) + "\n");
+  recordCollection(db, project, roundId, categories);
+  process.stdout.write(JSON.stringify({ aggregated, roundId, categories }) + "\n");
 }
 
 if (import.meta.main) { await main(); }
