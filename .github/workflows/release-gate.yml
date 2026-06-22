@@ -18,6 +18,18 @@ jobs:
     if: github.event_name == 'push' || github.event.pull_request.head.ref != github.event.pull_request.base.ref
     steps:
       - uses: actions/checkout@v4
+        with:
+          # fetch-depth: 0 — full history + all branches so origin/main exists.
+          # Several tests anchor on the 'main' / 'origin/main' refs (worker-shell
+          # worktree base, ledger merge-base verification). The default shallow,
+          # detached-HEAD checkout has neither, so those tests fail only in CI.
+          fetch-depth: 0
+
+      - name: Provide local main ref (tests use 'main' as worktree base)
+        # PR builds check out a detached merge commit with no local 'main'
+        # branch; create one from origin/main when missing. On push-to-main
+        # builds 'main' is already checked out, so this is a no-op.
+        run: git rev-parse --verify --quiet main >/dev/null || git branch main origin/main
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1

@@ -346,8 +346,13 @@ test("worker-shell.sh refuses arctest-* claim against canon ledger (no ARC_LEDGE
 
 test("worker-shell.sh refuses arctest-* claim when ARC_LEDGER_DB explicitly points at canon", () => {
   const shell = join(REPO, "bin", "worker-shell.sh");
-  const canonDb = `${process.env.HOME}/vault/ledger.db`;
-  const env = { ...process.env, ARC_LEDGER_DB: canonDb, CLAUDE_BIN: fakeClaude };
+  // Pin ARC_VAULT_HOME so CANON_DB is deterministic. Without it the shell's
+  // _resolve_arc_vault_home() returns the XDG path on hosts lacking ~/vault
+  // (e.g. CI runners), so a hardcoded ~/vault/ledger.db would NOT equal canon
+  // and the guard would not fire — a host-shape dependency, not a real bug.
+  const vaultHome = `${process.env.HOME}/vault`;
+  const canonDb = `${vaultHome}/ledger.db`;
+  const env = { ...process.env, ARC_VAULT_HOME: vaultHome, ARC_LEDGER_DB: canonDb, CLAUDE_BIN: fakeClaude };
   const r = spawnSync("bash", [shell, "arctest-guard-explicit"], { encoding: "utf8", env });
   expect(r.status).toBe(2);
   expect(r.stderr).toContain("arctest-claim-against-canon-refused");
@@ -383,6 +388,11 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
     PATH: strippedPath,
     ARC_LEDGER_DB: dbPath,
     CLAUDE_BIN: fakeClaude,
+    // Pin the worktree base to this checkout. The row's project=arc-agents
+    // else resolves to ~/repos/arc-agents (resolve_repo default), which is
+    // absent on CI runners — the worker would die "project repo not found"
+    // after claiming and strand the row at `claimed`.
+    ARC_PROJECT_REPO_ARC_AGENTS: REPO,
   };
   const r = spawnSync("bash", [shell, "w-stripped"], { encoding: "utf8", env });
   expect(r.status).toBe(0);
@@ -602,7 +612,9 @@ test("worker-shell.sh claims atomically: only one of two parallel shells wins fo
   // Prepend the fake-pi bin dir: the winner resolves to the `pi -p` headless
   // engine and must find a controllable `pi` rather than the real (blocking)
   // one. The fake self-reports terminal and exits, so the winner returns fast.
-  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude };
+  // ARC_PROJECT_REPO_ARC_AGENTS pins the worktree base to this checkout — the
+  // row's project=arc-agents else resolves to ~/repos/arc-agents, absent on CI.
+  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude, ARC_PROJECT_REPO_ARC_AGENTS: REPO };
   // Run two shells in parallel; both attempt claim, exactly one should succeed.
   const r1 = spawnSync("bash", [shell, "w1"], { encoding: "utf8", env });
   const r2 = spawnSync("bash", [shell, "w2"], { encoding: "utf8", env });

@@ -1171,19 +1171,28 @@ switch (cmd) {
 
     if (existsSync(worktreeRoot)) {
       const dirs = readdirSync(worktreeRoot).filter((n) => n.startsWith(repoPrefix));
-      // Pick any one matching dir to anchor `git worktree list`; if none exist,
-      // we have nothing to compare against.
-      const sampleDir = dirs.find((n) => {
+      // Probe matching dirs until one is a real git worktree whose `git worktree
+      // list` succeeds. The first dir by readdir order may be an orphan (a
+      // leftover non-git dir) — anchoring blindly on it makes the git call fatal
+      // and silently empties the whole scan, so the orphan never gets reported
+      // as untracked. readdir order differs across filesystems (CI surfaced the
+      // orphan-first case), so we can't rely on a real worktree sorting first.
+      // ponytail: linear probe over a handful of worktree dirs.
+      const candidates = dirs.filter((n) => {
         try { return statSync(pjoin(worktreeRoot, n)).isDirectory(); }
         catch { return false; }
       });
-
-      if (sampleDir) {
-        const sample = pjoin(worktreeRoot, sampleDir);
-        const wt = spawnSync("git", ["-C", sample, "worktree", "list", "--porcelain"], {
+      let sample: string | null = null;
+      let wt: { stdout: string; stderr: string; status: number | null } | null = null;
+      for (const n of candidates) {
+        const cand = pjoin(worktreeRoot, n);
+        const probe = spawnSync("git", ["-C", cand, "worktree", "list", "--porcelain"], {
           encoding: "utf8",
         });
-        if (wt.status === 0) {
+        if (probe.status === 0) { sample = cand; wt = probe; break; }
+      }
+
+      if (sample && wt) {
           // Parse porcelain: blocks separated by blank lines, each starts with `worktree <path>`.
           const registered = new Map<string, string | null>();
           let curPath: string | null = null;
@@ -1249,10 +1258,11 @@ switch (cmd) {
               mergeableWorktrees.push({ path, branch });
             }
           }
-        } else {
-          worktreeScanError = wt.stderr.trim() || "git worktree list failed";
+        } else if (candidates.length > 0) {
+          // Matching dirs exist but none is a scannable git worktree (all
+          // orphans) — we have no git anchor to compare against.
+          worktreeScanError = "no scannable git worktree among matching dirs";
         }
-      }
     } else {
       worktreeScanError = `worktree root not found: ${worktreeRoot}`;
     }
