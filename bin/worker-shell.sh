@@ -314,111 +314,120 @@ to read it, then execute. On terminal state, ask bookie to update (merged +
 evidence + pr, or failed + evidence, or decompose into HITL children). tmux
 dies on exit; factory respawns if more work."
 
-# Resolve which model/effort to run from the row's agent→profile→alias chain.
+# Resolve the failover GROUP for this row's agent→profile→alias chain. `alias-cmd`
+# prints one candidate command per line in priority order (G-0006 N-tier
+# escalation); we try each in turn and fall over to the next when a candidate
+# produces no work. A single-command alias yields a one-element group → original
+# behavior.
 ALIAS="$(bun "$LEDGER_BIN" resolve-alias "$CLAIM_ID" "${DB_FLAG[@]}")"
-CMD_TEMPLATE="$(bun "$LEDGER_BIN" alias-cmd "$ALIAS")"
-# Split the template into argv on whitespace, dropping the {prompt} placeholder token.
-# The user turn is then passed as a SINGLE positional argv word — never interpolated
-# into a shell-evaluated string (avoids quoting/injection hazards).
-read -ra CMD_PARTS <<< "${CMD_TEMPLATE/\{prompt\}/}"
-# Preserve CLAUDE_BIN override: if the first word of the template is "claude" and
-# $CLAUDE differs from it (i.e. CLAUDE_BIN is set), substitute $CLAUDE as argv[0].
-if [[ "${CMD_PARTS[0]:-}" == "claude" ]]; then
-  CMD_PARTS[0]="$CLAUDE"
+mapfile -t CMD_CANDIDATES < <(bun "$LEDGER_BIN" alias-cmd "$ALIAS")
+if [[ "${#CMD_CANDIDATES[@]}" -eq 0 ]]; then
+  echo "worker-shell: no command candidates for alias '$ALIAS'" >&2
+  exit 1
 fi
 
 # Engine discriminator (two-tier policy G-0006):
 #   - interactive `claude` lives many turns and self-reports its terminal state
 #     to the ledger via the bookie subagent. Hand the TTY over with exec — the
-#     shell is replaced and the row is the agent's responsibility.
-#   - headless `pi -p` is single-shot: it answers and exits in one process,
-#     WITHOUT a bookie round-trip. If we exec it, the session dies with the row
-#     still `state='claimed'`, and reapOrphanClaims (factory.ts) resets it to
-#     `ready` → the factory respawns a worker that re-claims the SAME row → a
-#     respawn loop that burns API budget on rows that never progress.
-# So for a headless engine we do NOT exec: run the agent as a CHILD, then a
-# deterministic post-exit reconciler advances the row off `claimed` based on
-# worktree evidence — but only if the agent didn't already advance it (we
-# re-read state first, so a self-reporting agent always wins). These writes
-# reuse the sanctioned bootstrap-exception ledger path (same as the claim and
-# the --branch/--worktree write above); they are pre/post-agent mechanical
-# writes, not in-session writes, so the "all in-session writes via bookie"
-# rule is preserved.
-HEADLESS=0
-for _arg in "${CMD_PARTS[@]}"; do
-  if [[ "$_arg" == "-p" ]]; then HEADLESS=1; break; fi
-done
-
-if [[ "$HEADLESS" != "1" ]]; then
-  # Interactive path — unchanged. Agent owns its terminal state via the bookie.
-  # The pipe-pane is attached to the PANE (not the process), so the pipe
-  # survives this `exec` and continues mirroring the tmux pane (now running
-  # claude) to the logfile for the worker's full lifetime.
-  exec "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
-fi
-
-# Resolve the per-worker logfile path BEFORE we hand the TTY over, so the
-# pipe-pane is attached to the pane that claude is about to take over (the
-# pipe is on the pane, not the process, so order is in practice irrelevant —
-# but doing it here keeps the call site obvious and pinpoints the failure
-# mode to "if you got here, the pipe is wired"). Also keeps the headless
-# path's prior `tee` removed in favor of the single pane-side pipe (no
-# duplicate content, single source of capture truth).
+#     shell is replaced and the row is the agent's responsibility. An interactive
+#     candidate is therefore TERMINAL: there is no failover past it (exec never
+#     returns), so it can only be the engine of last resort.
+#   - headless `pi -p` / `claude-afk -p` is single-shot: it answers and exits in
+#     one process, WITHOUT a bookie round-trip. If we exec it, the session dies
+#     with the row still `state='claimed'`, and reapOrphanClaims (factory.ts)
+#     resets it to `ready` → respawn loop that burns budget. So for a headless
+#     engine we do NOT exec: run it as a CHILD, then a deterministic post-exit
+#     reconciler advances the row off `claimed` based on worktree evidence — but
+#     only if the agent didn't already advance it (we re-read state first, so a
+#     self-reporting agent always wins). No commits + no self-report ⇒ that
+#     engine produced nothing (model unavailable / refused / crashed empty) ⇒
+#     FALL OVER to the next candidate. These writes reuse the sanctioned
+#     bootstrap-exception ledger path (same as the claim and the --branch write
+#     above) — pre/post-agent mechanical writes, not in-session writes, so the
+#     "all in-session writes via bookie" rule is preserved.
+#
+# Headless guards (interactive doesn't need them — it execs claude which owns the
+# TTY + its own timeout + bookie):
+#   (1) Log capture: pane-side `tmux pipe-pane` mirrors the pane to the logfile.
+#       `capture_scrollback_to_log` is the last-resort fallback if pipe never
+#       attached. Set up once, reused across failover attempts.
+#   (2) Stall watchdog: wrap each child in `timeout` so a hung engine self-
+#       terminates (SIGTERM at the bound, SIGKILL after 30s -k grace). Expiry
+#       exits 124 — a non-zero rc treated like any empty crash (→ failover).
 LOG_FILE="$(worker_log_path "$WORKER")"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
-setup_pipe_pane "$WORKER" "$LOG_FILE"
-
-# Headless path — run as a child, capture rc, then reconcile the row.
-#
-# Two guards the interactive path doesn't need (it execs claude, which owns the
-# TTY and has its own session timeout + bookie):
-#   (1) Log capture (Gap 1): pane-side `tmux pipe-pane` (set above) mirrors
-#       the worker's tmux pane to the per-worker logfile. Replaces the prior
-#       `tee` which only saw stdout (no TUI) and which could be SIGKILLed
-#       before flushing on a factory reap. `capture_scrollback_to_log` (below)
-#       remains as a last-resort fallback for cases where pipe-pane never
-#       attached (tmux server down at spawn, race on the pipe-pane call, etc).
-#   (2) Stall watchdog (Gap 2): wrap the child in `timeout` so a `pi` epoll-hung
-#       on a dropped upstream stream self-terminates. `timeout` SIGTERMs at the
-#       bound, then SIGKILLs after a 30s grace (-k) in case the hung child
-#       ignores SIGTERM. On expiry `timeout` exits 124 — a non-zero rc that
-#       flows through reconcile_decision exactly like any crash (commits→review,
-#       none→failed), so no special-casing is needed downstream.
 STALL_SECS="$(stall_timeout_secs)"
-set +e
-# `timeout` runs the child in its own process group and kills the group on
-# expiry. `$?` is the child/timeout rc (no tee in the pipe anymore). `2>&1`
-# merges stderr into the pane (pipe-pane sees both); the redundant stdout is
-# intentionally not piped to `tee` (pipe-pane already captures it — tee would
-# duplicate every line).
-timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
-AGENT_RC=$?
-set -e
+PIPE_READY=0
+LAST_RC=0
+ATTEMPT=0
 
-# Did the agent already advance the row past the claim? If so, respect it.
-POST_STATE="$(bun "$LEDGER_BIN" show "$CLAIM_ID" "${DB_FLAG[@]}" 2>/dev/null \
-  | grep -oE '"state":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
+  ATTEMPT=$((ATTEMPT + 1))
+  # Split into argv on whitespace, dropping the {prompt} placeholder token. The
+  # user turn is passed as a SINGLE positional argv word — never interpolated
+  # into a shell-evaluated string (avoids quoting/injection hazards).
+  read -ra CMD_PARTS <<< "${CMD_TEMPLATE/\{prompt\}/}"
+  # Preserve CLAUDE_BIN override: substitute $CLAUDE for a literal `claude` argv0.
+  if [[ "${CMD_PARTS[0]:-}" == "claude" ]]; then
+    CMD_PARTS[0]="$CLAUDE"
+  fi
+  # Pre-flight: a candidate whose binary isn't on PATH (engine not installed
+  # here) is skipped without running — straight to the next candidate.
+  if ! command -v "${CMD_PARTS[0]}" >/dev/null 2>&1; then
+    echo "worker-shell: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} '${CMD_PARTS[0]}' not on PATH — skipping" >&2
+    continue
+  fi
 
-if [[ "$POST_STATE" != "claimed" && "$POST_STATE" != "wip" && -n "$POST_STATE" ]]; then
-  # Agent self-reported a terminal/review/blocked state — nothing to reconcile.
-  exit "$AGENT_RC"
-fi
+  HEADLESS=0
+  for _arg in "${CMD_PARTS[@]}"; do
+    if [[ "$_arg" == "-p" ]]; then HEADLESS=1; break; fi
+  done
 
-# Reconcile from worktree evidence. Commits on worker/<id> ahead of main mean
-# the agent produced work — advance to `review` so a human/merger can pick it
-# up, EVEN IF the agent exited non-zero (a crash after committing real work is
-# salvageable, not a failure). Only when there are no commits does the exit
-# code matter, and then it's always `failed`: the row leaves `claimed` with
-# evidence and is NOT recycled.
-COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count main..HEAD 2>/dev/null || echo 0)"
-DECISION="$(reconcile_decision "$AGENT_RC" "$COMMITS_AHEAD")"
-if [[ "$DECISION" == "review" ]]; then
-  HEAD_SHA="$(git -C "$WT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
-  EVIDENCE="headless reconcile: agent exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
-  bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state review --evidence "$EVIDENCE" >/dev/null 2>&1 || true
-else
-  EVIDENCE="headless reconcile: agent exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH}; no advanceable work, marked failed (was ${POST_STATE:-claimed})."
-  bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state failed --evidence "$EVIDENCE" >/dev/null 2>&1 || true
-fi
+  if [[ "$HEADLESS" != "1" ]]; then
+    # Interactive engine of last resort — exec hands over the TTY. The pane pipe
+    # set at spawn survives the exec and keeps mirroring for the worker's life.
+    exec "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
+  fi
+
+  # Headless attempt — run as a child, capture rc, then reconcile-or-failover.
+  if [[ "$PIPE_READY" != "1" ]]; then
+    setup_pipe_pane "$WORKER" "$LOG_FILE"
+    PIPE_READY=1
+  fi
+  set +e
+  timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
+  AGENT_RC=$?
+  set -e
+  LAST_RC=$AGENT_RC
+
+  # Did the agent already advance the row past the claim? If so, respect it — done.
+  POST_STATE="$(bun "$LEDGER_BIN" show "$CLAIM_ID" "${DB_FLAG[@]}" 2>/dev/null \
+    | grep -oE '"state":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+  if [[ "$POST_STATE" != "claimed" && "$POST_STATE" != "wip" && -n "$POST_STATE" ]]; then
+    capture_scrollback_to_log "$WORKER" "$LOG_FILE"
+    exit "$AGENT_RC"
+  fi
+
+  # Commits ahead of main = the agent produced work — advance to `review` even on
+  # a non-zero exit (a crash after committing real work is salvageable) and stop
+  # the failover chain. reconcile_decision (the unit-tested helper) returns
+  # "review" iff there are commits; "failed" (no commits) means fall over.
+  COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count main..HEAD 2>/dev/null || echo 0)"
+  if [[ "$(reconcile_decision "$AGENT_RC" "$COMMITS_AHEAD")" == "review" ]]; then
+    HEAD_SHA="$(git -C "$WT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    EVIDENCE="headless reconcile: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
+    bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state review --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+    capture_scrollback_to_log "$WORKER" "$LOG_FILE"
+    exit "$AGENT_RC"
+  fi
+
+  # No self-report, no commits → this engine produced nothing. Fall over.
+  echo "worker-shell: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) produced no work (rc=${AGENT_RC}); trying next" >&2
+done
+
+# Every candidate exhausted with no commits and no self-report → failed. The row
+# leaves `claimed` with evidence and is NOT recycled.
+EVIDENCE="headless reconcile: all ${#CMD_CANDIDATES[@]} candidate engine(s) for alias '${ALIAS}' produced no work (last rc=${LAST_RC}); marked failed."
+bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state failed --evidence "$EVIDENCE" >/dev/null 2>&1 || true
 capture_scrollback_to_log "$WORKER" "$LOG_FILE"
-exit "$AGENT_RC"
+exit "$LAST_RC"

@@ -1454,12 +1454,15 @@ test("update --state merged accepts after diff_review event logged", async () =>
 
 // ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
 
-test("alias-cmd opus-max prints opus command containing {prompt}", async () => {
-  const r = await runRawNoDb("alias-cmd", "opus-max");
+test("alias-cmd prints the full failover group, one candidate per line", async () => {
+  const r = await runRawNoDb("alias-cmd", "smart");
   expect(r.exitCode).toBe(0);
-  const out = r.stdout.toString().trim();
-  expect(out).toContain("--model opus");
-  expect(out).toContain("{prompt}");
+  const lines = r.stdout.toString().trim().split("\n");
+  // smart is a 3-candidate escalation group (fable → opus → minimax).
+  expect(lines.length).toBe(3);
+  for (const l of lines) expect(l).toContain("{prompt}");
+  expect(lines[0]).toContain("fable");
+  expect(lines[lines.length - 1]).toContain("pi -p");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {
