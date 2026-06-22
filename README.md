@@ -156,6 +156,17 @@ External state — not in the repo:
 
 ---
 
+## ProgramBench-lite
+
+Per-commit coding-quality signal on the **MiniMax subscription only** (claude is
+reserved for dev). The agent reconstructs small CLI programs from a behavioural
+usage doc and is graded against hidden behavioural tests. See
+[`program-bench/`](program-bench/).
+
+![ProgramBench-lite pass-rate per commit](program-bench/trend.svg)
+
+Also served live at `/program-bench` on the arc-webui dashboard.
+
 ## Status
 
 ### Shipped

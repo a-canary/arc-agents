@@ -5,7 +5,7 @@
 
 import { networkInterfaces } from "node:os";
 import type { Dirent } from "node:fs";
-import { readdirSync, statSync } from "node:fs";
+import { readdirSync, statSync, readFileSync, existsSync } from "node:fs";
 import { join, relative, resolve, sep } from "node:path";
 import { open } from "../src/ledger/db";
 import type { Database } from "bun:sqlite";
@@ -224,6 +224,17 @@ export function buildHandler(db: Database) {
     if (url.pathname === "/health") {
       return new Response(JSON.stringify({ ok: true, iface: IFACE }), {
         headers: { "Content-Type": "application/json" },
+      });
+    }
+    // ProgramBench-lite trend graph for the dashboard. Static SVG rendered by
+    // program-bench/run.ts; served raw so the dashboard can <img src> it.
+    if (url.pathname === "/program-bench" || url.pathname === "/program-bench.svg") {
+      const svg = join(import.meta.dir, "..", "program-bench", "trend.svg");
+      if (!existsSync(svg)) {
+        return new Response("no program-bench run yet", { status: 404 });
+      }
+      return new Response(readFileSync(svg), {
+        headers: { "Content-Type": "image/svg+xml" },
       });
     }
     if (url.pathname === "/sse/hitl") {

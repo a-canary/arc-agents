@@ -1,0 +1,6 @@
+{"argv":["-l"],"stdin":"a\nb\nc\n","out":"3"}
+{"argv":["-l"],"stdin":"a\nb\nc","out":"2"}
+{"argv":["-w"],"stdin":"one two three\n","out":"3"}
+{"argv":["-w"],"stdin":"  multiple   spaces  \n","out":"2"}
+{"argv":["-c"],"stdin":"abc\n","out":"4"}
+{"argv":["-c"],"stdin":"","out":"0"}

@@ -1,0 +1,5 @@
+{"stdin":"Hello, World!\n","out":"Uryyb, Jbeyq!\n"}
+{"stdin":"abc XYZ\n","out":"nop KLM\n"}
+{"stdin":"Rot13\n","out":"Ebg13\n"}
+{"stdin":"The quick brown fox.\n","out":"Gur dhvpx oebja sbk.\n"}
+{"stdin":"","out":""}
