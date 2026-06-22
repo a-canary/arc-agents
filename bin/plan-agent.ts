@@ -17,6 +17,7 @@
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
+import { readFileSync } from "node:fs";
 
 export type Plan = { title: string; body_md: string; tracers: string[] };
 
@@ -35,11 +36,26 @@ function clamp(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 3) + "..." : s;
 }
 
+// Per-project grounding for the planner prompt. Prefer the target repo's own
+// CONTEXT.md glossary (proven richer plans); fall back to the baked arc-webui
+// context, or a neutral reversible-first context for an unknown project.
+// ponytail: repo is a sibling of arc-agents (../<project>); a missing file just
+// degrades to the fallback, never throws.
+export function groundingFor(project: string): string {
+  try {
+    const root = join(import.meta.dir, "..", "..");
+    const ctx = readFileSync(join(root, project, "CONTEXT.md"), "utf8").trim();
+    if (ctx) return `PROJECT CONTEXT (${project}) — ubiquitous language + constraints:\n${clamp(ctx, 4000)}`;
+  } catch {}
+  if (project === "arc-webui") return ARCH_CONTEXT;
+  return `PROJECT CONTEXT: ${project}. Respect the project's existing architecture, language, and conventions. Keep every change small and independently reversible.`;
+}
+
 // The prompt describes the JSON shape in WORDS. A literal json template or a code
 // fence in the prompt makes headless MiniMax loop to timeout (proven); never embed one.
-export function buildPlanningPrompt(request: string, context: string): string {
+export function buildPlanningPrompt(request: string, context: string, project = "arc-webui"): string {
   return [
-    "You are a planning agent for the arc-webui project. Turn the development request below into a plan.",
+    "You are a planning agent for the " + project + " project. Turn the development request below into a plan.",
     "",
     "REQUEST: " + request,
     "",
@@ -123,7 +139,7 @@ async function main(): Promise<void> {
   const thread = getFlag(argv, "thread") ?? "t-" + Math.random().toString(36).slice(2, 10);
   const project = getFlag(argv, "project") ?? "arc-webui";
 
-  const prompt = buildPlanningPrompt(request, ARCH_CONTEXT);
+  const prompt = buildPlanningPrompt(request, groundingFor(project), project);
   const plan = generatePlan(prompt) ?? buildFallbackPlan(request);
 
   const planBin = join(import.meta.dir, "plan.ts");

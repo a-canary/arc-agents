@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildPlanningPrompt, parsePlanJson, buildFallbackPlan, planToPlanArgs, ARCH_CONTEXT } from "./plan-agent";
+import { buildPlanningPrompt, parsePlanJson, buildFallbackPlan, planToPlanArgs, ARCH_CONTEXT, groundingFor } from "./plan-agent";
 
 test("buildPlanningPrompt embeds request + context, asks for the json shape, avoids the hang trigger", () => {
   const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: arc-webui is server-rendered.");
@@ -62,4 +62,26 @@ test("planToPlanArgs maps a plan to plan.ts argv, one --tracer per slice, title 
 test("ARCH_CONTEXT names the arc-webui architecture so plans respect the no-build-step constraint", () => {
   expect(ARCH_CONTEXT).toContain("arc-webui");
   expect(ARCH_CONTEXT.toLowerCase()).toContain("server-render");
+});
+
+test("buildPlanningPrompt frames the prompt for the named project, not always arc-webui", () => {
+  const p = buildPlanningPrompt("merge two modules", "CTX", "expert-horde");
+  expect(p).toContain("expert-horde project");
+  expect(p).not.toContain("arc-webui project");
+});
+
+test("groundingFor falls back to ARCH_CONTEXT for arc-webui (no repo CONTEXT.md)", () => {
+  expect(groundingFor("arc-webui")).toBe(ARCH_CONTEXT);
+});
+
+test("groundingFor reads the target repo's CONTEXT.md glossary when present", () => {
+  const g = groundingFor("expert-horde");
+  expect(g).toContain("expert-horde"); // labelled with the project
+  expect(g.toLowerCase()).toContain("horde"); // pulled from the real glossary
+});
+
+test("groundingFor gives a neutral reversible-first context for an unknown project", () => {
+  const g = groundingFor("nonesuch-xyz-123");
+  expect(g).toContain("nonesuch-xyz-123");
+  expect(g.toLowerCase()).toContain("reversible");
 });
