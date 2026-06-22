@@ -410,9 +410,10 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
 
   # Commits ahead of main = the agent produced work — advance to `review` even on
   # a non-zero exit (a crash after committing real work is salvageable) and stop
-  # the failover chain.
+  # the failover chain. reconcile_decision (the unit-tested helper) returns
+  # "review" iff there are commits; "failed" (no commits) means fall over.
   COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count main..HEAD 2>/dev/null || echo 0)"
-  if [[ "$COMMITS_AHEAD" -gt 0 ]]; then
+  if [[ "$(reconcile_decision "$AGENT_RC" "$COMMITS_AHEAD")" == "review" ]]; then
     HEAD_SHA="$(git -C "$WT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
     EVIDENCE="headless reconcile: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
     bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state review --evidence "$EVIDENCE" >/dev/null 2>&1 || true

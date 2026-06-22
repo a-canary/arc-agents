@@ -94,6 +94,46 @@ test("loadConfig throws when one candidate in a group is missing {prompt}", () =
   }
 });
 
+test("loadConfig rejects an interactive candidate that is not last in a group", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const bad = {
+      exec_cli_alias: {
+        grp: [
+          "claude --model opus {prompt}", // interactive (no -p) but not last
+          "pi -p --provider minimax --model MiniMax-M3 {prompt}",
+        ],
+      },
+      pool_caps: { default: 4 },
+      default_alias: "grp",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(bad));
+    expect(() => loadConfig(dir)).toThrow(/interactive.*not last/);
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
+test("loadConfig allows an interactive candidate as the LAST group member", () => {
+  const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
+  try {
+    const ok = {
+      exec_cli_alias: {
+        grp: [
+          "pi -p --provider minimax --model MiniMax-M3 {prompt}",
+          "claude --model opus {prompt}", // interactive, last — reachable
+        ],
+      },
+      pool_caps: { default: 4 },
+      default_alias: "grp",
+    };
+    writeFileSync(join(dir, "config.json"), JSON.stringify(ok));
+    expect(() => loadConfig(dir)).not.toThrow();
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+});
+
 test("loadConfig rejects a `claude --model` alias naming a non-Claude (provider) model", () => {
   const dir = mkdtempSync(join(tmpdir(), "cfg-test-"));
   try {

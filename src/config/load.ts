@@ -54,6 +54,21 @@ export const ConfigSchema = z
           });
         }
       });
+      // Ordering guard: an interactive candidate (no `-p`) exec()s in
+      // worker-shell.sh and never returns, so every LATER candidate in the
+      // group is unreachable. Only the last candidate may be interactive.
+      if (Array.isArray(raw) && raw.length > 1) {
+        raw.forEach((cmd, i) => {
+          const isHeadless = cmd.split(/\s+/).includes("-p");
+          if (!isHeadless && i < raw.length - 1) {
+            ctx.addIssue({
+              code: z.ZodIssueCode.custom,
+              path: ["exec_cli_alias", alias, i],
+              message: `alias "${alias}" candidate ${i} is interactive (no \`-p\`) but not last — an interactive engine exec()s and never falls over, so the ${raw.length - 1 - i} candidate(s) after it are unreachable. Put interactive engines last.`,
+            });
+          }
+        });
+      }
     }
     // fast_alias / smart_alias, when set, must point at an existing entry —
     // a dangling pointer would let select-models register a stale name and
