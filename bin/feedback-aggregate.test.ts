@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
-import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal } from "./feedback-aggregate";
+import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal, parseCategoriesJson, summarizeCategories, type FeedbackRow } from "./feedback-aggregate";
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "fb-agg-"));
@@ -122,4 +122,73 @@ test("confirmsProposal: anonymous untrusted rows (null submitter) count as disti
     { id: "c", source: "public", submitter: null, body_md: "" },
   ]);
   expect(g).toMatchObject({ confirmed: true, untrusted: 3 });
+});
+
+
+// --- Slice 2: the LLM Collector ---
+// The Collector extracts thematic categories + counts + patterns from the whole
+// batch; the Proposal Generator then gates EACH category (confirmsProposal) rather
+// than the batch as one lump. These cover the pure layer; the model call itself
+// (collectCategories) degrades to a single 'general' category, like plan-agent.
+
+const ROWS: FeedbackRow[] = [
+  { id: "fb-1", source: "public", submitter: "u1", body_md: "feed pane unstyled on mobile" },
+  { id: "fb-2", source: "github", submitter: "u2", body_md: "feed text overflows on phones" },
+  { id: "fb-3", source: "public", submitter: "u3", body_md: "kanban columns wrap awkwardly" },
+];
+
+test("parseCategoriesJson maps the model's categories and keeps only real feedback ids", () => {
+  const raw = JSON.stringify({
+    categories: [
+      { label: "mobile feed", pattern: "feed unreadable on small screens", ids: ["fb-1", "fb-2", "fb-bogus"] },
+      { label: "kanban layout", pattern: "columns wrap", ids: ["fb-3"] },
+    ],
+  });
+  const cats = parseCategoriesJson(raw, ROWS);
+  expect(cats).not.toBeNull();
+  expect(cats!.map((c) => c.label)).toEqual(["mobile feed", "kanban layout"]);
+  expect(cats![0]!.ids).toEqual(["fb-1", "fb-2"]); // hallucinated id dropped
+});
+
+test("parseCategoriesJson tolerates a prose/fence wrapper and drops categories with no real ids", () => {
+  const raw =
+    "here you go:\n```json\n" +
+    JSON.stringify({
+      categories: [
+        { label: "real", pattern: "p", ids: ["fb-1"] },
+        { label: "ghost", pattern: "p", ids: ["nope"] },
+      ],
+    }) +
+    "\n```";
+  const cats = parseCategoriesJson(raw, ROWS);
+  expect(cats!.map((c) => c.label)).toEqual(["real"]);
+});
+
+test("parseCategoriesJson returns null on unparseable output (caller falls back)", () => {
+  expect(parseCategoriesJson("the model rambled with no json", ROWS)).toBeNull();
+  expect(parseCategoriesJson("", ROWS)).toBeNull();
+});
+
+test("summarizeCategories attaches per-category counts and the confirmation gate", () => {
+  const sums = summarizeCategories(ROWS, [
+    { label: "mobile feed", pattern: "p", ids: ["fb-1", "fb-2"] }, // 2 distinct untrusted -> not confirmed
+    { label: "kanban layout", pattern: "p", ids: ["fb-3"] }, // 1 untrusted -> not confirmed
+  ]);
+  expect(sums.map((s) => s.count)).toEqual([2, 1]);
+  expect(sums.every((s) => s.gate.confirmed === false)).toBe(true);
+});
+
+test("summarizeCategories: a category with a trusted voice confirms", () => {
+  const rows: FeedbackRow[] = [
+    { id: "a", source: "direct", submitter: "aaron", body_md: "x" },
+    { id: "b", source: "public", submitter: "u1", body_md: "y" },
+  ];
+  const sums = summarizeCategories(rows, [{ label: "t", pattern: "p", ids: ["a", "b"] }]);
+  expect(sums[0]!.gate).toMatchObject({ confirmed: true, trusted: 1, untrusted: 1 });
+  expect(sums[0]!.count).toBe(2);
+});
+
+test("summarizeCategories: three distinct untrusted submitters in one category confirm", () => {
+  const sums = summarizeCategories(ROWS, [{ label: "mobile", pattern: "p", ids: ["fb-1", "fb-2", "fb-3"] }]);
+  expect(sums[0]!.gate).toMatchObject({ confirmed: true, untrusted: 3 });
 });

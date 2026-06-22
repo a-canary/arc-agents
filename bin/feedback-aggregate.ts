@@ -1,15 +1,16 @@
 #!/usr/bin/env bun
-// feedback-aggregate.ts — turn captured end-user feedback into a single Proposal
-// (ADR-0010 planning, ADR-0012 system-change regime). Reads the state='new'
-// feedback rows for a project, frames them as one development request, and spawns
-// the L6 Planning Agent (plan-agent.ts) to mint a PRD(state=review) + tracer tasks
-// parked at the human approval gate. On success, links the aggregated rows to the
-// PRD (theme_id) and flips them state='resolved' so they are not re-aggregated.
+// feedback-aggregate.ts — turn captured end-user feedback into Proposals via a two-tier
+// CAM (ADR-0010 planning, ADR-0012 system-change regime). An LLM Collector groups the
+// state='new' feedback rows for a project into thematic categories (label/pattern/ids);
+// the Proposal Generator then drafts ONE Proposal per CONFIRMED category by spawning the
+// L6 Planning Agent (plan-agent.ts) to mint a PRD(state=review) + tracer tasks parked at
+// the human approval gate. On success, links that category's rows to the PRD (theme_id)
+// and flips them state='resolved'; un-confirmed/uncategorised rows stay 'new'.
 //
-// CONFIRMATION GATE: a Proposal is only drafted when the batch is corroborated —
-// 1 trusted voice OR 3 distinct untrusted submitters (confirmsProposal). Below the
-// threshold, the planner is never spawned and the feedback stays 'new' for a future
-// run. Trust tier is binary (isTrusted); see fb-qupj resolution below.
+// CONFIRMATION GATE: a Proposal is only drafted when a CATEGORY is corroborated —
+// 1 trusted voice OR 3 distinct untrusted submitters (confirmsProposal, applied per
+// category). Below the threshold the planner is never spawned and that category's
+// feedback stays 'new' for a future run. Trust tier is binary (isTrusted); see fb-qupj.
 //
 //   feedback-aggregate.ts [--project P] [--limit N]
 //
@@ -19,10 +20,10 @@
 // contention), the feedback rows are left 'new' for the next run, so nothing is
 // dropped — the human approval gate keeps any weak draft harmless.
 //
-// ponytail: aggregates the whole project batch as one theme. The next slice is the
-// LLM Collector that splits the batch into categories and applies confirmsProposal
-// PER category; until then the gate is batch-level. Trust tier (fb-qupj) is resolved
-// for the gate — source channel maps to a binary trusted/untrusted (isTrusted).
+// ponytail: the Collector is one no-tools MiniMax call and degrades to a single
+// 'general' category on failure (the old batch-level behaviour). Per-category counts/
+// patterns are emitted for /feed + /approvals transparency; wiring that UI is the next
+// slice. Trust tier (fb-qupj) is resolved — source channel maps to binary trust.
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
@@ -30,6 +31,18 @@ import { openWithMigrate } from "../src/ledger/db";
 
 export type FeedbackRow = { id: string; body_md: string; source: string; submitter?: string | null };
 type DB = ReturnType<typeof openWithMigrate>;
+
+/** A thematic group the LLM Collector extracted from the batch: a label, a one-line
+ *  shared pattern, and the feedback ids it covers. */
+export type Category = { label: string; pattern: string; ids: string[] };
+/** A Category enriched with its row count + confirmation gate (the per-category gate). */
+export type CategorySummary = {
+  label: string;
+  pattern: string;
+  count: number;
+  rows: FeedbackRow[];
+  gate: ReturnType<typeof confirmsProposal>;
+};
 
 /** Frame a batch of feedback rows as one development request. The Planning Agent
  *  does the actual decomposition; this only presents the raw feedback and asks
@@ -74,6 +87,79 @@ export function confirmsProposal(rows: FeedbackRow[]): {
   );
   const untrusted = voices.size;
   return { confirmed: trusted >= 1 || untrusted >= 3, trusted, untrusted };
+}
+
+// --- The LLM Collector (CAM collector tier: reads wide, recall-bounded, cheap model) ---
+// Words-only JSON shape; no literal template/fence (a code fence makes headless MiniMax
+// loop to timeout — same finding as plan-agent).
+export function buildCollectorPrompt(project: string, rows: FeedbackRow[]): string {
+  const bullets = rows.map((r) => `- [${r.id}] (${r.source || "anon"}) ${r.body_md.trim()}`).join("\n");
+  return [
+    `You are a feedback collector for the ${project} project. Group the user feedback below into a few thematic categories.`,
+    "",
+    bullets,
+    "",
+    "Output a single JSON object and nothing else — no prose, no code fences. Use exactly this shape:",
+    "- categories: an array of objects, each with three keys",
+    "  - label: a short category name, a string under 60 characters",
+    "  - pattern: one sentence describing the shared pattern across that category's feedback",
+    "  - ids: an array of the bracketed [fb-..] feedback id strings above that belong to this category",
+    "Assign every id to exactly one category. Prefer a few strong categories over many thin ones.",
+  ].join("\n");
+}
+
+// Defensive parse (mirrors plan-agent parsePlanJson): the model may wrap the object in
+// prose or a fence. Strip a fence, take the outermost braces, validate. Hallucinated ids
+// are dropped against the real batch; categories left with no real id are dropped; null
+// if nothing valid survives so the caller falls back to a single 'general' category.
+export function parseCategoriesJson(stdout: string, rows: FeedbackRow[]): Category[] | null {
+  if (!stdout) return null;
+  let s = stdout.trim();
+  const fence = s.match(/```(?:json)?\s*([\s\S]*?)```/);
+  if (fence && fence[1]) s = fence[1].trim();
+  const start = s.indexOf("{");
+  const end = s.lastIndexOf("}");
+  if (start === -1 || end === -1 || end < start) return null;
+  s = s.slice(start, end + 1);
+  let obj: { categories?: unknown };
+  try { obj = JSON.parse(s); } catch { return null; }
+  if (!obj || !Array.isArray(obj.categories)) return null;
+  const valid = new Set(rows.map((r) => r.id));
+  const cats: Category[] = [];
+  for (const c of obj.categories) {
+    if (!c || typeof c !== "object") continue;
+    const o = c as { label?: unknown; pattern?: unknown; ids?: unknown };
+    if (typeof o.label !== "string" || !o.label.trim()) continue;
+    if (!Array.isArray(o.ids)) continue;
+    const ids = o.ids.filter((id): id is string => typeof id === "string" && valid.has(id));
+    if (ids.length === 0) continue;
+    cats.push({ label: o.label.trim(), pattern: typeof o.pattern === "string" ? o.pattern.trim() : "", ids });
+  }
+  return cats.length > 0 ? cats : null;
+}
+
+// One no-tools MiniMax call groups the batch (same shape as plan-agent.generatePlan).
+// On any failure it degrades to a single 'general' category so the batch still reaches
+// the per-category gate — never a dropped request.
+function collectCategories(project: string, rows: FeedbackRow[]): Category[] {
+  const pi = Bun.which("pi") ?? "pi";
+  const r = spawnSync(
+    pi,
+    ["-p", "--no-tools", "--provider", "minimax", "--model", "MiniMax-M3", "--thinking", "high", buildCollectorPrompt(project, rows)],
+    { encoding: "utf8", timeout: 120_000 },
+  );
+  const parsed = r.status === 0 && r.stdout ? parseCategoriesJson(r.stdout, rows) : null;
+  return parsed ?? [{ label: "general", pattern: "all feedback (collector unavailable)", ids: rows.map((x) => x.id) }];
+}
+
+// Attach a count + the confirmation gate to each category. The Proposal Generator only
+// drafts for summaries whose gate.confirmed is true (the per-category gate).
+export function summarizeCategories(rows: FeedbackRow[], categories: Category[]): CategorySummary[] {
+  const byId = new Map(rows.map((r) => [r.id, r]));
+  return categories.map((c) => {
+    const catRows = c.ids.map((id) => byId.get(id)).filter((r): r is FeedbackRow => !!r);
+    return { label: c.label, pattern: c.pattern, count: catRows.length, rows: catRows, gate: confirmsProposal(catRows) };
+  });
 }
 
 function getFlag(argv: string[], name: string): string | undefined {
@@ -124,27 +210,31 @@ async function main(): Promise<void> {
   const db = openWithMigrate();
   const rows = selectNewFeedback(db, project, limit);
   if (rows.length === 0) {
-    process.stdout.write(JSON.stringify({ aggregated: 0, prdId: null }) + "\n");
+    process.stdout.write(JSON.stringify({ aggregated: 0, categories: [] }) + "\n");
     return;
   }
 
-  const gate = confirmsProposal(rows);
-  if (!gate.confirmed) {
-    // Below the confirmation threshold — surface the counts, leave feedback 'new'
-    // for a future run once more corroboration (or a trusted voice) arrives.
-    process.stdout.write(
-      JSON.stringify({ aggregated: 0, prdId: null, reason: "below confirmation threshold", ...gate }) + "\n",
-    );
-    return;
-  }
+  // CAM: the Collector reads wide and groups the batch; the Proposal Generator gates
+  // EACH category. Below-threshold categories (and any feedback the collector left
+  // uncategorised) stay 'new' for a future run — nothing is dropped. Every category's
+  // counts/patterns/gate are surfaced in the output regardless of the gate, for
+  // transparency to /feed and /approvals.
+  const summaries = summarizeCategories(rows, collectCategories(project, rows));
 
-  const prdId = runPlanner(buildAggregateRequest(project, rows), project);
-  if (!prdId) {
-    process.stderr.write("feedback-aggregate: planner produced no PRD; leaving feedback 'new' for next run\n");
-    process.exit(1);
-  }
-  markAggregated(db, rows.map((r) => r.id), prdId);
-  process.stdout.write(JSON.stringify({ aggregated: rows.length, prdId }) + "\n");
+  let aggregated = 0;
+  const categories = summaries.map((sm) => {
+    let prdId: string | null = null;
+    if (sm.gate.confirmed) {
+      prdId = runPlanner(buildAggregateRequest(project, sm.rows), project);
+      if (prdId) {
+        markAggregated(db, sm.rows.map((r) => r.id), prdId);
+        aggregated += sm.rows.length;
+      }
+    }
+    return { label: sm.label, pattern: sm.pattern, count: sm.count, ...sm.gate, prdId };
+  });
+
+  process.stdout.write(JSON.stringify({ aggregated, categories }) + "\n");
 }
 
 if (import.meta.main) { await main(); }
