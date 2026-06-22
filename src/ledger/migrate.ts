@@ -1137,6 +1137,10 @@ export const migrations: Migration[] = [
     // source == trust tier (end-user-untrusted|...|mission) but arc-webui's form writes
     // channels (direct|public|github). Unifying that vocabulary is the gated L1 domain
     // migration — add a CHECK (and/or a separate channel column) once it's decided.
+    // fb-qupj RESOLVED (2026-06-22): the Proposal confirmation gate maps the channel to
+    // a binary trust tier in code (feedback-aggregate.ts isTrusted — direct/mission/
+    // operator = trusted, rest = untrusted). The schema CHECK / separate channel column
+    // stays deferred: the gate reads the free-string source directly, no migration needed.
     up: (db) => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS feedback (
