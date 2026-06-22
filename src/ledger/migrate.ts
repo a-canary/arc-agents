@@ -1172,6 +1172,32 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_state ON feedback(state)");
     },
   },
+  {
+    id: "023_feedback_theme",
+    // Append-only audit of LLM Collector rounds (CAM ledger, keyed project x round).
+    // feedback-aggregate.ts writes one row per category it found in a run — INCLUDING
+    // un-confirmed categories — so the portal can surface "category counts + patterns"
+    // (the directive) regardless of whether a Proposal was drafted. prd_id links the
+    // category to its PRD when the confirmation gate passed; null when it did not.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS feedback_theme (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          round_id   TEXT NOT NULL,
+          project    TEXT NOT NULL DEFAULT '',
+          label      TEXT NOT NULL,
+          pattern    TEXT NOT NULL DEFAULT '',
+          count      INTEGER NOT NULL DEFAULT 0,
+          confirmed  INTEGER NOT NULL DEFAULT 0,
+          trusted    INTEGER NOT NULL DEFAULT 0,
+          untrusted  INTEGER NOT NULL DEFAULT 0,
+          prd_id     TEXT,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_theme_project ON feedback_theme(project, created_at DESC)");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
