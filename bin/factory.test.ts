@@ -346,8 +346,13 @@ test("worker-shell.sh refuses arctest-* claim against canon ledger (no ARC_LEDGE
 
 test("worker-shell.sh refuses arctest-* claim when ARC_LEDGER_DB explicitly points at canon", () => {
   const shell = join(REPO, "bin", "worker-shell.sh");
-  const canonDb = `${process.env.HOME}/vault/ledger.db`;
-  const env = { ...process.env, ARC_LEDGER_DB: canonDb, CLAUDE_BIN: fakeClaude };
+  // Pin ARC_VAULT_HOME so CANON_DB is deterministic. Without it the shell's
+  // _resolve_arc_vault_home() returns the XDG path on hosts lacking ~/vault
+  // (e.g. CI runners), so a hardcoded ~/vault/ledger.db would NOT equal canon
+  // and the guard would not fire — a host-shape dependency, not a real bug.
+  const vaultHome = `${process.env.HOME}/vault`;
+  const canonDb = `${vaultHome}/ledger.db`;
+  const env = { ...process.env, ARC_VAULT_HOME: vaultHome, ARC_LEDGER_DB: canonDb, CLAUDE_BIN: fakeClaude };
   const r = spawnSync("bash", [shell, "arctest-guard-explicit"], { encoding: "utf8", env });
   expect(r.status).toBe(2);
   expect(r.stderr).toContain("arctest-claim-against-canon-refused");
