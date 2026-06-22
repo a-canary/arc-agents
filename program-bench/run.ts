@@ -23,7 +23,7 @@ import { spawnSync } from "node:child_process";
 import {
   readFileSync, writeFileSync, readdirSync, existsSync, mkdtempSync, mkdirSync,
 } from "node:fs";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
 import { tmpdir } from "node:os";
 import { loadConfig, resolveAlias } from "../src/config/load";
 
@@ -58,10 +58,31 @@ function interpreterFor(lang: string): { cmd: string; ext: string } | null {
   return null;
 }
 
+// Candidate programs are arbitrary MiniMax-generated code; the scorer EXECUTES
+// them. Jail each run with bwrap: no network, host filesystem read-only minus the
+// scratch dir, no access to $HOME / vault / pass store. The LLM call (solve, via
+// pi) is NOT jailed — it's a trusted binary that needs the network. Degrades to
+// unsandboxed (loud warning) only if bwrap is missing; skip with PB_NO_SANDBOX=1.
+const USE_SANDBOX = !process.env.PB_NO_SANDBOX &&
+  spawnSync("bwrap", ["--version"], { encoding: "utf8" }).status === 0;
+if (!USE_SANDBOX && !process.env.PB_NO_SANDBOX) {
+  console.warn("program-bench: bwrap unavailable — running candidate code UNSANDBOXED");
+}
+
+function jail(interp: string, args: string[], work: string): { cmd: string; argv: string[] } {
+  if (!USE_SANDBOX) return { cmd: interp, argv: args };
+  const ro = ["/usr", "/bin", "/sbin", "/lib", "/lib64", "/etc/alternatives"].filter(existsSync);
+  const bw = ["--unshare-all", "--die-with-parent", "--new-session", "--proc", "/proc", "--dev", "/dev", "--tmpfs", "/tmp"];
+  for (const p of ro) bw.push("--ro-bind", p, p);
+  bw.push("--bind", work, work, "--chdir", work, "--", interp, ...args);
+  return { cmd: "bwrap", argv: bw };
+}
+
 /** Run one behavioural case against a written program file. Pass = stdout matches
  *  (trailing-whitespace tolerant) AND exit code matches (default 0). */
 function runCase(interp: string, file: string, c: Case): boolean {
-  const r = spawnSync(interp, [file, ...(c.argv ?? [])], {
+  const j = jail(interp, [file, ...(c.argv ?? [])], dirname(file));
+  const r = spawnSync(j.cmd, j.argv, {
     input: c.stdin ?? "",
     encoding: "utf8",
     timeout: 10_000,
