@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
-import { buildAggregateRequest, selectNewFeedback, markAggregated } from "./feedback-aggregate";
+import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal } from "./feedback-aggregate";
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "fb-agg-"));
@@ -74,4 +74,52 @@ test("markAggregated with no ids is a no-op", () => {
   } finally {
     cleanup();
   }
+});
+
+// Confirmation gate (fb-qupj resolved): the Proposal Generator only drafts when a
+// theme is corroborated — 1 trusted voice OR 3 distinct untrusted submitters.
+test("isTrusted: operator channels trusted, end-user/agent channels not", () => {
+  expect(isTrusted("direct")).toBe(true);
+  expect(isTrusted("mission")).toBe(true);
+  expect(["public", "github", "ai-agent", "anon"].some(isTrusted)).toBe(false);
+});
+
+test("confirmsProposal: one trusted voice confirms", () => {
+  const g = confirmsProposal([{ id: "a", source: "direct", submitter: "aaron", body_md: "" }]);
+  expect(g).toMatchObject({ confirmed: true, trusted: 1, untrusted: 0 });
+});
+
+test("confirmsProposal: three distinct untrusted submitters confirm", () => {
+  const g = confirmsProposal([
+    { id: "a", source: "public", submitter: "u1", body_md: "" },
+    { id: "b", source: "github", submitter: "u2", body_md: "" },
+    { id: "c", source: "public", submitter: "u3", body_md: "" },
+  ]);
+  expect(g).toMatchObject({ confirmed: true, trusted: 0, untrusted: 3 });
+});
+
+test("confirmsProposal: two untrusted submitters do NOT confirm", () => {
+  const g = confirmsProposal([
+    { id: "a", source: "public", submitter: "u1", body_md: "" },
+    { id: "b", source: "public", submitter: "u2", body_md: "" },
+  ]);
+  expect(g.confirmed).toBe(false);
+});
+
+test("confirmsProposal: one untrusted submitter spamming 3 rows does NOT confirm", () => {
+  const g = confirmsProposal([
+    { id: "a", source: "public", submitter: "spam", body_md: "" },
+    { id: "b", source: "public", submitter: "spam", body_md: "" },
+    { id: "c", source: "public", submitter: "spam", body_md: "" },
+  ]);
+  expect(g).toMatchObject({ confirmed: false, untrusted: 1 });
+});
+
+test("confirmsProposal: anonymous untrusted rows (null submitter) count as distinct sources", () => {
+  const g = confirmsProposal([
+    { id: "a", source: "public", submitter: null, body_md: "" },
+    { id: "b", source: "public", submitter: null, body_md: "" },
+    { id: "c", source: "public", submitter: null, body_md: "" },
+  ]);
+  expect(g).toMatchObject({ confirmed: true, untrusted: 3 });
 });

@@ -6,6 +6,11 @@
 // parked at the human approval gate. On success, links the aggregated rows to the
 // PRD (theme_id) and flips them state='resolved' so they are not re-aggregated.
 //
+// CONFIRMATION GATE: a Proposal is only drafted when the batch is corroborated —
+// 1 trusted voice OR 3 distinct untrusted submitters (confirmsProposal). Below the
+// threshold, the planner is never spawned and the feedback stays 'new' for a future
+// run. Trust tier is binary (isTrusted); see fb-qupj resolution below.
+//
 //   feedback-aggregate.ts [--project P] [--limit N]
 //
 // PRODUCES proposals only — never spawns implementation workers, merges, or
@@ -14,15 +19,16 @@
 // contention), the feedback rows are left 'new' for the next run, so nothing is
 // dropped — the human approval gate keeps any weak draft harmless.
 //
-// ponytail: aggregates by project only. Weighting feedback by trust tier is the
-// gated L1 domain decision (source==trust-tier vs channel, fb-qupj) — add once
-// that vocabulary is unified; until then every 'new' row counts equally.
+// ponytail: aggregates the whole project batch as one theme. The next slice is the
+// LLM Collector that splits the batch into categories and applies confirmsProposal
+// PER category; until then the gate is batch-level. Trust tier (fb-qupj) is resolved
+// for the gate — source channel maps to a binary trusted/untrusted (isTrusted).
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
 
-export type FeedbackRow = { id: string; body_md: string; source: string };
+export type FeedbackRow = { id: string; body_md: string; source: string; submitter?: string | null };
 type DB = ReturnType<typeof openWithMigrate>;
 
 /** Frame a batch of feedback rows as one development request. The Planning Agent
@@ -40,6 +46,36 @@ export function buildAggregateRequest(project: string, rows: FeedbackRow[]): str
   ].join("\n");
 }
 
+// Trust tier (fb-qupj resolved 2026-06-22). The portal writes feedback CHANNELS, but
+// the confirmation gate needs a binary trust tier. Operator channels are trusted —
+// the :8080 portal is Aaron-only over tailscale, so `direct` IS the operator; mission/
+// operator are explicit. Everyone else (public, github, ai-agent, anon) is untrusted.
+const TRUSTED_SOURCES = new Set(["direct", "mission", "operator"]);
+export function isTrusted(source: string): boolean {
+  return TRUSTED_SOURCES.has(source);
+}
+
+// The Proposal Generator only drafts when a theme is corroborated: 1 trusted voice,
+// or 3 DISTINCT untrusted submitters. Distinct-by-submitter stops one untrusted voice
+// spamming N rows to fake confirmation.
+// ponytail: a null submitter counts as its own distinct source so anonymous public
+// feedback can still corroborate; the anti-spam ceiling is rate-limiting at intake,
+// not here (3 anonymous rows could be one person — tighten at the /feedback boundary).
+export function confirmsProposal(rows: FeedbackRow[]): {
+  confirmed: boolean;
+  trusted: number;
+  untrusted: number;
+} {
+  const trusted = rows.filter((r) => isTrusted(r.source)).length;
+  const voices = new Set(
+    rows
+      .filter((r) => !isTrusted(r.source))
+      .map((r) => (r.submitter && r.submitter.trim()) || `id:${r.id}`),
+  );
+  const untrusted = voices.size;
+  return { confirmed: trusted >= 1 || untrusted >= 3, trusted, untrusted };
+}
+
 function getFlag(argv: string[], name: string): string | undefined {
   const i = argv.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`));
   if (i === -1) return undefined;
@@ -51,7 +87,7 @@ function getFlag(argv: string[], name: string): string | undefined {
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source FROM feedback WHERE state='new' AND project=? ORDER BY created_at ASC LIMIT ?",
+      "SELECT id, body_md, source, submitter FROM feedback WHERE state='new' AND project=? ORDER BY created_at ASC LIMIT ?",
     )
     .all(project, limit);
 }
@@ -89,6 +125,16 @@ async function main(): Promise<void> {
   const rows = selectNewFeedback(db, project, limit);
   if (rows.length === 0) {
     process.stdout.write(JSON.stringify({ aggregated: 0, prdId: null }) + "\n");
+    return;
+  }
+
+  const gate = confirmsProposal(rows);
+  if (!gate.confirmed) {
+    // Below the confirmation threshold — surface the counts, leave feedback 'new'
+    // for a future run once more corroboration (or a trusted voice) arrives.
+    process.stdout.write(
+      JSON.stringify({ aggregated: 0, prdId: null, reason: "below confirmation threshold", ...gate }) + "\n",
+    );
     return;
   }
 
