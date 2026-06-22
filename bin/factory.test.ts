@@ -388,6 +388,11 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
     PATH: strippedPath,
     ARC_LEDGER_DB: dbPath,
     CLAUDE_BIN: fakeClaude,
+    // Pin the worktree base to this checkout. The row's project=arc-agents
+    // else resolves to ~/repos/arc-agents (resolve_repo default), which is
+    // absent on CI runners — the worker would die "project repo not found"
+    // after claiming and strand the row at `claimed`.
+    ARC_PROJECT_REPO_ARC_AGENTS: REPO,
   };
   const r = spawnSync("bash", [shell, "w-stripped"], { encoding: "utf8", env });
   expect(r.status).toBe(0);
@@ -607,7 +612,9 @@ test("worker-shell.sh claims atomically: only one of two parallel shells wins fo
   // Prepend the fake-pi bin dir: the winner resolves to the `pi -p` headless
   // engine and must find a controllable `pi` rather than the real (blocking)
   // one. The fake self-reports terminal and exits, so the winner returns fast.
-  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude };
+  // ARC_PROJECT_REPO_ARC_AGENTS pins the worktree base to this checkout — the
+  // row's project=arc-agents else resolves to ~/repos/arc-agents, absent on CI.
+  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude, ARC_PROJECT_REPO_ARC_AGENTS: REPO };
   // Run two shells in parallel; both attempt claim, exactly one should succeed.
   const r1 = spawnSync("bash", [shell, "w1"], { encoding: "utf8", env });
   const r2 = spawnSync("bash", [shell, "w2"], { encoding: "utf8", env });
