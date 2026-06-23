@@ -14,6 +14,19 @@ test("buildPlanningPrompt embeds request + context, asks for the json shape, avo
   expect(p).not.toContain('{"title"');
 });
 
+test("buildPlanningPrompt drives real repo research (CONTEXT.md + ADRs) and asks for user stories", () => {
+  const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: arc-webui is server-rendered.");
+  // the regression was a blind no-research single-shot. The prompt must now tell the
+  // agent to ground itself in the actual repo before planning.
+  expect(p).toContain("CONTEXT.md");
+  expect(p.toLowerCase()).toContain("docs/adr");
+  // the good PRDs carry an extensive user-story list — the prompt must demand one.
+  expect(p).toContain("User Stories");
+  // still fence-free (no hang trigger, harmless under any engine) and still names the keys.
+  expect(p).not.toContain("```");
+  expect(p).toContain("body_md");
+});
+
 test("parsePlanJson reads a clean object", () => {
   const out = JSON.stringify({ title: "Dark mode", body_md: "## Problem\nx", tracers: ["a", "b"] });
   const plan = parsePlanJson(out);
