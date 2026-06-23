@@ -153,7 +153,13 @@ async function main(): Promise<void> {
   const project = getFlag(argv, "project") ?? "arc-webui";
 
   const prompt = buildPlanningPrompt(request, groundingFor(project), project);
-  const plan = generatePlan(prompt, project) ?? buildFallbackPlan(request);
+  let plan = generatePlan(prompt, project);
+  if (!plan) {
+    // Make degradation loud: a slow repo can hit the 300s timeout and silently fall
+    // back to a bare-request PRD — the exact regression this engine swap fixed.
+    process.stderr.write("plan-agent: research engine returned no plan — using bare-request fallback (check claude binary / 300s timeout)\n");
+    plan = buildFallbackPlan(request);
+  }
 
   const planBin = join(import.meta.dir, "plan.ts");
   const r = spawnSync(process.execPath, [planBin, ...planToPlanArgs(plan, project, thread)], {
