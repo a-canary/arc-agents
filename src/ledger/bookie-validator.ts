@@ -64,6 +64,19 @@ export type CreateInput = {
 
 export type ValidationError = { field: string; message: string };
 
+// ADR A-0005 / cleanup-plan-dedupe-retire-orphan-projec: project slugs are
+// canonical lower-case. Mixed-case writes caused a case-sensitive dupe split
+// ("Trading" vs "trading") that the dedupe migration had to repair. Guard at
+// every CLI + webui write path so the drift can't recur.
+export function validateProjectLowerCase(name: string | undefined | null): ValidationError[] {
+  if (name === undefined || name === null || name === "") return [];
+  if (name === name.toLowerCase()) return [];
+  return [{
+    field: "--project",
+    message: `project must be lower-case (per A-0005); use '${name.toLowerCase()}' instead of '${name}'`,
+  }];
+}
+
 export function validateCreate(input: CreateInput, positional: string[] = []): ValidationError[] {
   const errs: ValidationError[] = [];
 
@@ -72,6 +85,9 @@ export function validateCreate(input: CreateInput, positional: string[] = []): V
       field: "args",
       message: `positional args not allowed for create: got [${positional.join(", ")}]. use --title, --kind, --type, --project`,
     });
+  }
+  if (input.project !== undefined) {
+    errs.push(...validateProjectLowerCase(input.project));
   }
 
   if (!input.title || input.title.startsWith("--")) {

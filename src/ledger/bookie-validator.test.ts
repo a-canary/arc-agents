@@ -3,6 +3,7 @@ import {
   validateCreate,
   validateStateTransition,
   validateBookieWrite,
+  validateProjectLowerCase,
   KIND_VALUES,
   TYPE_VALUES,
   type BookieWriteInput,
@@ -155,4 +156,35 @@ test("KIND_VALUES includes 'sprint'", () => {
 test("validateCreate: kind='sprint' returns no --kind error", () => {
   const errs = validateCreate({ title: "ok", kind: "sprint", type: "mvp" });
   expect(errs.some((e) => e.field === "--kind")).toBe(false);
+});
+
+// ── A-0005: project slugs are canonical lower-case ────────────────────────────
+
+test("validateProjectLowerCase rejects mixed-case with canonical suggestion", () => {
+  const errs = validateProjectLowerCase("Trading");
+  expect(errs.length).toBe(1);
+  expect(errs[0]!.field).toBe("--project");
+  expect(errs[0]!.message).toContain("trading");
+  expect(errs[0]!.message).toContain("Trading");
+});
+
+test("validateProjectLowerCase accepts lower-case", () => {
+  expect(validateProjectLowerCase("trading")).toEqual([]);
+  expect(validateProjectLowerCase("arc-agents")).toEqual([]);
+  expect(validateProjectLowerCase("arc-webui")).toEqual([]);
+});
+
+test("validateProjectLowerCase ignores empty/undefined (handled separately)", () => {
+  expect(validateProjectLowerCase(undefined)).toEqual([]);
+  expect(validateProjectLowerCase(null)).toEqual([]);
+  expect(validateProjectLowerCase("")).toEqual([]);
+});
+
+test("validateCreate rejects mixed-case --project", () => {
+  const errs = validateCreate({ title: "ok", kind: "task", type: "mvp", project: "Trading" });
+  expect(errs.some((e) => e.field === "--project" && e.message.includes("lower-case"))).toBe(true);
+});
+
+test("validateCreate accepts lower-case --project", () => {
+  expect(validateCreate({ title: "ok", kind: "task", type: "mvp", project: "trading" })).toEqual([]);
 });
