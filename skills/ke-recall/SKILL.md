@@ -15,13 +15,15 @@ Read-only search over the KE vault (`~/vault/ke/`). FTS5-indexed at `~/vault/ke.
 
 ## How
 
-1. `bun ~/repos/arc-agents/bin/ke.ts recall "<query>" [--limit 5] [--scope decisions|failures|fixes|facts|concepts|*]`.
+1. `bun ~/repos/ke/bin/ke-tool.ts recall "<query>" [--limit 5] [--scope decisions|failures|fixes|facts|concepts|*]` (or `ke recall …` if installed on PATH).
 2. CLI runs `SELECT path, snippet(ke, …), bm25(ke) FROM ke WHERE ke MATCH ? ORDER BY bm25(ke) LIMIT ?`.
 3. Output is JSON lines: `{path, score, excerpt, headings}`.
 
 ## Index refresh
 
-If a recall returns stale paths, run `bun ~/repos/arc-agents/bin/ke.ts reindex`. Cheap (<5s for typical vault).
+If a recall returns stale paths, run `bun ~/repos/ke/bin/ke-tool.ts compile`. Cheap (<5s for typical vault).
+
+> **Runtime caveat — bun is currently broken for ke index ops.** `ke-tool.ts` depends on `better-sqlite3`, which bun does not yet support (bun issue #4290). Under bun, `recall`/`search`/`compile` fail with `'better-sqlite3' is not yet supported in Bun. In the meantime, you could try bun:sqlite which has a similar API.` If you suspect a new note is missing from recall, first cross-check with `ke list <scope>` (filesystem scan, works under bun), then reindex under node: `npx tsx ~/repos/ke/bin/ke-tool.ts compile`. Never trust bun-side recall as a true negative until the index is rebuilt under node.
 
 ## Scopes
 

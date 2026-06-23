@@ -40,9 +40,12 @@ source: session-<short-id>
 
 ## Procedure
 
-1. `bun ~/repos/arc-agents/bin/ke.ts learn --scope <scope> --title "<headline>" --body "<md>" [--tags "a,b"]`.
-2. CLI writes file, then runs `INSERT INTO ke(path, body) VALUES(?, ?)` to update FTS index.
+1. `bun ~/repos/ke/bin/ke-tool.ts learn --scope <scope> --title "<headline>" --body "<md>" [--tags "a,b"]` (or `ke learn …` if installed on PATH).
+2. CLI writes file, then runs `INSERT INTO ke(path, body) VALUES(?, ?)` to update the FTS index at `~/vault/ke/_index/vec/ke.sqlite`.
 3. Returns the new file path.
+
+> **Runtime caveat — bun is currently broken for ke index ops.** `ke-tool.ts` depends on `better-sqlite3`, which bun does not yet support (bun issue #4290). `bun ke-tool.ts … compile|search|recall` fails with `'better-sqlite3' is not yet supported in Bun. In the meantime, you could try bun:sqlite which has a similar API.` Result: a `ke learn` under bun writes the note to disk but does NOT insert into the FTS index, so `ke recall` will miss it until reindexed.
+> **Workaround:** run index-touching verbs under `npx tsx ~/repos/ke/bin/ke-tool.ts …` (node). The file write itself works under bun — only the index insert fails — but to be safe, run the whole command under node. After fixing, verify with `ke list <scope>` (filesystem scan) + `ke search <title-keyword>` (FTS); both should return the new note.
 
 ## Anti-patterns
 
