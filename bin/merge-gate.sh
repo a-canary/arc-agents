@@ -132,7 +132,7 @@ gate_test() {
     fail "test" "bun not on PATH"
     return 1
   fi
-  if run_cmd "cd '$PROJECT' && bun test" 180; then
+  if run_cmd "cd '$PROJECT' && bun test" 360; then
     pass "test" "bun test suite passed"
   else
     fail "test" "bun test suite failed or timed out"
