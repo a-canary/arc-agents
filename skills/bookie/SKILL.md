@@ -15,7 +15,13 @@ Agents do NOT write to `~/vault/ledger.db` directly. They invoke bookie with row
 
 ## Enums
 
-- `kind`: `task`, `chat_in`, `encounter_reply`, `prd`
+Authoritative `kind` list lives in `src/ledger/bookie-validator.ts:KIND_VALUES` and the SQL CHECK at `src/ledger/migrate.ts:417` (extended to `sprint` by migration `019_issue_kind_sprint`). The validator is the source of truth — if these two diverge, fix the SQL/validator, not this doc.
+
+- `kind`: `task`, `event`, `reply`, `prd`, `prefetch`, `sprint`
+  - `task`, `prd` — bookie chokepoint: created via `bin/ledger.ts create --kind task|prd …`.
+  - `event`, `reply` — UX modules own writes (require `source_module` per ADR 0002). `bin/arc-chat.ts` writes `kind='event'` rows directly when a user posts; the interviewer claim path writes `kind='reply'` rows when the chat surface turns out (see ADR 0003). Bookie does not mediate these; the SQL CHECK is the only enforcement.
+  - `prefetch` — internal: webui prefetch/cache rows.
+  - `sprint` — sprint children: chained TDD slices for a PRD, parent-blocked. Migration `019_issue_kind_sprint` widens the parent's unblock trigger so sprint parents re-ready when ALL blockers reach a terminal state (merged|failed|cancelled), not just merged.
 - `type` (priority order — claim picks lowest first): `HITL`, `cron`, `mvp`, `security`, `quality`, `scale`, `efficiency`, `deferred`
 - `state` (terminal: `merged`, `cancelled`): `ready`, `claimed`, `wip`, `blocked`, `review`, `merged`, `cancelled`, `failed`
 
