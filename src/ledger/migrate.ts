@@ -1137,6 +1137,10 @@ export const migrations: Migration[] = [
     // source == trust tier (end-user-untrusted|...|mission) but arc-webui's form writes
     // channels (direct|public|github). Unifying that vocabulary is the gated L1 domain
     // migration — add a CHECK (and/or a separate channel column) once it's decided.
+    // fb-qupj RESOLVED (2026-06-22): the Proposal confirmation gate maps the channel to
+    // a binary trust tier in code (feedback-aggregate.ts isTrusted — direct/mission/
+    // operator = trusted, rest = untrusted). The schema CHECK / separate channel column
+    // stays deferred: the gate reads the free-string source directly, no migration needed.
     up: (db) => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS feedback (
@@ -1166,6 +1170,32 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_project ON feedback(project)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_created_at ON feedback(created_at DESC)");
       db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_state ON feedback(state)");
+    },
+  },
+  {
+    id: "023_feedback_theme",
+    // Append-only audit of LLM Collector rounds (CAM ledger, keyed project x round).
+    // feedback-aggregate.ts writes one row per category it found in a run — INCLUDING
+    // un-confirmed categories — so the portal can surface "category counts + patterns"
+    // (the directive) regardless of whether a Proposal was drafted. prd_id links the
+    // category to its PRD when the confirmation gate passed; null when it did not.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS feedback_theme (
+          id         INTEGER PRIMARY KEY AUTOINCREMENT,
+          round_id   TEXT NOT NULL,
+          project    TEXT NOT NULL DEFAULT '',
+          label      TEXT NOT NULL,
+          pattern    TEXT NOT NULL DEFAULT '',
+          count      INTEGER NOT NULL DEFAULT 0,
+          confirmed  INTEGER NOT NULL DEFAULT 0,
+          trusted    INTEGER NOT NULL DEFAULT 0,
+          untrusted  INTEGER NOT NULL DEFAULT 0,
+          prd_id     TEXT,
+          created_at INTEGER NOT NULL DEFAULT (strftime('%s','now'))
+        );
+      `);
+      db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_theme_project ON feedback_theme(project, created_at DESC)");
     },
   },
 ];
