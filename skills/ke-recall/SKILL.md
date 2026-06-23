@@ -23,8 +23,6 @@ Read-only search over the KE vault (`~/vault/ke/`). FTS5-indexed at `~/vault/ke.
 
 If a recall returns stale paths, run `bun ~/repos/ke/bin/ke-tool.ts compile`. Cheap (<5s for typical vault).
 
-> **Runtime caveat — bun is currently broken for ke index ops.** `ke-tool.ts` depends on `better-sqlite3`, which bun does not yet support (bun issue #4290). Under bun, `recall`/`search`/`compile` fail with `'better-sqlite3' is not yet supported in Bun. In the meantime, you could try bun:sqlite which has a similar API.` If you suspect a new note is missing from recall, first cross-check with `ke list <scope>` (filesystem scan, works under bun), then reindex under node: `npx tsx ~/repos/ke/bin/ke-tool.ts compile`. Never trust bun-side recall as a true negative until the index is rebuilt under node.
-
 ## Scopes
 
 `~/vault/ke/` subdirs: agents, benchmark, comparisons, concepts, decisions, dev, distilled, facts, failures, fixes. Pass `--scope <name>` to restrict.
