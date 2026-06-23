@@ -7,17 +7,20 @@
 //
 //   plan-agent.ts --request "<text>" [--thread T] [--project P]
 //
-// Design (proven by experiment, see commit msg): a headless tool-driving agent loop
-// (read files / ke recall / bash plan.ts) times out unreliably under MiniMax. A
-// single no-tools generation is fast and reliable. So the I/O is deterministic here
-// in the wrapper, and the model does exactly one thing it is good at headlessly:
-// generate a structured plan as JSON. On any model/parse failure we fall back to the
-// deterministic emitter shape, so a bad run degrades to slice-1/2 behaviour, never
-// to a dropped request. The human approval gate keeps any weak draft harmless.
+// Design: the model IS the planning agent. We run one headless `claude -p` with
+// read-only tools (Read/Grep/Glob) and its cwd set to the target repo, so it actually
+// researches the codebase — CONTEXT.md glossary, docs/adr/, the modules the request
+// touches — before emitting a structured PRD as JSON. (The earlier no-tools MiniMax
+// single-shot did zero research and produced thin, generic plans; the pi upgrade then
+// 429'd the hosted token plan and every draft degraded to the bare-request fallback.)
+// The wrapper stays deterministic: it builds the prompt, parses the JSON, and on any
+// failure (non-zero exit, timeout, unparseable output) falls back to the deterministic
+// emitter shape — a bad run degrades, never drops the request. The human approval gate
+// keeps any weak draft harmless.
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { readFileSync } from "node:fs";
+import { readFileSync, existsSync } from "node:fs";
 
 export type Plan = { title: string; body_md: string; tracers: string[] };
 
@@ -55,16 +58,22 @@ export function groundingFor(project: string): string {
 // fence in the prompt makes headless MiniMax loop to timeout (proven); never embed one.
 export function buildPlanningPrompt(request: string, context: string, project = "arc-webui"): string {
   return [
-    "You are a planning agent for the " + project + " project. Turn the development request below into a plan.",
+    "You are a planning agent for the " + project + " project. Turn the development request below into a thorough PRD.",
     "",
     "REQUEST: " + request,
     "",
     context,
     "",
-    "Output a single JSON object and nothing else — no prose, no code fences. Use exactly these keys:",
+    "RESEARCH FIRST. You have read-only tools (Read, Grep, Glob) and your working directory is the " + project + " repository. Before you plan, ground yourself in the real codebase:",
+    "- Read CONTEXT.md (the ubiquitous-language glossary) and reuse its exact terms.",
+    "- Scan docs/adr/ for any ADR that constrains this area and respect its decisions.",
+    "- Grep and read the existing modules the request touches, so the plan reuses what is there instead of reinventing it.",
+    "Do the reading before you write the plan. A plan that ignores the existing code or contradicts an ADR is wrong.",
+    "",
+    "Then output a single JSON object and nothing else — no prose, no code fences. Use exactly these keys:",
     "- title: a concise plan title, a string under 80 characters",
-    "- body_md: a markdown PRD body containing the sections Problem, Solution, and Decisions, as a string",
-    "- tracers: an array of 1 to 3 strings; each a small vertical slice, smallest first, each shippable on its own",
+    "- body_md: a markdown PRD body, as a string, with these sections in order: Problem (from the user's perspective); Solution (from the user's perspective); User Stories (a long numbered list, each line of the form 'As an <actor>, I want <feature>, so that <benefit>', covering every aspect of the feature); Implementation Decisions (modules to build or modify, their interfaces, schema and contract changes — prose only, no file paths or code snippets); Testing Decisions (which modules to test and what a good behavioural test looks like); Out of Scope.",
+    "- tracers: an array of 1 to 3 strings; each a small vertical slice, smallest first, each shippable on its own and independently grabbable by a worker",
   ].join("\n");
 }
 
@@ -119,14 +128,18 @@ function getFlag(argv: string[], name: string): string | undefined {
   return a.includes("=") ? a.slice(a.indexOf("=") + 1) : argv[i + 1];
 }
 
-// Generate the plan via one no-tools MiniMax call (policy: pi -p --provider minimax).
-// Returns null on non-zero exit, timeout, or unparseable output → caller falls back.
-function generatePlan(prompt: string): Plan | null {
-  const pi = Bun.which("pi") ?? "pi";
+// Generate the plan with one headless `claude -p` run that researches the target repo
+// (read-only Read/Grep/Glob, cwd = the repo) before emitting the PRD JSON. The prompt
+// goes in via stdin so the variadic --allowedTools list can't swallow it. Returns null
+// on non-zero exit, timeout, or unparseable output → caller falls back.
+function generatePlan(prompt: string, project: string): Plan | null {
+  const claude = Bun.which("claude") ?? "claude";
+  const repo = join(import.meta.dir, "..", "..", project);
+  const cwd = existsSync(repo) ? repo : import.meta.dir;
   const r = spawnSync(
-    pi,
-    ["-p", "--no-tools", "--provider", "minimax", "--model", "MiniMax-M3", "--thinking", "high", prompt],
-    { encoding: "utf8", timeout: 150_000 },
+    claude,
+    ["-p", "--allowedTools", "Read", "Grep", "Glob"],
+    { encoding: "utf8", timeout: 300_000, cwd, input: prompt },
   );
   if (r.status !== 0 || !r.stdout) return null;
   return parsePlanJson(r.stdout);
@@ -140,7 +153,7 @@ async function main(): Promise<void> {
   const project = getFlag(argv, "project") ?? "arc-webui";
 
   const prompt = buildPlanningPrompt(request, groundingFor(project), project);
-  const plan = generatePlan(prompt) ?? buildFallbackPlan(request);
+  const plan = generatePlan(prompt, project) ?? buildFallbackPlan(request);
 
   const planBin = join(import.meta.dir, "plan.ts");
   const r = spawnSync(process.execPath, [planBin, ...planToPlanArgs(plan, project, thread)], {
