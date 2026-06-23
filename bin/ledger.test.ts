@@ -1713,3 +1713,69 @@ test("update non-merged states are unaffected by precondition (strict)", async (
     cleanup();
   }
 });
+
+// ── A-0005 / cleanup-plan-dedupe-retire-orphan-projec: project must be lower-case ──
+
+test("create --project rejects mixed-case with canonical suggestion", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await runRaw(db, "create", "--kind", "task", "--type", "mvp", "--title", "t", "--project", "Trading");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("project must be lower-case");
+    expect(r.stderr.toString()).toContain("trading");
+  } finally {
+    cleanup();
+  }
+});
+
+test("create --project accepts lower-case", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "t", "--project", "arc-agents")) as { id: string };
+    expect(c.id).toBeTruthy();
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --project rejects mixed-case", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "t", "--project", "arc-agents")) as { id: string };
+    const r = await runRaw(db, "update", c.id, "--project", "Trading");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("project must be lower-case");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --project accepts lower-case (regression: existing test relies on this)", async () => {
+  // The pre-existing 'update --agent and --project patch the row' test uses
+  // --project onenation — guard must not break that.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "t", "--project", "arc-agents")) as { id: string };
+    await run(db, "update", c.id, "--project", "onenation");
+    const shown = (await run(db, "show", c.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("onenation");
+  } finally {
+    cleanup();
+  }
+});
+
+test("feedback --project rejects mixed-case", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await runRaw(db, "feedback", "--project", "Trading", "--body", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("project must be lower-case");
+  } finally {
+    cleanup();
+  }
+});

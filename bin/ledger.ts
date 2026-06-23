@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
-import { validateCreate, validateDecompose, validateStateTransition, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
+import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
@@ -427,6 +427,8 @@ switch (cmd) {
     }
     const projectFlag = getFlag("project");
     if (projectFlag !== undefined) {
+      const projectErrs = validateProjectLowerCase(projectFlag);
+      if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
       sets.push("project=?");
       vals.push(projectFlag);
     }
@@ -463,6 +465,8 @@ switch (cmd) {
     // their task); --context anchors it to a page/topic; --task links an origin issue.
     const source = getFlag("source") ?? "ai-agent";
     const project = getFlag("project") ?? die("--project required");
+    const projectErrs = validateProjectLowerCase(project);
+    if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
     const body = getFlag("body") ?? die("--body required");
     const id = `fb-${shortId()}`;
     const db = openWithMigrate(getFlag("db"));
@@ -642,6 +646,8 @@ switch (cmd) {
       die(`--skill must be one of: ${KNOWN_HYGIENE_SKILLS.join(", ")}`);
     }
     if (!title || title.startsWith("--")) die("--title required");
+    const projectErrs = validateProjectLowerCase(getFlag("project"));
+    if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
     const existing = db
@@ -704,6 +710,8 @@ switch (cmd) {
     const observed = getFlag("observed-in-task");
     const agent = getFlag("agent") ?? "bookie";
     const project = getFlag("project") ?? "arc-agents";
+    const projectErrs = validateProjectLowerCase(project);
+    if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
     const created: { id: string; title: string; type: string }[] = [];
     for (const r of rows) {
       const id = mintId(db, r.title);
