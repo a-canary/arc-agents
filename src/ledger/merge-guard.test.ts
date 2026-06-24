@@ -39,6 +39,17 @@ test("checkMergeGuard: refuses project=cli-proxy with pr_url pointing at arc-age
   expect(refusal).toContain("merged"); // a worker can grep for the reason
 });
 
+// Hygiene followup clarify-docs-bin-ledger-ts-update-refuse:
+// the cross-project convention (e.g. ke hygiene rows filed in the
+// arc-agents ledger but PR'd to a-canary/ke) is a legitimate use of
+// --in-place. The refusal message must point workers there so they
+// don't escalate via HITL when the right answer is the in-place flag.
+test("checkMergeGuard: refusal mentions --in-place as a valid escape (cross-project convention)", () => {
+  const refusal = checkMergeGuard("arc-agents", "https://github.com/a-canary/ke/pull/62");
+  expect(refusal).not.toBeNull();
+  expect(refusal).toContain("--in-place");
+});
+
 test("checkMergeGuard: accepts project=cli-proxy with pr_url at a-canary/cli-proxy", () => {
   expect(checkMergeGuard("cli-proxy", "https://github.com/a-canary/cli-proxy/pull/1")).toBeNull();
   expect(checkMergeGuard("cli-proxy", "a-canary/cli-proxy/pull/1")).toBeNull();

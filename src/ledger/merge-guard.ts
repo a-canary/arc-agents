@@ -53,6 +53,13 @@ export function checkMergeGuard(
   return (
     `refuse merged: row project='${project}' expects PR at ${expected}, ` +
     `but pr_url='${prUrl}' resolves to ${actual}. ` +
-    `Re-target the PR to ${expected} or escalate via HITL for project reassignment.`
+    // Cross-project convention (e.g. ke hygiene rows filed in the
+    // arc-agents ledger but PR'd to a-canary/ke) is a legitimate use of
+    // --in-place: workers must be told the flag is a valid escape, not
+    // just the HITL escalation path. Escalate via HITL only when
+    // --in-place doesn't fit. Hygiene: clarify-docs-bin-ledger-ts-update-refuse.
+    `Re-target the PR to ${expected}, ` +
+    `or use --in-place with --evidence if this is a cross-project convention, ` +
+    `or escalate via HITL for project reassignment.`
   );
 }
