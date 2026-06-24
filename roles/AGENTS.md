@@ -53,7 +53,7 @@ CONTEXT.md term: [pattern](../CONTEXT.md#pattern).
 Every session must reduce ambient confusion. Before AFK shutdown:
 
 - **Update docs on sight** — if you learned a term, add it to CONTEXT.md. If you made a scoped decision, add it to CHOICES.md. If a path/filename/agent-name reference is broken, fix it.
-- **Use `to-trash`, not `rm`** — moves to `~/trash/<unix-ts>_<name>-<YYYYMMDD>/` with 30-day retention. Always reversible. (When ported.)
+- **Use `to-trash`, not `rm`** — moves to `~/trash/<unix-ts>__<rel-path-with-slashes-as-double-dashes>/` with 30-day retention. Always reversible. (When ported. See arc-skills/skills/trash-retired-files/SKILL.md — the `<rel-path>` suffix disambiguates files with the same basename in different directories.)
 - **`ke-learn` on stop** — the stop hook queues distillation; you don't need to invoke it manually, but you *can* add explicit `# learn: ...` markers in your journal for high-value insights.
 - **Commit as the configured git user** — never hardcode (see CHOICES `I-0006`).
 
