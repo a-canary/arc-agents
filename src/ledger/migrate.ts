@@ -1152,7 +1152,12 @@ export const migrations: Migration[] = [
           context        TEXT,
           origin_task_id TEXT REFERENCES issues(id),
           theme_id       TEXT,
-          state          TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','resolved')),
+          -- Superset state vocab reconciling both writers. Rows are born OPEN (agent CLI
+          -- + webui form); the aggregator moves a consumed row to DEV once a PRD exists;
+          -- webui owns OPEN→DEV→CLOSED triage. 'new'/'resolved' kept for back-compat with
+          -- rows older writers left behind (webui still migrates legacy 'new'→'OPEN').
+          state          TEXT NOT NULL DEFAULT 'OPEN'
+                         CHECK (state IN ('new','OPEN','DEV','CLOSED','resolved')),
           created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
         );
       `);

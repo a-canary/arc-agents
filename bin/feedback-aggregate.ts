@@ -169,20 +169,38 @@ function getFlag(argv: string[], name: string): string | undefined {
   return a.includes("=") ? a.slice(a.indexOf("=") + 1) : argv[i + 1];
 }
 
-/** Fetch up to `limit` unaggregated ('new') feedback rows for a project, oldest first. */
+/** Fetch up to `limit` unprocessed (OPEN) feedback rows for a project, oldest first. */
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source, submitter FROM feedback WHERE state='new' AND project=? ORDER BY created_at ASC LIMIT ?",
+      "SELECT id, body_md, source, submitter FROM feedback WHERE state='OPEN' AND project=? ORDER BY created_at ASC LIMIT ?",
     )
     .all(project, limit);
 }
 
-/** Link a batch of feedback rows to the PRD they produced and mark them resolved. */
+/** Link a batch of feedback rows to the PRD they produced and move them to DEV — a PRD
+ *  now exists, so they leave the OPEN triage queue (webui owns the later DEV→CLOSED). */
 export function markAggregated(db: DB, ids: string[], themeId: string): void {
   if (ids.length === 0) return;
   const ph = ids.map(() => "?").join(",");
-  db.run(`UPDATE feedback SET state='resolved', theme_id=? WHERE id IN (${ph})`, [themeId, ...ids]);
+  db.run(`UPDATE feedback SET state='DEV', theme_id=? WHERE id IN (${ph})`, [themeId, ...ids]);
+}
+
+/** The trigger gate (the requested run condition). A scheduled tick spends LLM effort
+ *  only when the OPEN backlog earns a planner: ≥1 trusted voice (the operator spoke —
+ *  act now) OR >5 untrusted rows (enough end-user/agent signal piled up). */
+export function triggerGate(rows: FeedbackRow[]): { fire: boolean; trusted: number; untrusted: number } {
+  const trusted = rows.filter((r) => isTrusted(r.source)).length;
+  const untrusted = rows.length - trusted;
+  return { fire: trusted >= 1 || untrusted > 5, trusted, untrusted };
+}
+
+/** Projects with at least one OPEN feedback row — the tick's work-list for --all-projects. */
+export function projectsWithOpenFeedback(db: DB): string[] {
+  return db
+    .query<{ project: string }, []>("SELECT DISTINCT project FROM feedback WHERE state='OPEN'")
+    .all()
+    .map((r) => r.project);
 }
 
 /** A category enriched with its gate + the PRD it drafted (or null). The shape main()
@@ -228,19 +246,29 @@ function runPlanner(request: string, project: string): string | null {
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
-  const project = getFlag(argv, "project") ?? "arc-webui";
   const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
-
   const db = openWithMigrate();
+
+  const projects = argv.includes("--all-projects")
+    ? projectsWithOpenFeedback(db)
+    : [getFlag(argv, "project") ?? "arc-webui"];
+
+  const runs = projects.map((project) => aggregateProject(db, project, limit));
+  process.stdout.write(JSON.stringify(runs.length === 1 ? runs[0] : { runs }) + "\n");
+}
+
+/** Aggregate one project's OPEN feedback into at most one planner pass. The trigger
+ *  gate decides whether to spend the LLM at all; below the gate it's a cheap no-op. */
+export function aggregateProject(db: DB, project: string, limit: number): Record<string, unknown> {
   const rows = selectNewFeedback(db, project, limit);
-  if (rows.length === 0) {
-    process.stdout.write(JSON.stringify({ aggregated: 0, categories: [] }) + "\n");
-    return;
+  const gate = triggerGate(rows);
+  if (!gate.fire) {
+    return { project, aggregated: 0, skipped: "gate", trusted: gate.trusted, untrusted: gate.untrusted };
   }
 
   // CAM: the Collector reads wide and groups the batch; the Proposal Generator gates
   // EACH category. Below-threshold categories (and any feedback the collector left
-  // uncategorised) stay 'new' for a future run — nothing is dropped. Every category's
+  // uncategorised) stay OPEN for a future run — nothing is dropped. Every category's
   // counts/patterns/gate are surfaced in the output regardless of the gate, for
   // transparency to /feed and /approvals.
   const summaries = summarizeCategories(rows, collectCategories(project, rows));
@@ -260,7 +288,7 @@ async function main(): Promise<void> {
   });
 
   recordCollection(db, project, roundId, categories);
-  process.stdout.write(JSON.stringify({ aggregated, roundId, categories }) + "\n");
+  return { project, aggregated, roundId, categories };
 }
 
 if (import.meta.main) { await main(); }

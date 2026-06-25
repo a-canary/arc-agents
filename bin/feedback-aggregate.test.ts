@@ -3,7 +3,7 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
-import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal, parseCategoriesJson, summarizeCategories, recordCollection, type FeedbackRow } from "./feedback-aggregate";
+import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal, parseCategoriesJson, summarizeCategories, recordCollection, triggerGate, projectsWithOpenFeedback, type FeedbackRow } from "./feedback-aggregate";
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "fb-agg-"));
@@ -37,12 +37,12 @@ test("buildAggregateRequest frames every feedback body as a bullet under the pro
   expect(req).toContain("single coherent change");
 });
 
-test("selectNewFeedback returns only 'new' rows for the project, oldest first", () => {
+test("selectNewFeedback returns only OPEN rows for the project, oldest first", () => {
   const { db, cleanup } = freshDb();
   try {
-    insert(db, "fb-a", "arc-webui", "new", "a");
-    insert(db, "fb-b", "arc-webui", "resolved", "b");
-    insert(db, "fb-c", "other", "new", "c");
+    insert(db, "fb-a", "arc-webui", "OPEN", "a");
+    insert(db, "fb-b", "arc-webui", "DEV", "b");
+    insert(db, "fb-c", "other", "OPEN", "c");
     const rows = selectNewFeedback(db, "arc-webui", 20);
     expect(rows.map((r) => r.id)).toEqual(["fb-a"]);
   } finally {
@@ -50,16 +50,16 @@ test("selectNewFeedback returns only 'new' rows for the project, oldest first", 
   }
 });
 
-test("markAggregated links rows to the PRD and resolves them, leaving others", () => {
+test("markAggregated links rows to the PRD and moves them to DEV, leaving others", () => {
   const { db, cleanup } = freshDb();
   try {
-    insert(db, "fb-a", "arc-webui", "new", "a");
-    insert(db, "fb-b", "arc-webui", "new", "b");
-    insert(db, "fb-keep", "arc-webui", "new", "keep");
+    insert(db, "fb-a", "arc-webui", "OPEN", "a");
+    insert(db, "fb-b", "arc-webui", "OPEN", "b");
+    insert(db, "fb-keep", "arc-webui", "OPEN", "keep");
     markAggregated(db, ["fb-a", "fb-b"], "prd-x");
-    expect(row(db, "fb-a")).toEqual({ state: "resolved", theme_id: "prd-x" });
-    expect(row(db, "fb-b")).toEqual({ state: "resolved", theme_id: "prd-x" });
-    expect(row(db, "fb-keep")).toEqual({ state: "new", theme_id: null });
+    expect(row(db, "fb-a")).toEqual({ state: "DEV", theme_id: "prd-x" });
+    expect(row(db, "fb-b")).toEqual({ state: "DEV", theme_id: "prd-x" });
+    expect(row(db, "fb-keep")).toEqual({ state: "OPEN", theme_id: null });
   } finally {
     cleanup();
   }
@@ -68,9 +68,37 @@ test("markAggregated links rows to the PRD and resolves them, leaving others", (
 test("markAggregated with no ids is a no-op", () => {
   const { db, cleanup } = freshDb();
   try {
-    insert(db, "fb-a", "arc-webui", "new", "a");
+    insert(db, "fb-a", "arc-webui", "OPEN", "a");
     markAggregated(db, [], "prd-x");
-    expect(row(db, "fb-a")).toEqual({ state: "new", theme_id: null });
+    expect(row(db, "fb-a")).toEqual({ state: "OPEN", theme_id: null });
+  } finally {
+    cleanup();
+  }
+});
+
+test("triggerGate fires on >=1 trusted row regardless of count", () => {
+  const rows: FeedbackRow[] = [{ id: "a", source: "direct", submitter: "aaron", body_md: "x" }];
+  expect(triggerGate(rows)).toMatchObject({ fire: true, trusted: 1, untrusted: 0 });
+});
+
+test("triggerGate fires on >5 untrusted rows, not at 5", () => {
+  const five: FeedbackRow[] = Array.from({ length: 5 }, (_, i) => ({ id: `u${i}`, source: "public", submitter: `u${i}`, body_md: "x" }));
+  expect(triggerGate(five)).toMatchObject({ fire: false, trusted: 0, untrusted: 5 });
+  expect(triggerGate([...five, { id: "u5", source: "github", submitter: "u5", body_md: "x" }])).toMatchObject({ fire: true, untrusted: 6 });
+});
+
+test("triggerGate does not fire on an empty batch", () => {
+  expect(triggerGate([])).toMatchObject({ fire: false, trusted: 0, untrusted: 0 });
+});
+
+test("projectsWithOpenFeedback lists distinct projects with OPEN rows only", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-a", "arc-webui", "OPEN", "a");
+    insert(db, "fb-b", "arc-webui", "OPEN", "b");
+    insert(db, "fb-c", "starlight", "OPEN", "c");
+    insert(db, "fb-d", "done-proj", "DEV", "d");
+    expect(projectsWithOpenFeedback(db).sort()).toEqual(["arc-webui", "starlight"]);
   } finally {
     cleanup();
   }
