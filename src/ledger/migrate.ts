@@ -1152,7 +1152,10 @@ export const migrations: Migration[] = [
           context        TEXT,
           origin_task_id TEXT REFERENCES issues(id),
           theme_id       TEXT,
-          state          TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','resolved')),
+          -- DEFAULT/writes stay 'new'/'resolved' (arc-agents vocab). CHECK is a superset
+          -- that also tolerates arc-webui's 'OPEN'/'DEV'/'CLOSED' so foreign-written rows
+          -- (the live webui-owned feedback table has no CHECK) are valid here too.
+          state          TEXT NOT NULL DEFAULT 'new' CHECK (state IN ('new','OPEN','DEV','CLOSED','resolved')),
           created_at     INTEGER NOT NULL DEFAULT (strftime('%s','now'))
         );
       `);

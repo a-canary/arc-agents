@@ -178,13 +178,37 @@ function getFlag(argv: string[], name: string): string | undefined {
   return a.includes("=") ? a.slice(a.indexOf("=") + 1) : argv[i + 1];
 }
 
-/** Fetch up to `limit` unaggregated ('new') feedback rows for a project, oldest first. */
+/** Fetch up to `limit` unaggregated feedback rows for a project, oldest first.
+ *  Tolerates 'OPEN' as well as 'new': agent-CLI rows are born 'new', but arc-webui
+ *  normalizes them to 'OPEN' on read, so the live backlog is mostly 'OPEN'. A
+ *  'new'-only query would silently skip every webui-touched row. */
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source, submitter FROM feedback WHERE state='new' AND project=? ORDER BY created_at ASC LIMIT ?",
+      "SELECT id, body_md, source, submitter FROM feedback WHERE state IN ('new','OPEN') AND project=? ORDER BY created_at ASC LIMIT ?",
     )
     .all(project, limit);
+}
+
+/** Cheap project-level pre-gate: is this project's backlog worth a planner-spending
+ *  aggregation pass yet? Fires on >=1 trusted row OR >5 untrusted rows (raw count, the
+ *  scheduler's coarse trigger — confirmsProposal still gates each PRD per-category by
+ *  distinct submitter). Below the bar the pass is skipped and rows stay queued, so the
+ *  scheduled tick is a no-op on thin backlogs. */
+export function triggerGate(rows: FeedbackRow[]): { fire: boolean; trusted: number; untrusted: number } {
+  const trusted = rows.filter((r) => isTrusted(r.source)).length;
+  const untrusted = rows.length - trusted;
+  return { fire: trusted >= 1 || untrusted > 5, trusted, untrusted };
+}
+
+/** Every project with at least one unaggregated feedback row (drives --all-projects). */
+export function projectsWithOpenFeedback(db: DB): string[] {
+  return db
+    .query<{ project: string }, []>(
+      "SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN') ORDER BY project",
+    )
+    .all()
+    .map((r) => r.project);
 }
 
 /** Link a batch of feedback rows to the PRD they produced and mark them resolved. */
@@ -314,37 +338,42 @@ function runPlanner(request: string, project: string): string | null {
   }
 }
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const project = getFlag(argv, "project") ?? "arc-webui";
-  const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
+type ProjectResult = {
+  project: string;
+  aggregated: number;
+  flagged: number;
+  validated: ValidateResult | null;
+  trigger: ReturnType<typeof triggerGate>;
+  roundId?: string;
+  skipped?: string;
+  categories: CollectedCategory[];
+};
 
-  const db = openWithMigrate();
-
+/** Run one project's full pass: flag-stale -> (optional validate) -> trigger-gate ->
+ *  collect -> per-category plan. The trigger gate is the cheap pre-filter; below it we
+ *  spend no Collector/planner call and leave rows queued for a future tick. */
+function aggregateProject(db: DB, project: string, limit: number, validate: boolean): ProjectResult {
   // Pass 1: flag stale (feedback linked to a PRD that merged later). Runs FIRST so the
   // collector below only sees rows that weren't superseded.
   const flagged = flagStaleFeedback(db, project);
 
-  // Pass 2 (separate verb --validate-stale): re-verify tentative flags and resolve.
-  // Default invocation leaves this for an operator or scheduled job — running it on
-  // every collector tick would race with pass 1 (freshly flagged rows have nothing
-  // to verify yet since pass 1 just wrote them).
-  const validating = getFlag(argv, "validate-stale") !== undefined;
-  const validateResult: ValidateResult | null = validating ? validateStaleCandidates(db, project) : null;
+  // Pass 2 (opt-in --validate-stale): re-verify tentative flags and resolve. Default
+  // runs leave it to a separate cadence so freshly flagged rows aren't verified against
+  // themselves.
+  const validated: ValidateResult | null = validate ? validateStaleCandidates(db, project) : null;
 
   const rows = selectNewFeedback(db, project, limit);
-  if (rows.length === 0) {
-    process.stdout.write(
-      JSON.stringify({ aggregated: 0, flagged, validated: validateResult, categories: [] }) + "\n",
-    );
-    return;
+  const trigger = triggerGate(rows);
+  if (rows.length === 0 || !trigger.fire) {
+    return {
+      project, aggregated: 0, flagged, validated, trigger,
+      skipped: rows.length === 0 ? "empty" : "gate", categories: [],
+    };
   }
 
   // CAM: the Collector reads wide and groups the batch; the Proposal Generator gates
-  // EACH category. Below-threshold categories (and any feedback the collector left
-  // uncategorised) stay 'new' for a future run — nothing is dropped. Every category's
-  // counts/patterns/gate are surfaced in the output regardless of the gate, for
-  // transparency to /feed and /approvals.
+  // EACH category (confirmsProposal). Below-threshold/uncategorised rows stay queued —
+  // nothing is dropped. Counts/patterns/gate are surfaced for /feed + /approvals.
   const summaries = summarizeCategories(rows, collectCategories(project, rows));
 
   const roundId = "fbr-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
@@ -362,9 +391,23 @@ async function main(): Promise<void> {
   });
 
   recordCollection(db, project, roundId, categories);
-  process.stdout.write(
-    JSON.stringify({ aggregated, flagged, validated: validateResult, roundId, categories }) + "\n",
-  );
+  return { project, aggregated, flagged, validated, trigger, roundId, categories };
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
+  const validate = getFlag(argv, "validate-stale") !== undefined;
+  const allProjects = getFlag(argv, "all-projects") !== undefined;
+
+  const db = openWithMigrate();
+  // --all-projects sweeps every project with queued feedback (the scheduled drainer);
+  // single-project keeps the original default of arc-webui.
+  const projects = allProjects ? projectsWithOpenFeedback(db) : [getFlag(argv, "project") ?? "arc-webui"];
+
+  const results = projects.map((p) => aggregateProject(db, p, limit, validate));
+  const out = allProjects ? { projects: results } : (results[0] ?? { aggregated: 0, categories: [] });
+  process.stdout.write(JSON.stringify(out) + "\n");
 }
 
 if (import.meta.main) { await main(); }

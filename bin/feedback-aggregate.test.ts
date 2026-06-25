@@ -6,6 +6,8 @@ import { openWithMigrate } from "../src/ledger/db";
 import {
   buildAggregateRequest,
   selectNewFeedback,
+  triggerGate,
+  projectsWithOpenFeedback,
   markAggregated,
   isTrusted,
   confirmsProposal,
@@ -410,6 +412,60 @@ test("validateStaleCandidates: a row without a tentative flag is left untouched"
     expect(r.accepted).toBe(0);
     expect(r.rejected).toBe(0);
     expect(rowFull(db, "fb-plain").state).toBe("new");
+  } finally {
+    cleanup();
+  }
+});
+
+// --- auto-planner additions (PR #286): OPEN-tolerance, trigger gate, --all-projects sweep ---
+
+function insertSrc(db: DB, id: string, project: string, state: string, source: string): void {
+  db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", [
+    id, project, source, id, state,
+  ]);
+}
+
+test("selectNewFeedback also drains 'OPEN' rows (webui normalizes 'new' -> 'OPEN')", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-new", "arc-webui", "new", "n");
+    insert(db, "fb-open", "arc-webui", "OPEN", "o");
+    insert(db, "fb-done", "arc-webui", "resolved", "d");
+    const rows = selectNewFeedback(db, "arc-webui", 20);
+    expect(rows.map((r) => r.id).sort()).toEqual(["fb-new", "fb-open"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("triggerGate: one trusted row fires", () => {
+  expect(triggerGate([{ id: "1", body_md: "x", source: "operator" }]).fire).toBe(true);
+});
+
+test("triggerGate: five untrusted rows do NOT fire (>5 required)", () => {
+  const rows = Array.from({ length: 5 }, (_, i) => ({ id: String(i), body_md: "x", source: "public" }));
+  expect(triggerGate(rows).fire).toBe(false);
+});
+
+test("triggerGate: six untrusted rows fire", () => {
+  const rows = Array.from({ length: 6 }, (_, i) => ({ id: String(i), body_md: "x", source: "public" }));
+  const g = triggerGate(rows);
+  expect(g.fire).toBe(true);
+  expect(g.untrusted).toBe(6);
+});
+
+test("triggerGate: empty backlog does not fire", () => {
+  expect(triggerGate([]).fire).toBe(false);
+});
+
+test("projectsWithOpenFeedback: distinct projects with queued rows, excludes resolved-only", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertSrc(db, "a1", "alpha", "new", "public");
+    insertSrc(db, "a2", "alpha", "OPEN", "public");
+    insertSrc(db, "b1", "beta", "OPEN", "public");
+    insertSrc(db, "g1", "gamma", "resolved", "public");
+    expect(projectsWithOpenFeedback(db)).toEqual(["alpha", "beta"]);
   } finally {
     cleanup();
   }
