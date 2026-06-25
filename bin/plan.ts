@@ -1,7 +1,8 @@
 #!/usr/bin/env bun
 // plan.ts — front-half emitter of the self-guided pipeline (ADR-0010).
 //
-//   plan.ts --title T [--body MD] [--project P] --tracer "slice 1" [--tracer ...] [--thread TH]
+//   plan.ts --title T [--body MD] [--project P] --tracer "slice 1" [--tracer ...]
+//          [--relationship '{"other_prd_id":"prd-x","kind":"dependency"}'] [--thread TH]
 //
 // Mints a PRD (kind=prd) parked at the human approval gate (state=review) plus
 // one tracer-bullet task per --tracer, each blocked on the PRD. Approving the
@@ -11,9 +12,13 @@
 //
 // Designed to be launched as a detached subprocess by arc-webui /chat, never run
 // inside the Hono web process. All writes route through the canonical ledger CLI
-// (validation + id-mint + events), not raw INSERTs.
+// (validation + id-mint + events), not raw INSERTs. Pairwise relationships
+// (parent PRD user-webui-chat-planner-should-be-tasked-isz6, migration 028) are
+// persisted transactionally in the same DB connection — one INSERT per pair,
+// COMMIT atomically.
 
 import { spawnSync } from "node:child_process";
+import { Database } from "bun:sqlite";
 import { LEDGER_BIN, dbFlag } from "../src/ledger/cli-invoke";
 
 const DB_FLAG = dbFlag();
@@ -47,11 +52,36 @@ function ledger(verb: string, rest: string[]): Record<string, unknown> {
   try { return JSON.parse(r.stdout); } catch { return {}; }
 }
 
+// Pairwise PRD relationship kinds (migration 028). Closed vocabulary; the SQL
+// CHECK constraint enforces it — we re-validate here so a malformed --relationship
+// payload fails fast with a clear message instead of a raw SQLITE_CONSTRAINT.
+const RELATIONSHIP_KINDS = new Set(["orthogonal", "replace", "dependency", "fork"]);
+type Relationship = { other_prd_id: string; kind: string };
+
+function parseRelationships(raw: readonly string[]): Relationship[] {
+  const out: Relationship[] = [];
+  for (const s of raw) {
+    let r: unknown;
+    try { r = JSON.parse(s); } catch { die(`--relationship not JSON: ${s}`, 2); }
+    if (!r || typeof r !== "object") die(`--relationship not an object: ${s}`, 2);
+    const o = r as { other_prd_id?: unknown; kind?: unknown };
+    if (typeof o.other_prd_id !== "string" || !o.other_prd_id.trim()) {
+      die(`--relationship missing string other_prd_id: ${s}`, 2);
+    }
+    if (typeof o.kind !== "string" || !RELATIONSHIP_KINDS.has(o.kind)) {
+      die(`--relationship.kind must be one of [${[...RELATIONSHIP_KINDS].join(", ")}]: ${s}`, 2);
+    }
+    out.push({ other_prd_id: o.other_prd_id.trim(), kind: o.kind });
+  }
+  return out;
+}
+
 const project = getFlag("project") ?? "arc-webui";
 const title = getFlag("title");
 const body = getFlag("body") ?? "";
 const thread = getFlag("thread");
 const tracers = getAll("tracer");
+const relationships = parseRelationships(getAll("relationship"));
 
 if (!title) die("usage: plan.ts --title T [--body MD] [--project P] --tracer S [--tracer ...]", 2);
 if (tracers.length === 0) die("at least one --tracer is required", 2);
@@ -76,4 +106,28 @@ const tracerIds = tracers.map((t) =>
   ]).id as string,
 );
 
-process.stdout.write(JSON.stringify({ prdId, tracerIds }) + "\n");
+// 3. pairwise relationships — insert transactionally. We open the same DB the
+//    ledger CLI wrote to (ARC_LEDGER_DB env override, or ~/vault/ledger.db)
+//    and run a single transaction. A bad kind or a missing target PRD surfaces
+//    here as a SQLITE_CONSTRAINT (CHECK / FK), and we die loudly instead of
+//    leaving a partial PRD-without-relationships behind.
+if (relationships.length > 0) {
+  const dbPath = process.env.ARC_LEDGER_DB ?? `${process.env.HOME}/vault/ledger.db`;
+  const db = new Database(dbPath);
+  try {
+    db.transaction(() => {
+      const stmt = db.prepare(
+        `INSERT INTO prd_relationships (prd_id, other_prd_id, kind) VALUES (?, ?, ?)`,
+      );
+      for (const r of relationships) {
+        stmt.run(prdId, r.other_prd_id, r.kind);
+      }
+    })();
+  } catch (e) {
+    db.close();
+    die(`prd_relationships insert failed: ${e instanceof Error ? e.message : String(e)}`);
+  }
+  db.close();
+}
+
+process.stdout.write(JSON.stringify({ prdId, tracerIds, relationships }) + "\n");

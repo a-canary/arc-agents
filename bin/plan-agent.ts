@@ -26,7 +26,23 @@ import { readFileSync, existsSync } from "node:fs";
 // goal is the only required field; metric/gate are optional. provenance is DELIBERATELY
 // absent — the writer pins it (see serializeObjective), it is never caller-settable.
 export type ProposedObjective = { goal: string; metric?: string; gate?: string };
-export type Plan = { title: string; body_md: string; tracers: string[]; objective?: ProposedObjective };
+
+export type RelationshipKind = "orthogonal" | "replace" | "dependency" | "fork";
+export type Relationship = { other_prd_id: string; kind: RelationshipKind };
+
+export type Plan = {
+  title: string;
+  body_md: string;
+  tracers: string[];
+  objective?: ProposedObjective;
+  // Pairwise classification against every in-flight / recently-proposed PRD.
+  // Parent PRD user-webui-chat-planner-should-be-tasked-isz6 (PR #18): emit
+  // orthogonal|replace|dependency|fork per pair. Optional at the type level so
+  // hand-built Plan literals (and the objective-only slice-B path) need not
+  // restate it; parsePlanJson / buildFallbackPlan always populate it, and
+  // planToPlanArgs treats a missing value as [] (never silently drops a pair).
+  relationships?: Relationship[];
+};
 
 // serializeObjective — the slice-B writer. Turns a proposed objective into the exact
 // M-0010 ```objectives``` fence line arc-webui's parseObjectives reads:
@@ -78,13 +94,25 @@ export function groundingFor(project: string): string {
 
 // The prompt describes the JSON shape in WORDS. A literal json template or a code
 // fence in the prompt makes headless MiniMax loop to timeout (proven); never embed one.
-export function buildPlanningPrompt(request: string, context: string, project = "arc-webui"): string {
+export function buildPlanningPrompt(
+  request: string,
+  context: string,
+  project = "arc-webui",
+  existingPrdIds: readonly string[] = [],
+): string {
+  const existingBlock = existingPrdIds.length === 0
+    ? "EXISTING PRDs (in-flight / recently-proposed): none. Emit relationships: []."
+    : "EXISTING PRDs (in-flight / recently-proposed — classify yourself against each one):\n" +
+      existingPrdIds.map((id, i) => `  ${i + 1}. ${id}`).join("\n") +
+      "\nEmit one relationships[] entry per id above.";
   return [
     "You are a planning agent for the " + project + " project. Turn the development request below into a thorough PRD.",
     "",
     "REQUEST: " + request,
     "",
     context,
+    "",
+    existingBlock,
     "",
     "RESEARCH FIRST. You have read-only tools (Read, Grep, Glob) and your working directory is the " + project + " repository. Before you plan, ground yourself in the real codebase:",
     "- Read CONTEXT.md (the ubiquitous-language glossary) and reuse its exact terms.",
@@ -97,11 +125,19 @@ export function buildPlanningPrompt(request: string, context: string, project = 
     "- body_md: a markdown PRD body, as a string, with these sections in order: Problem (from the user's perspective); Solution (from the user's perspective); User Stories (a long numbered list, each line of the form 'As an <actor>, I want <feature>, so that <benefit>', covering every aspect of the feature); Implementation Decisions (modules to build or modify, their interfaces, schema and contract changes — prose only, no file paths or code snippets); Testing Decisions (which modules to test and what a good behavioural test looks like); Out of Scope.",
     "- tracers: an array of 1 to 3 strings; each a small vertical slice, smallest first, each shippable on its own and independently grabbable by a worker",
     "- objective (OPTIONAL): only if this request implies a NEW, measurable mission-level outcome the project should track, propose ONE candidate objective as an object with keys goal (a short outcome statement), metric (a short machine-readable metric name), and gate (a numeric target like '100-300' or '8', NOT prose). Omit this key entirely when the request is a plain feature with no measurable mission outcome — do not invent one. It will be recorded as an inferred proposal a human reviews and promotes; never mark it directed.",
+    "- relationships: an array; one entry per in-flight or recently-proposed PRD (every existing PRD whose state is not cancelled or failed). Each entry is an object with two fields: other_prd_id (the existing PRD's slug) and kind (exactly one of: orthogonal, replace, dependency, fork). orthogonal means no relationship — both can proceed. replace means the new PRD cancels and hides the existing one. dependency means the new PRD cannot be approved until the referenced PRD is approved; if the dependency is cancelled the new PRD is also cancelled. fork means both PRDs are mutually exclusive candidates — approval of one cancels the others. Use orthogonal for any pair you cannot confidently classify; do not omit a pair.",
   ].join("\n");
 }
 
 // Defensive parse: the model may wrap the object in prose or a fence despite the
 // instruction. Strip a fence if present, else take the outermost braces, then validate.
+const RELATIONSHIP_KINDS: ReadonlySet<RelationshipKind> = new Set([
+  "orthogonal",
+  "replace",
+  "dependency",
+  "fork",
+]);
+
 export function parsePlanJson(stdout: string): Plan | null {
   if (!stdout) return null;
   let s = stdout.trim();
@@ -111,7 +147,7 @@ export function parsePlanJson(stdout: string): Plan | null {
   const end = s.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) return null;
   s = s.slice(start, end + 1);
-  let obj: { title?: unknown; body_md?: unknown; tracers?: unknown; objective?: unknown };
+  let obj: { title?: unknown; body_md?: unknown; tracers?: unknown; objective?: unknown; relationships?: unknown };
   try { obj = JSON.parse(s); } catch { return null; }
   if (!obj || typeof obj.title !== "string" || !obj.title.trim()) return null;
   if (!Array.isArray(obj.tracers) || obj.tracers.length === 0) return null;
@@ -119,11 +155,30 @@ export function parsePlanJson(stdout: string): Plan | null {
     .filter((t): t is string => typeof t === "string" && t.trim().length > 0)
     .map((t) => t.trim());
   if (tracers.length === 0) return null;
+  // Relationships are optional in the wire format — a missing/empty array
+  // is fine; buildFallbackPlan re-emits defaults at the deterministic path.
+  // We still drop entries with invalid kind values so a CHECK-constraint
+  // violation is impossible at the persistence layer.
+  const relationships: Relationship[] = [];
+  if (Array.isArray(obj.relationships)) {
+    for (const r of obj.relationships) {
+      if (!r || typeof r !== "object") continue;
+      const o = r as { other_prd_id?: unknown; kind?: unknown };
+      if (typeof o.other_prd_id !== "string" || !o.other_prd_id.trim()) continue;
+      if (typeof o.kind !== "string") continue;
+      if (!RELATIONSHIP_KINDS.has(o.kind as RelationshipKind)) continue;
+      relationships.push({
+        other_prd_id: o.other_prd_id.trim(),
+        kind: o.kind as RelationshipKind,
+      });
+    }
+  }
   return {
     title: obj.title.trim(),
     body_md: typeof obj.body_md === "string" ? obj.body_md : "",
     tracers: tracers.slice(0, 5),
     objective: parseObjective(obj.objective),
+    relationships,
   };
 }
 
@@ -139,6 +194,19 @@ function parseObjective(raw: unknown): ProposedObjective | undefined {
   return out;
 }
 
+// Deterministic degrade path: request becomes a thin PRD + one tracer. Exported for
+// tests and callers that want a safe default; the auto-planner main() path deliberately
+// does NOT use it (it fail-fasts instead — see main()). `existingPrdIds` forces every
+// pair to 'orthogonal' because the model had no chance to reason.
+export function buildFallbackPlan(request: string, existingPrdIds: readonly string[] = []): Plan {
+  const title = clamp(request, 80);
+  const relationships: Relationship[] = existingPrdIds.map((other_prd_id) => ({
+    other_prd_id,
+    kind: "orthogonal",
+  }));
+  return { title, body_md: request, tracers: [`Implement: ${title}`], relationships };
+}
+
 export function planToPlanArgs(plan: Plan, project: string, thread: string): string[] {
   const argv = [
     "--project", project,
@@ -147,6 +215,7 @@ export function planToPlanArgs(plan: Plan, project: string, thread: string): str
     "--body", withProposedObjective(plan.body_md, plan.objective),
   ];
   for (const t of plan.tracers) argv.push("--tracer", t);
+  for (const r of plan.relationships ?? []) argv.push("--relationship", JSON.stringify(r));
   return argv;
 }
 
@@ -190,6 +259,27 @@ function generatePlan(prompt: string, project: string): Plan | null {
   return parsePlanJson(r.stdout);
 }
 
+// Pull the slugs of every in-flight / recently-proposed PRD so the prompt can
+// hand the planner a concrete list to classify itself against. Cancelled /
+// failed PRDs are excluded (no relationship possible — they're gone).
+// ponytail: a glob over `ledger list --kind prd` is cheaper than wiring a new
+// SQL query into the bookie for this read-only lookup; the list path already
+// supports the --kind filter and returns JSON. We parse stdout and filter in
+// memory — at ~hundreds of PRDs the cost is trivial vs. the LLM call.
+export function listExistingPrdIds(project: string): string[] {
+  const ledger = join(import.meta.dir, "ledger.ts");
+  const r = spawnSync(process.execPath, [ledger, "list", "--kind", "prd", "--all", "--project", project], { encoding: "utf8" });
+  if (r.status !== 0 || !r.stdout) return [];
+  try {
+    const rows = JSON.parse(r.stdout) as Array<{ id?: unknown; state?: unknown }>;
+    return rows
+      .filter((row) => typeof row.id === "string" && row.state !== "cancelled" && row.state !== "failed")
+      .map((row) => row.id as string);
+  } catch {
+    return [];
+  }
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const request = (getFlag(argv, "request") ?? "").trim();
@@ -197,7 +287,11 @@ async function main(): Promise<void> {
   const thread = getFlag(argv, "thread") ?? "t-" + Math.random().toString(36).slice(2, 10);
   const project = getFlag(argv, "project") ?? "arc-webui";
 
-  const prompt = buildPlanningPrompt(request, groundingFor(project), project);
+  // Existing PRD slugs — read once and fed to the prompt so the planner knows what
+  // to classify against (pairwise relationships).
+  const existingPrdIds = listExistingPrdIds(project);
+
+  const prompt = buildPlanningPrompt(request, groundingFor(project), project, existingPrdIds);
   const plan = generatePlan(prompt, project);
   if (!plan) {
     // No bare-request fallback: minting the prompt itself as a PRD polluted the
