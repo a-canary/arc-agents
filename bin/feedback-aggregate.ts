@@ -169,11 +169,14 @@ function getFlag(argv: string[], name: string): string | undefined {
   return a.includes("=") ? a.slice(a.indexOf("=") + 1) : argv[i + 1];
 }
 
-/** Fetch up to `limit` unprocessed (OPEN) feedback rows for a project, oldest first. */
+/** Fetch up to `limit` unprocessed feedback rows for a project, oldest first.
+ *  Tolerates both 'new' (the live table's DEFAULT — agent-CLI rows are born 'new')
+ *  and 'OPEN' (webui's normalized value), like arc-webui's own reads. Querying 'OPEN'
+ *  alone would skip every freshly-submitted agent row until webui happened to touch it. */
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source, submitter FROM feedback WHERE state='OPEN' AND project=? ORDER BY created_at ASC LIMIT ?",
+      "SELECT id, body_md, source, submitter FROM feedback WHERE state IN ('new','OPEN') AND project=? ORDER BY created_at ASC LIMIT ?",
     )
     .all(project, limit);
 }
@@ -195,10 +198,11 @@ export function triggerGate(rows: FeedbackRow[]): { fire: boolean; trusted: numb
   return { fire: trusted >= 1 || untrusted > 5, trusted, untrusted };
 }
 
-/** Projects with at least one OPEN feedback row — the tick's work-list for --all-projects. */
+/** Projects with at least one unprocessed feedback row — the tick's work-list for
+ *  --all-projects. Same 'new'/'OPEN' tolerance as selectNewFeedback (live rows born 'new'). */
 export function projectsWithOpenFeedback(db: DB): string[] {
   return db
-    .query<{ project: string }, []>("SELECT DISTINCT project FROM feedback WHERE state='OPEN'")
+    .query<{ project: string }, []>("SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN')")
     .all()
     .map((r) => r.project);
 }

@@ -91,14 +91,31 @@ test("triggerGate does not fire on an empty batch", () => {
   expect(triggerGate([])).toMatchObject({ fire: false, trusted: 0, untrusted: 0 });
 });
 
-test("projectsWithOpenFeedback lists distinct projects with OPEN rows only", () => {
+test("projectsWithOpenFeedback lists distinct projects with unprocessed rows only", () => {
   const { db, cleanup } = freshDb();
   try {
     insert(db, "fb-a", "arc-webui", "OPEN", "a");
     insert(db, "fb-b", "arc-webui", "OPEN", "b");
-    insert(db, "fb-c", "starlight", "OPEN", "c");
+    insert(db, "fb-c", "starlight", "new", "c"); // born 'new' (live default) still counts
     insert(db, "fb-d", "done-proj", "DEV", "d");
     expect(projectsWithOpenFeedback(db).sort()).toEqual(["arc-webui", "starlight"]);
+  } finally {
+    cleanup();
+  }
+});
+
+// Regression guard (PR #286 review): agent-CLI feedback (`ledger feedback`) inserts
+// no state, so on the live webui-owned table rows are born 'new', not 'OPEN'. The
+// aggregator must drain those too — querying 'OPEN' alone silently skipped every
+// freshly-submitted agent row until webui happened to normalize it.
+test("selectNewFeedback drains born-'new' rows (live default), not just 'OPEN'", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-cli", "arc-webui", "new", "from agent");   // live default for ledger feedback
+    insert(db, "fb-open", "arc-webui", "OPEN", "from webui");
+    insert(db, "fb-dev", "arc-webui", "DEV", "already has a PRD");
+    const got = selectNewFeedback(db, "arc-webui", 20).map((r) => r.id).sort();
+    expect(got).toEqual(["fb-cli", "fb-open"]); // DEV excluded, 'new' + OPEN drained
   } finally {
     cleanup();
   }
