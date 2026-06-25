@@ -12,7 +12,16 @@
 // category). Below the threshold the planner is never spawned and that category's
 // feedback stays 'new' for a future run. Trust tier is binary (isTrusted); see fb-qupj.
 //
-//   feedback-aggregate.ts [--project P] [--limit N]
+//   feedback-aggregate.ts [--project P] [--limit N] [--validate-stale]
+//
+// Two-pass stale/superseded flow (this slice):
+//   1. flagStaleFeedback — runs by default; flags rows whose theme_id points to a
+//      merged PRD (state=merged, updated_at > feedback.created_at).
+//   2. validateStaleCandidates — opt-in via --validate-stale; re-verifies the PRD
+//      is still merged and resolves the feedback (state=resolved, resolution=
+//      'superseded') or rejects (clears tentative columns, leaves state='new').
+//      Scheduled to run on a separate cadence (not every collector tick) so freshly
+//      flagged rows aren't immediately verified against themselves.
 //
 // PRODUCES proposals only — never spawns implementation workers, merges, or
 // deploys (the planner it calls has the same contract). Like plan-agent.ts it
@@ -185,6 +194,85 @@ export function markAggregated(db: DB, ids: string[], themeId: string): void {
   db.run(`UPDATE feedback SET state='resolved', theme_id=? WHERE id IN (${ph})`, [themeId, ...ids]);
 }
 
+// --- 2-pass stale/superseded (collector flag + validator accept/reject) ---
+// Pass 1 tentatively flags feedback rows whose theme_id points to a PRD merged
+// AFTER the feedback was created — the work shipped elsewhere, so the feedback
+// is stale. Pass 2 re-verifies the PRD is genuinely merged (not cancelled/failed
+// and not deleted) and either resolves the feedback with resolution='superseded'
+// or clears the tentative verdict and leaves it 'new' for a future run.
+//
+// ponytail: validation in pass 2 is just "is the row still merged" — there's no
+// body-similarity scoring against the PRD. The feedback's theme_id already
+// expresses the link; the validator's job is to catch stale links where the
+// PRD was reverted after pass 1 flagged it.
+
+/** Pass 1: flag new-state feedback whose theme_id is a merged PRD created later.
+ *  Writes stale_candidate_at + stale_candidate_prd_id; returns the number flagged. */
+export function flagStaleFeedback(db: DB, project: string): number {
+  const r = db
+    .query<{ id: string }, [string]>(
+      `SELECT f.id FROM feedback f
+         JOIN issues p ON p.id = f.theme_id
+        WHERE f.project = ?
+          AND f.state = 'new'
+          AND f.theme_id IS NOT NULL
+          AND f.stale_candidate_at IS NULL
+          AND p.kind = 'prd'
+          AND p.state = 'merged'
+          AND p.updated_at > f.created_at`,
+    )
+    .all(project);
+  if (r.length === 0) return 0;
+  const now = Math.floor(Date.now() / 1000);
+  const ph = r.map(() => "?").join(",");
+  db.run(
+    `UPDATE feedback SET stale_candidate_at=?, stale_candidate_prd_id=theme_id WHERE id IN (${ph})`,
+    [now, ...r.map((x) => x.id)],
+  );
+  return r.length;
+}
+
+/** Pass 2 outcome. accepted = superseded; rejected = tentative verdict cleared,
+ *  feedback stays 'new'. */
+export type ValidateResult = { accepted: number; rejected: number };
+
+/** Pass 2: re-verify tentative flags. Accepted (PRD still merged) -> state=resolved
+ *  + resolution='superseded'. Rejected (PRD cancelled/failed/missing) -> clear the
+ *  tentative columns, leave state='new'. */
+export function validateStaleCandidates(db: DB, project: string): ValidateResult {
+  const rows = db
+    .query<
+      { id: string; stale_candidate_prd_id: string | null },
+      [string]
+    >(
+      `SELECT id, stale_candidate_prd_id FROM feedback
+        WHERE project = ?
+          AND state = 'new'
+          AND stale_candidate_at IS NOT NULL
+          AND stale_candidate_prd_id IS NOT NULL`,
+    )
+    .all(project);
+  let accepted = 0;
+  let rejected = 0;
+  for (const row of rows) {
+    const prd = row.stale_candidate_prd_id!;
+    const stillMerged = db
+      .query<{ ok: number }, [string]>("SELECT 1 AS ok FROM issues WHERE id=? AND kind='prd' AND state='merged'")
+      .get(prd);
+    if (stillMerged) {
+      db.run("UPDATE feedback SET state='resolved', resolution='superseded' WHERE id=?", [row.id]);
+      accepted++;
+    } else {
+      db.run(
+        "UPDATE feedback SET stale_candidate_at=NULL, stale_candidate_prd_id=NULL WHERE id=?",
+        [row.id],
+      );
+      rejected++;
+    }
+  }
+  return { accepted, rejected };
+}
+
 /** A category enriched with its gate + the PRD it drafted (or null). The shape main()
  *  emits and recordCollection persists. */
 export type CollectedCategory = {
@@ -232,9 +320,23 @@ async function main(): Promise<void> {
   const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
 
   const db = openWithMigrate();
+
+  // Pass 1: flag stale (feedback linked to a PRD that merged later). Runs FIRST so the
+  // collector below only sees rows that weren't superseded.
+  const flagged = flagStaleFeedback(db, project);
+
+  // Pass 2 (separate verb --validate-stale): re-verify tentative flags and resolve.
+  // Default invocation leaves this for an operator or scheduled job — running it on
+  // every collector tick would race with pass 1 (freshly flagged rows have nothing
+  // to verify yet since pass 1 just wrote them).
+  const validating = getFlag(argv, "validate-stale") !== undefined;
+  const validateResult: ValidateResult | null = validating ? validateStaleCandidates(db, project) : null;
+
   const rows = selectNewFeedback(db, project, limit);
   if (rows.length === 0) {
-    process.stdout.write(JSON.stringify({ aggregated: 0, categories: [] }) + "\n");
+    process.stdout.write(
+      JSON.stringify({ aggregated: 0, flagged, validated: validateResult, categories: [] }) + "\n",
+    );
     return;
   }
 
@@ -260,7 +362,9 @@ async function main(): Promise<void> {
   });
 
   recordCollection(db, project, roundId, categories);
-  process.stdout.write(JSON.stringify({ aggregated, roundId, categories }) + "\n");
+  process.stdout.write(
+    JSON.stringify({ aggregated, flagged, validated: validateResult, roundId, categories }) + "\n",
+  );
 }
 
 if (import.meta.main) { await main(); }
