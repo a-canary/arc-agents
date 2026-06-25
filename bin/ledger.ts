@@ -639,7 +639,7 @@ switch (cmd) {
     const title = getFlag("title");
     const body = getFlag("body") ?? "";
     const observed = getFlag("observed-in-task") ?? null;
-    const project = getFlag("project") ?? "arc-agents";
+    const explicitProject = getFlag("project");
     const agent = getFlag("agent") ?? "cli";
     if (!skill) die("--skill required (one of: " + KNOWN_HYGIENE_SKILLS.join(", ") + ")");
     if (!KNOWN_HYGIENE_SKILLS.includes(skill as (typeof KNOWN_HYGIENE_SKILLS)[number])) {
@@ -650,6 +650,20 @@ switch (cmd) {
     if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
+    // Resolve project: explicit --project wins; otherwise inherit the
+    // observed-in-task row's project (single source of truth — the worker
+    // is filing a followup for that specific task); otherwise default to
+    // 'arc-agents'. The cron caller (bin/hygiene-tick.ts) does not go
+    // through hygiene-emit (it inserts directly with the repo name), so
+    // this change only affects worker-emitted followups.
+    let project = explicitProject;
+    if (!project && observed) {
+      const observedRow = db
+        .query<{ project: string }, [string]>(`SELECT project FROM issues WHERE id=?`)
+        .get(observed);
+      if (observedRow?.project) project = observedRow.project;
+    }
+    if (!project) project = "arc-agents";
     const existing = db
       .query<ExistingRow, []>(
         `SELECT id, title, tier, state, NULL AS skill
@@ -1476,10 +1490,14 @@ switch (cmd) {
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
                                        emit HITL prompt + fanout to alive UX modules
   hygiene-emit --skill <s> --title <t> [--body <b>] [--observed-in-task <id>]
+                                       [--project <p>]
                                        emit hygiene followup row (class=hygiene type=quality)
                                        skills: clarify-docs, improve-architecture,
                                                trash-retired-files, analyse-recent-sessions
                                        dedups against ready/blocked/wip/claimed hygiene rows
+                                       --project defaults to the observed-in-task row's
+                                       project (single source of truth); falls back to
+                                       'arc-agents' when neither is set.
   list [--state --kind --type --created-by --limit --all]   (alias: ls)
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them

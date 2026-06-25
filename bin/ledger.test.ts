@@ -1782,3 +1782,85 @@ test("feedback --project rejects mixed-case", async () => {
     cleanup();
   }
 });
+
+// ── hygiene-emit project resolution (clarify-docs-hygiene-emit-caller-must-pa) ──
+//
+// hygiene-emit used to default project='arc-agents' regardless of which task
+// triggered the followup. Worker-emitted followups for non-arc-agents tasks
+// (e.g. expert-horde) silently landed in the wrong repo. The fix:
+// --project wins; otherwise inherit from --observed-in-task; otherwise default.
+
+test("hygiene-emit with explicit --project uses it", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "hygiene-emit", "--skill", "clarify-docs",
+      "--title", "explicit project test",
+      "--project", "expert-horde")) as { id: string; emitted: boolean };
+    expect(r.emitted).toBe(true);
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("expert-horde");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit without --project and without --observed-in-task defaults to arc-agents", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "hygiene-emit", "--skill", "clarify-docs",
+      "--title", "no observed no project")) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("arc-agents");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit inherits project from --observed-in-task row (the regression case)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    // Parent task in a non-arc-agents project
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp",
+      "--title", "expert-horde parent", "--project", "expert-horde")) as { id: string };
+    // Worker files followup without --project (the broken shape)
+    const r = (await run(db, "hygiene-emit", "--skill", "improve-architecture",
+      "--title", "expert-horde followup", "--observed-in-task", parent.id)) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("expert-horde");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit explicit --project beats --observed-in-task (override wins)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp",
+      "--title", "expert-horde parent override", "--project", "expert-horde")) as { id: string };
+    const r = (await run(db, "hygiene-emit", "--skill", "clarify-docs",
+      "--title", "explicit beats observed",
+      "--observed-in-task", parent.id,
+      "--project", "arc-agents")) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("arc-agents");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit with --observed-in-task pointing at missing row falls back to arc-agents", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "hygiene-emit", "--skill", "clarify-docs",
+      "--title", "missing observed", "--observed-in-task", "does-not-exist")) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("arc-agents");
+  } finally {
+    cleanup();
+  }
+});
