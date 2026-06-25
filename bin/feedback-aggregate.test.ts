@@ -3,7 +3,19 @@ import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
-import { buildAggregateRequest, selectNewFeedback, markAggregated, isTrusted, confirmsProposal, parseCategoriesJson, summarizeCategories, recordCollection, type FeedbackRow } from "./feedback-aggregate";
+import {
+  buildAggregateRequest,
+  selectNewFeedback,
+  markAggregated,
+  isTrusted,
+  confirmsProposal,
+  parseCategoriesJson,
+  summarizeCategories,
+  recordCollection,
+  flagStaleFeedback,
+  validateStaleCandidates,
+  type FeedbackRow,
+} from "./feedback-aggregate";
 
 function freshDb() {
   const dir = mkdtempSync(join(tmpdir(), "fb-agg-"));
@@ -212,6 +224,192 @@ test("recordCollection persists every category for a round, readable by project"
     expect(rows.map((r) => r.label)).toEqual(["mobile feed", "kanban"]);
     expect(rows[0]).toMatchObject({ count: 3, confirmed: 1, prd_id: "prd-9", round_id: "fbr-1" });
     expect(rows[1]).toMatchObject({ count: 1, confirmed: 0, prd_id: null });
+  } finally {
+    cleanup();
+  }
+});
+
+
+// --- Slice 4: 2-pass stale/superseded feedback ---
+// Pass 1 (Collector flag): flag feedback rows whose theme_id points to a merged PRD
+// created AFTER the feedback, with a tentative verdict. Pass 2 (Validator): verify
+// the PRD is still merged, accept (state=resolved, resolution=superseded) or reject
+// (state stays new, clear tentative columns).
+//
+// Schema (migration 024, this slice):
+//   feedback.stale_candidate_at     INTEGER  — when pass 1 tentatively flagged it
+//   feedback.stale_candidate_prd_id TEXT     — the merged PRD id it links to
+//   feedback.resolution             TEXT     — pass-2 verdict (null | 'superseded')
+
+function insertIssue(db: DB, id: string, kind: string, state: string, ts: number): void {
+  db.run(
+    "INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, created_at, updated_at) VALUES (?,?,?,?,?,?,?,?,?,?)",
+    [id, "arc-webui", `prd ${id}`, "", "", "mvp", state, kind, ts, ts],
+  );
+}
+
+function rowFull(db: DB, id: string): {
+  state: string;
+  theme_id: string | null;
+  stale_candidate_at: number | null;
+  stale_candidate_prd_id: string | null;
+  resolution: string | null;
+} {
+  return db
+    .query<
+      { state: string; theme_id: string | null; stale_candidate_at: number | null; stale_candidate_prd_id: string | null; resolution: string | null },
+      [string]
+    >("SELECT state, theme_id, stale_candidate_at, stale_candidate_prd_id, resolution FROM feedback WHERE id=?")
+    .get(id)!;
+}
+
+test("flagStaleFeedback: a new row whose theme_id is a PRD merged AFTER it gets tentatively flagged", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    // feedback created at ts=100, theme_id points to a PRD merged at ts=200
+    insertIssue(db, "prd-fresh", "prd", "merged", 200);
+    db.run(
+      "INSERT INTO feedback (id, project, source, body_md, state, theme_id, created_at) VALUES (?,?,?,?,?,?,?)",
+      ["fb-a", "arc-webui", "public", "x", "new", "prd-fresh", 100],
+    );
+    const flagged = flagStaleFeedback(db, "arc-webui");
+    expect(flagged).toBe(1);
+    const r = rowFull(db, "fb-a");
+    expect(r.stale_candidate_at).not.toBeNull();
+    expect(r.stale_candidate_prd_id).toBe("prd-fresh");
+    expect(r.state).toBe("new"); // pass 1 only flags, doesn't resolve
+  } finally {
+    cleanup();
+  }
+});
+
+test("flagStaleFeedback: a row with no merged-PRD link is NEVER flagged", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    // three rows, none with a merged-PRD theme
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", ["fb-1", "arc-webui", "public", "x", "new"]);
+    db.run("INSERT INTO feedback (id, project, source, body_md, state, theme_id) VALUES (?,?,?,?,?,?)", ["fb-2", "arc-webui", "public", "y", "new", "prd-gone"]);
+    db.run("INSERT INTO feedback (id, project, source, body_md, state, theme_id) VALUES (?,?,?,?,?,?)", ["fb-3", "arc-webui", "public", "z", "new", null]);
+    const flagged = flagStaleFeedback(db, "arc-webui");
+    expect(flagged).toBe(0);
+    expect(rowFull(db, "fb-1").stale_candidate_at).toBeNull();
+    expect(rowFull(db, "fb-2").stale_candidate_at).toBeNull(); // prd-gone doesn't exist
+    expect(rowFull(db, "fb-3").stale_candidate_at).toBeNull(); // no theme
+  } finally {
+    cleanup();
+  }
+});
+
+test("flagStaleFeedback: a row whose theme_id points to a PRD merged BEFORE it is NOT flagged (it triggered the PRD)", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    // feedback at ts=200, theme_id prd merged at ts=100 — feedback came AFTER the merge
+    insertIssue(db, "prd-old", "prd", "merged", 100);
+    db.run(
+      "INSERT INTO feedback (id, project, source, body_md, state, theme_id, created_at) VALUES (?,?,?,?,?,?,?)",
+      ["fb-late", "arc-webui", "public", "x", "new", "prd-old", 200],
+    );
+    expect(flagStaleFeedback(db, "arc-webui")).toBe(0);
+    expect(rowFull(db, "fb-late").stale_candidate_at).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("flagStaleFeedback: a row linked to a kind='task' (not PRD) is not flagged even if merged", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, "task-1", "task", "merged", 200);
+    db.run(
+      "INSERT INTO feedback (id, project, source, body_md, state, theme_id, created_at) VALUES (?,?,?,?,?,?,?)",
+      ["fb-x", "arc-webui", "public", "x", "new", "task-1", 100],
+    );
+    expect(flagStaleFeedback(db, "arc-webui")).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("flagStaleFeedback: a row already resolved is not flagged even if its PRD merged after", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, "prd-r", "prd", "merged", 200);
+    db.run(
+      "INSERT INTO feedback (id, project, source, body_md, state, theme_id, created_at) VALUES (?,?,?,?,?,?,?)",
+      ["fb-r", "arc-webui", "public", "x", "resolved", "prd-r", 100],
+    );
+    expect(flagStaleFeedback(db, "arc-webui")).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("validateStaleCandidates: accepts a tentative flag -> state=resolved, resolution=superseded", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertIssue(db, "prd-v", "prd", "merged", 200);
+    db.run(
+      "INSERT INTO feedback (id, project, source, body_md, state, theme_id, stale_candidate_at, stale_candidate_prd_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      ["fb-v", "arc-webui", "public", "x", "new", "prd-v", 150, "prd-v", 100],
+    );
+    const r = validateStaleCandidates(db, "arc-webui");
+    expect(r.accepted).toBe(1);
+    expect(r.rejected).toBe(0);
+    const row = rowFull(db, "fb-v");
+    expect(row.state).toBe("resolved");
+    expect(row.resolution).toBe("superseded");
+  } finally {
+    cleanup();
+  }
+});
+
+test("validateStaleCandidates: rejects a tentative flag whose PRD was cancelled (no longer merged) -> state stays new", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    // PRD was merged, then we cancel it (state changes); pass 2 must reject
+    insertIssue(db, "prd-cx", "prd", "cancelled", 250);
+    db.run(
+      "INSERT INTO feedback (id, project, source, body_md, state, theme_id, stale_candidate_at, stale_candidate_prd_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      ["fb-cx", "arc-webui", "public", "x", "new", "prd-cx", 150, "prd-cx", 100],
+    );
+    const r = validateStaleCandidates(db, "arc-webui");
+    expect(r.accepted).toBe(0);
+    expect(r.rejected).toBe(1);
+    const row = rowFull(db, "fb-cx");
+    expect(row.state).toBe("new");
+    expect(row.resolution).toBeNull();
+    expect(row.stale_candidate_at).toBeNull(); // tentative verdict cleared
+    expect(row.stale_candidate_prd_id).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("validateStaleCandidates: rejects a tentative flag whose PRD no longer exists", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    // no issue row for "prd-missing"
+    db.run(
+      "INSERT INTO feedback (id, project, source, body_md, state, theme_id, stale_candidate_at, stale_candidate_prd_id, created_at) VALUES (?,?,?,?,?,?,?,?,?)",
+      ["fb-gone", "arc-webui", "public", "x", "new", "prd-missing", 150, "prd-missing", 100],
+    );
+    const r = validateStaleCandidates(db, "arc-webui");
+    expect(r.accepted).toBe(0);
+    expect(r.rejected).toBe(1);
+    expect(rowFull(db, "fb-gone").state).toBe("new");
+  } finally {
+    cleanup();
+  }
+});
+
+test("validateStaleCandidates: a row without a tentative flag is left untouched", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", ["fb-plain", "arc-webui", "public", "x", "new"]);
+    const r = validateStaleCandidates(db, "arc-webui");
+    expect(r.accepted).toBe(0);
+    expect(r.rejected).toBe(0);
+    expect(rowFull(db, "fb-plain").state).toBe("new");
   } finally {
     cleanup();
   }

@@ -1198,6 +1198,36 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_feedback_theme_project ON feedback_theme(project, created_at DESC)");
     },
   },
+  {
+    id: "024_feedback_stale_superseded",
+    // 2-pass stale/superseded feedback substrate for feedback-aggregate.ts.
+    // Pass 1 (Collector flag) writes stale_candidate_at + stale_candidate_prd_id; pass 2
+    // (Validator) reads them and either promotes the row to state='resolved' with
+    // resolution='superseded' or clears the tentative verdict. Both columns live
+    // directly on feedback (no new table — fewer joins, same queryability, and the
+    // task body explicitly allowed this shape).
+    //
+    // ponytail: resolution is a free TEXT not a CHECK'd enum. The only verdict pass 2
+    // emits today is 'superseded'; future verdicts (e.g. 'duplicate') get added here
+    // when a slice needs them, not speculatively.
+    up: (db) => {
+      const cols = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(feedback)")
+          .all()
+          .map((r) => r.name),
+      );
+      const add = (name: string, decl: string) => {
+        if (!cols.has(name)) db.exec(`ALTER TABLE feedback ADD COLUMN ${name} ${decl}`);
+      };
+      add("stale_candidate_at", "INTEGER");
+      add("stale_candidate_prd_id", "TEXT");
+      add("resolution", "TEXT");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_feedback_stale_candidate ON feedback(stale_candidate_at) WHERE stale_candidate_at IS NOT NULL",
+      );
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
