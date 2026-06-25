@@ -12,7 +12,16 @@
 // category). Below the threshold the planner is never spawned and that category's
 // feedback stays 'new' for a future run. Trust tier is binary (isTrusted); see fb-qupj.
 //
-//   feedback-aggregate.ts [--project P] [--limit N]
+//   feedback-aggregate.ts [--project P] [--limit N] [--validate-stale]
+//
+// Two-pass stale/superseded flow (this slice):
+//   1. flagStaleFeedback — runs by default; flags rows whose theme_id points to a
+//      merged PRD (state=merged, updated_at > feedback.created_at).
+//   2. validateStaleCandidates — opt-in via --validate-stale; re-verifies the PRD
+//      is still merged and resolves the feedback (state=resolved, resolution=
+//      'superseded') or rejects (clears tentative columns, leaves state='new').
+//      Scheduled to run on a separate cadence (not every collector tick) so freshly
+//      flagged rows aren't immediately verified against themselves.
 //
 // PRODUCES proposals only — never spawns implementation workers, merges, or
 // deploys (the planner it calls has the same contract). Like plan-agent.ts it
@@ -169,10 +178,10 @@ function getFlag(argv: string[], name: string): string | undefined {
   return a.includes("=") ? a.slice(a.indexOf("=") + 1) : argv[i + 1];
 }
 
-/** Fetch up to `limit` unprocessed feedback rows for a project, oldest first.
- *  Tolerates both 'new' (the live table's DEFAULT — agent-CLI rows are born 'new')
- *  and 'OPEN' (webui's normalized value), like arc-webui's own reads. Querying 'OPEN'
- *  alone would skip every freshly-submitted agent row until webui happened to touch it. */
+/** Fetch up to `limit` unaggregated feedback rows for a project, oldest first.
+ *  Tolerates 'OPEN' as well as 'new': agent-CLI rows are born 'new', but arc-webui
+ *  normalizes them to 'OPEN' on read, so the live backlog is mostly 'OPEN'. A
+ *  'new'-only query would silently skip every webui-touched row. */
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
@@ -181,30 +190,111 @@ export function selectNewFeedback(db: DB, project: string, limit: number): Feedb
     .all(project, limit);
 }
 
-/** Link a batch of feedback rows to the PRD they produced and move them to DEV — a PRD
- *  now exists, so they leave the OPEN triage queue (webui owns the later DEV→CLOSED). */
-export function markAggregated(db: DB, ids: string[], themeId: string): void {
-  if (ids.length === 0) return;
-  const ph = ids.map(() => "?").join(",");
-  db.run(`UPDATE feedback SET state='DEV', theme_id=? WHERE id IN (${ph})`, [themeId, ...ids]);
-}
-
-/** The trigger gate (the requested run condition). A scheduled tick spends LLM effort
- *  only when the OPEN backlog earns a planner: ≥1 trusted voice (the operator spoke —
- *  act now) OR >5 untrusted rows (enough end-user/agent signal piled up). */
+/** Cheap project-level pre-gate: is this project's backlog worth a planner-spending
+ *  aggregation pass yet? Fires on >=1 trusted row OR >5 untrusted rows (raw count, the
+ *  scheduler's coarse trigger — confirmsProposal still gates each PRD per-category by
+ *  distinct submitter). Below the bar the pass is skipped and rows stay queued, so the
+ *  scheduled tick is a no-op on thin backlogs. */
 export function triggerGate(rows: FeedbackRow[]): { fire: boolean; trusted: number; untrusted: number } {
   const trusted = rows.filter((r) => isTrusted(r.source)).length;
   const untrusted = rows.length - trusted;
   return { fire: trusted >= 1 || untrusted > 5, trusted, untrusted };
 }
 
-/** Projects with at least one unprocessed feedback row — the tick's work-list for
- *  --all-projects. Same 'new'/'OPEN' tolerance as selectNewFeedback (live rows born 'new'). */
+/** Every project with at least one unaggregated feedback row (drives --all-projects). */
 export function projectsWithOpenFeedback(db: DB): string[] {
   return db
-    .query<{ project: string }, []>("SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN')")
+    .query<{ project: string }, []>(
+      "SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN') ORDER BY project",
+    )
     .all()
     .map((r) => r.project);
+}
+
+/** Link a batch of feedback rows to the PRD they produced and mark them resolved. */
+export function markAggregated(db: DB, ids: string[], themeId: string): void {
+  if (ids.length === 0) return;
+  const ph = ids.map(() => "?").join(",");
+  db.run(`UPDATE feedback SET state='resolved', theme_id=? WHERE id IN (${ph})`, [themeId, ...ids]);
+}
+
+// --- 2-pass stale/superseded (collector flag + validator accept/reject) ---
+// Pass 1 tentatively flags feedback rows whose theme_id points to a PRD merged
+// AFTER the feedback was created — the work shipped elsewhere, so the feedback
+// is stale. Pass 2 re-verifies the PRD is genuinely merged (not cancelled/failed
+// and not deleted) and either resolves the feedback with resolution='superseded'
+// or clears the tentative verdict and leaves it 'new' for a future run.
+//
+// ponytail: validation in pass 2 is just "is the row still merged" — there's no
+// body-similarity scoring against the PRD. The feedback's theme_id already
+// expresses the link; the validator's job is to catch stale links where the
+// PRD was reverted after pass 1 flagged it.
+
+/** Pass 1: flag new-state feedback whose theme_id is a merged PRD created later.
+ *  Writes stale_candidate_at + stale_candidate_prd_id; returns the number flagged. */
+export function flagStaleFeedback(db: DB, project: string): number {
+  const r = db
+    .query<{ id: string }, [string]>(
+      `SELECT f.id FROM feedback f
+         JOIN issues p ON p.id = f.theme_id
+        WHERE f.project = ?
+          AND f.state = 'new'
+          AND f.theme_id IS NOT NULL
+          AND f.stale_candidate_at IS NULL
+          AND p.kind = 'prd'
+          AND p.state = 'merged'
+          AND p.updated_at > f.created_at`,
+    )
+    .all(project);
+  if (r.length === 0) return 0;
+  const now = Math.floor(Date.now() / 1000);
+  const ph = r.map(() => "?").join(",");
+  db.run(
+    `UPDATE feedback SET stale_candidate_at=?, stale_candidate_prd_id=theme_id WHERE id IN (${ph})`,
+    [now, ...r.map((x) => x.id)],
+  );
+  return r.length;
+}
+
+/** Pass 2 outcome. accepted = superseded; rejected = tentative verdict cleared,
+ *  feedback stays 'new'. */
+export type ValidateResult = { accepted: number; rejected: number };
+
+/** Pass 2: re-verify tentative flags. Accepted (PRD still merged) -> state=resolved
+ *  + resolution='superseded'. Rejected (PRD cancelled/failed/missing) -> clear the
+ *  tentative columns, leave state='new'. */
+export function validateStaleCandidates(db: DB, project: string): ValidateResult {
+  const rows = db
+    .query<
+      { id: string; stale_candidate_prd_id: string | null },
+      [string]
+    >(
+      `SELECT id, stale_candidate_prd_id FROM feedback
+        WHERE project = ?
+          AND state = 'new'
+          AND stale_candidate_at IS NOT NULL
+          AND stale_candidate_prd_id IS NOT NULL`,
+    )
+    .all(project);
+  let accepted = 0;
+  let rejected = 0;
+  for (const row of rows) {
+    const prd = row.stale_candidate_prd_id!;
+    const stillMerged = db
+      .query<{ ok: number }, [string]>("SELECT 1 AS ok FROM issues WHERE id=? AND kind='prd' AND state='merged'")
+      .get(prd);
+    if (stillMerged) {
+      db.run("UPDATE feedback SET state='resolved', resolution='superseded' WHERE id=?", [row.id]);
+      accepted++;
+    } else {
+      db.run(
+        "UPDATE feedback SET stale_candidate_at=NULL, stale_candidate_prd_id=NULL WHERE id=?",
+        [row.id],
+      );
+      rejected++;
+    }
+  }
+  return { accepted, rejected };
 }
 
 /** A category enriched with its gate + the PRD it drafted (or null). The shape main()
@@ -248,33 +338,42 @@ function runPlanner(request: string, project: string): string | null {
   }
 }
 
-async function main(): Promise<void> {
-  const argv = process.argv.slice(2);
-  const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
-  const db = openWithMigrate();
+type ProjectResult = {
+  project: string;
+  aggregated: number;
+  flagged: number;
+  validated: ValidateResult | null;
+  trigger: ReturnType<typeof triggerGate>;
+  roundId?: string;
+  skipped?: string;
+  categories: CollectedCategory[];
+};
 
-  const projects = argv.includes("--all-projects")
-    ? projectsWithOpenFeedback(db)
-    : [getFlag(argv, "project") ?? "arc-webui"];
+/** Run one project's full pass: flag-stale -> (optional validate) -> trigger-gate ->
+ *  collect -> per-category plan. The trigger gate is the cheap pre-filter; below it we
+ *  spend no Collector/planner call and leave rows queued for a future tick. */
+function aggregateProject(db: DB, project: string, limit: number, validate: boolean): ProjectResult {
+  // Pass 1: flag stale (feedback linked to a PRD that merged later). Runs FIRST so the
+  // collector below only sees rows that weren't superseded.
+  const flagged = flagStaleFeedback(db, project);
 
-  const runs = projects.map((project) => aggregateProject(db, project, limit));
-  process.stdout.write(JSON.stringify(runs.length === 1 ? runs[0] : { runs }) + "\n");
-}
+  // Pass 2 (opt-in --validate-stale): re-verify tentative flags and resolve. Default
+  // runs leave it to a separate cadence so freshly flagged rows aren't verified against
+  // themselves.
+  const validated: ValidateResult | null = validate ? validateStaleCandidates(db, project) : null;
 
-/** Aggregate one project's OPEN feedback into at most one planner pass. The trigger
- *  gate decides whether to spend the LLM at all; below the gate it's a cheap no-op. */
-export function aggregateProject(db: DB, project: string, limit: number): Record<string, unknown> {
   const rows = selectNewFeedback(db, project, limit);
-  const gate = triggerGate(rows);
-  if (!gate.fire) {
-    return { project, aggregated: 0, skipped: "gate", trusted: gate.trusted, untrusted: gate.untrusted };
+  const trigger = triggerGate(rows);
+  if (rows.length === 0 || !trigger.fire) {
+    return {
+      project, aggregated: 0, flagged, validated, trigger,
+      skipped: rows.length === 0 ? "empty" : "gate", categories: [],
+    };
   }
 
   // CAM: the Collector reads wide and groups the batch; the Proposal Generator gates
-  // EACH category. Below-threshold categories (and any feedback the collector left
-  // uncategorised) stay OPEN for a future run — nothing is dropped. Every category's
-  // counts/patterns/gate are surfaced in the output regardless of the gate, for
-  // transparency to /feed and /approvals.
+  // EACH category (confirmsProposal). Below-threshold/uncategorised rows stay queued —
+  // nothing is dropped. Counts/patterns/gate are surfaced for /feed + /approvals.
   const summaries = summarizeCategories(rows, collectCategories(project, rows));
 
   const roundId = "fbr-" + Date.now().toString(36) + "-" + Math.random().toString(36).slice(2, 8);
@@ -292,7 +391,23 @@ export function aggregateProject(db: DB, project: string, limit: number): Record
   });
 
   recordCollection(db, project, roundId, categories);
-  return { project, aggregated, roundId, categories };
+  return { project, aggregated, flagged, validated, trigger, roundId, categories };
+}
+
+async function main(): Promise<void> {
+  const argv = process.argv.slice(2);
+  const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
+  const validate = getFlag(argv, "validate-stale") !== undefined;
+  const allProjects = getFlag(argv, "all-projects") !== undefined;
+
+  const db = openWithMigrate();
+  // --all-projects sweeps every project with queued feedback (the scheduled drainer);
+  // single-project keeps the original default of arc-webui.
+  const projects = allProjects ? projectsWithOpenFeedback(db) : [getFlag(argv, "project") ?? "arc-webui"];
+
+  const results = projects.map((p) => aggregateProject(db, p, limit, validate));
+  const out = allProjects ? { projects: results } : (results[0] ?? { aggregated: 0, categories: [] });
+  process.stdout.write(JSON.stringify(out) + "\n");
 }
 
 if (import.meta.main) { await main(); }
