@@ -63,10 +63,12 @@ A git working copy under `~/worktrees/<repo>-<slug>/` created by a worker for th
 2. Worker does work, commits locally.
 3. **Before merging to `main` in git**: worker must push the feature branch to origin. Unpushed commits on a reaped worktree are unrecoverable — `git worktree remove` deletes the `.git` and all commits not reachable from a remote branch.
 4. Worker merges to `main` in git, updates the ledger row to `state=merged`.
-5. The worktree is removed by `worktree-reaper` on the next factory tick.
+5. The worktree is removed by `worktree-reaper` on the next factory tick — provided none of the preservation gates in [Reap](#reap) trip. A `merged` row only proves the branch landed; scratch edits on top are a salvage call (the reaper preserves `dirty-uncommitted` dirs for human review).
 
 ## Reap
 The factory's act of killing a worker tmux session that has exceeded the max-age threshold (4hr). Independent of ledger state — a reaped worker's task remains whatever state it last left. The reaper also removes worktrees for `merged`/`failed`/`cancelled` rows (see `worktree-reaper.ts`).
+
+A reaper emit of `outcome: "removed"` means `git worktree remove -f -f` returned OK and the dir is gone — but `outcome` is not always `removed`. The row-driven reaper can emit one of five preservation outcomes and leave the dir on disk: `has-commits` (failed/cancelled with unmerged commits — salvage), `dirty-uncommitted` (uncommitted/untracked edits on top of merged branch — salvage), `main-working-tree` (path misrecorded as a main checkout — columns nulled, leak-detection owns the dir), `git-remove-failed` (git refused), `no-parent-repo` (path not part of any git worktree). The 7-day backstop disk-scan adds `kept-has-commits` (unmerged commits — never auto-removed, salvage), `kept-too-young` (HEAD == main, age under maxAgeSec), `kept-live-row` (a live ledger row owns it), and `not-a-worktree` (dir isn't a git worktree — left untouched). A worker re-entering a path that was "reaped" must NOT assume the dir is gone — verify with `test -d <wt>` and, if present, `git -C <wt> rev-parse HEAD` against `origin/main` and `git reset --hard origin/main` if it lags. Observed footgun (2026-06): reaper event emitted `removed` yet a re-entered worker found the dir still on disk with HEAD 4 PRs behind main.
 
 ## UX Module
 An external installable that fulfills the [UX Module Contract](docs/adr/0002-ux-module-contract.md). Surfaces HITL prompts to the user in some medium (TUI, webui, Discord, email). Declared in `~/.config/arc/config.yaml`; liveness via ledger heartbeats. The harness owns no transport code — modules pull from the ledger (sync mediums) or ship their own pusher daemon (async mediums).
