@@ -24,6 +24,8 @@ For the decomposition heuristic, reference the `/to-prd` skill at `~/.claude/plu
    - Tier assignment: `trust` (security/irreversible), `mvp` (current sprint priority), `explore` (research), `defer` (known-want, no timeline).
    - Pool assignment: `build` (implementation), `explore` (research/validation), `interactive` (requires human mid-task), `ops` (infra/deploy).
 
+   **Verify every dependency claim in the brief before emitting it.** If a sprint title or PRD paragraph says "on top of X that already exists" / "cheap add to existing Y" / "as a follow-on to the merged Z" — grep the target repo for X/Y/Z before writing the sprint. If the claim is false (no tile, no helper, no merged slice), either rewrite the brief so it does not depend on the phantom, or fold the missing piece into the slice scope (allowed only when the missing piece is the *same* tracer bullet, not a separate hidden dependency). Briefs that promise "cheap add on top of" a thing that doesn't exist waste a worker cycle waiting on a phantom. Observed: task `idle-bleed-flag-emphasise-any-running-bo` had a brief claiming "cheap add on top of the data the tile already reads" but no tile existed in `arc-webui/`; the worker shipped reader + tile + emphasis as one slice. The fix is upstream — don't emit the phantom-dependency brief in the first place.
+
 3. **Write via bookie.** For each sprint spec:
    ```
    ledger.ts create --kind sprint --type deferred --title "<title>" \
