@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildPlanningPrompt, parsePlanJson, buildFallbackPlan, planToPlanArgs, ARCH_CONTEXT, groundingFor } from "./plan-agent";
+import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, ARCH_CONTEXT, groundingFor } from "./plan-agent";
 
 test("buildPlanningPrompt embeds request + context, asks for the json shape, avoids the hang trigger", () => {
   const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: arc-webui is server-rendered.");
@@ -49,14 +49,9 @@ test("parsePlanJson returns null on garbage, missing keys, or empty tracers", ()
   expect(parsePlanJson(JSON.stringify({ body_md: "B", tracers: ["s"] }))).toBeNull();
 });
 
-test("buildFallbackPlan degrades to the deterministic emitter shape", () => {
-  const long = "x".repeat(200);
-  const plan = buildFallbackPlan(long);
-  expect(plan.title.length).toBeLessThanOrEqual(80);
-  expect(plan.body_md).toBe(long);
-  expect(plan.tracers.length).toBe(1);
-  expect(plan.tracers[0]).toContain(plan.title);
-});
+// No bare-request fallback: on an unparseable/failed engine run parsePlanJson returns
+// null and main() exits non-zero rather than minting the prompt as a PRD. The null
+// contract is covered by "parsePlanJson returns null on garbage" above.
 
 test("planToPlanArgs maps a plan to plan.ts argv, one --tracer per slice, title clamped", () => {
   const argv = planToPlanArgs(
