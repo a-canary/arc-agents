@@ -11,7 +11,15 @@ and `=== PR_URL (if filed) === <url> ===`). The subagent must run this
 3-line check before reading the diff:
 
 ```bash
-EXPECTED_REPO="a-canary/${PROJECT}"
+# Resolve local project name -> GitHub remote. Add new aliases here when
+# introducing a new project whose ledger `project` field differs from its
+# GitHub repo slug (only confirmed aliases: arc-webui -> webui,
+# webui-specs -> webui-specs — verified 2026-06-26 from issue.pr_url).
+case "${PROJECT}" in
+  arc-webui)    EXPECTED_REPO="a-canary/webui" ;;
+  webui-specs)  EXPECTED_REPO="a-canary/webui-specs" ;;
+  *)            EXPECTED_REPO="a-canary/${PROJECT}" ;;
+esac
 ACTUAL_REPO="$(echo "$PR_URL" | sed -E 's|.*github.com/([^/]+/[^/]+)/pull/.*|\1|')"
 [ "$EXPECTED_REPO" = "$ACTUAL_REPO" ] || { echo "PR repo mismatch: expected $EXPECTED_REPO, got $ACTUAL_REPO"; exit 2; }
 ```
@@ -25,7 +33,30 @@ cli-proxy rows that filed PRs against arc-agents). Pair this with the
 bookie merge guard (which catches the same class of bug at merge time)
 for defense in depth.
 
+**Project-name alias map.** Most rows follow `project=<local-repo-dir>`
+→ `remote=a-canary/<local-repo-dir>`. Two confirmed exceptions
+(sampled 2026-06-26 from `issues.pr_url`, dominant PR repo per
+`project` column):
+
+| project (ledger) | remote (GitHub) | evidence |
+| --- | --- | --- |
+| `arc-agents` | `a-canary/arc-agents` | 214 PRs, dominant |
+| `arc-webui` | `a-canary/webui` | 17 PRs (3 anomalies to `arc-agents` — the bug) |
+| `webui-specs` | `a-canary/webui-specs` | 1 PR (1 anomaly to `arc-agents`) |
+| `arc-skills` | `a-canary/arc-skills` | 6 PRs |
+| `pipeliner` | `a-canary/pipeliner` | 6 PRs |
+| `ke` | `a-canary/ke` | 8 PRs |
+| `discord-bridge` | `a-canary/discord-bridge` | 7 PRs |
+
+When adding a new project whose local directory name differs from its
+GitHub repo slug, extend the `case` block above in this same order and
+keep the table in sync. When in doubt, run
+`bun bin/ledger.ts list --project <name> --state merged --json` and
+confirm the dominant `pr_url` repo before assuming the default
+`a-canary/${PROJECT}` template is right.
+
 Fixture: `project=cli-proxy, pr_url=https://github.com/a-canary/cli-proxy/pull/1` → `EXPECTED_REPO=a-canary/cli-proxy, ACTUAL_REPO=a-canary/cli-proxy`, check passes.
+Fixture (aliased): `project=arc-webui, pr_url=https://github.com/a-canary/webui/pull/29` → `EXPECTED_REPO=a-canary/webui, ACTUAL_REPO=a-canary/webui`, check passes (would have FAILED under the naive `a-canary/${PROJECT}` template — the bug this fix exists to prevent).
 
 Ask the bookie subagent to log the returned JSON as a ledger event
 (`kind=diff_review`, payload = the JSON object). All ledger writes go
