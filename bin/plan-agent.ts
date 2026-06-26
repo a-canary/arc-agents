@@ -103,13 +103,6 @@ export function parsePlanJson(stdout: string): Plan | null {
   };
 }
 
-// Deterministic degrade path (== slice-1/2 emitter): request becomes a thin PRD + one
-// tracer. Used when the model run fails, times out, or returns unparseable output.
-export function buildFallbackPlan(request: string): Plan {
-  const title = clamp(request, 80);
-  return { title, body_md: request, tracers: [`Implement: ${title}`] };
-}
-
 export function planToPlanArgs(plan: Plan, project: string, thread: string): string[] {
   const argv = [
     "--project", project,
@@ -153,12 +146,15 @@ async function main(): Promise<void> {
   const project = getFlag(argv, "project") ?? "arc-webui";
 
   const prompt = buildPlanningPrompt(request, groundingFor(project), project);
-  let plan = generatePlan(prompt, project);
+  const plan = generatePlan(prompt, project);
   if (!plan) {
-    // Make degradation loud: a slow repo can hit the 300s timeout and silently fall
-    // back to a bare-request PRD — the exact regression this engine swap fixed.
-    process.stderr.write("plan-agent: research engine returned no plan — using bare-request fallback (check claude binary / 300s timeout)\n");
-    plan = buildFallbackPlan(request);
+    // No bare-request fallback: minting the prompt itself as a PRD polluted the
+    // approvals gate (prompt-shaped "PRDs") AND marked the source feedback resolved.
+    // Fail instead — the auto-planner caller leaves the feedback 'new', and a later
+    // tick retries (the claude -p engine is intermittent, so retry converges on a
+    // real plan). Silent stall beats silent corruption.
+    process.stderr.write("plan-agent: research engine returned no plan — failing (feedback stays new, retries next tick; check claude binary / 300s timeout)\n");
+    process.exit(1);
   }
 
   const planBin = join(import.meta.dir, "plan.ts");
