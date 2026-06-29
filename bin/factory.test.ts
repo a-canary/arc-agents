@@ -407,28 +407,96 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
   expect(issue.state).toBe("review");
 });
 
+test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a stripped PATH", () => {
+  // Regression (live daemon 2026-06-29): 9 exit-127 `pi: command not found`
+  // events across 4+ projects in 30d. systemd --user delivers PATH without
+  // ~/node_modules/.bin, where a local (non-global) `npm i @mariozechner/pi-
+  // coding-agent` drops the `pi` symlink. 358b01f added ~/node_modules/.bin to
+  // ensure_pi_on_path's candidate list. This test boots the REAL worker-
+  // shell.sh on a stripped PATH with a CONTROLLABLE `pi` planted ONLY in
+  // ~/node_modules/.bin, then asserts (a) `command -v pi` resolves after the
+  // guard, AND (b) the headless engine actually exec'd it (row advances to
+  // `review` via the fake-pi's self-report).
+  //
+  // Fake HOME so the candidate list's `~/node_modules/.bin` points at our
+  // planted pi, not the real one (the real pi makes a network call we do not
+  // want in a unit test). Prepend the real `~/.bun/bin` + `~/.local/bin` to
+  // PATH so the bun/claude guards are no-ops; the only candidate that resolves
+  // `pi` is the new ~/node_modules/.bin one.
+  const fakeHome = mkdtempSync(join(tmpdir(), "arc-pi-home-"));
+  const fakePiHomeDir = join(fakeHome, "node_modules", ".bin");
+  mkdirSync(fakePiHomeDir, { recursive: true });
+  // Fake `pi` that records its invocation AND exercises the same self-report
+  // path the test fixture's fakePi does. Reads `pi --version` style and exits
+  // 0 so the worker's headless-reconcile path treats the row as `review`.
+  const fakePi = join(fakePiHomeDir, "pi");
+  writeFileSync(
+    fakePi,
+    [
+      "#!/usr/bin/env bash",
+      "echo \"INVOKED pi argc=$# argv0=$0\"",
+      "if [[ \"$1\" == \"--version\" ]]; then echo \"fake-pi 0.0.0\"; exit 0; fi",
+      "if [[ -n \"${ARC_TASK_ID:-}\" ]]; then",
+      "  DBF=()",
+      "  [[ -n \"${ARC_LEDGER_DB:-}\" ]] && DBF=(--db \"$ARC_LEDGER_DB\")",
+      `  bun ${JSON.stringify(LEDGER)} update "$ARC_TASK_ID" "\${DBF[@]}" --state review --evidence "fake-pi in fake HOME/node_modules/.bin self-report" >/dev/null 2>&1 || true`,
+      "fi",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fakePi, 0o755);
+
+  const realBun = process.env.HOME + "/.bun/bin";
+  const realLocal = process.env.HOME + "/.local/bin";
+  // Path that has bun + claude resolvable (guards become no-ops) but DELIBERATELY
+  // omits any dir containing `pi`. The only way `pi` can be found is via
+  // ensure_pi_on_path's ~/node_modules/.bin candidate.
+  const strippedPath = `${realBun}:${realLocal}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
+
+  const id = createTask("pi-strip");
+  const shell = join(REPO, "bin", "worker-shell.sh");
+  const env: Record<string, string> = {
+    HOME: fakeHome, // <- the only place `pi` lives
+    USER: process.env.USER ?? "",
+    PATH: strippedPath,
+    ARC_LEDGER_DB: dbPath,
+    CLAUDE_BIN: fakeClaude,
+    ARC_PROJECT_REPO_ARC_AGENTS: REPO,
+  };
+  const r = spawnSync("bash", [shell, "w-pi-strip"], { encoding: "utf8", env });
+  expect(r.status).toBe(0);
+  // No "pi: command not found" anywhere — the guard must have found the
+  // planted candidate and prepended it to PATH before the headless exec.
+  expect(r.stderr).not.toContain("pi: command not found");
+  expect(r.stdout).not.toContain("pi: command not found");
+  // Row advanced off `claimed` to `review` via the fake-pi self-report — the
+  // headless engine reached the agent (proves `pi` was on PATH at exec time
+  // AND exec'd successfully) without the post-#16 reconciler needing to step in.
+  const show = bun([LEDGER, "show", id]);
+  const issue = JSON.parse(show.stdout).issue;
+  expect(issue.claimed_by).toBe("w-pi-strip");
+  expect(issue.state).toBe("review");
+
+  rmSync(fakeHome, { recursive: true, force: true });
+});
+
 test("worker-shell.sh restores the node-global bin dir so the real `pi` resolves on systemd's stripped PATH", () => {
   // Regression (live daemon 2026-05-27): the agent-less row resolves to the
-  // `pi -p` headless engine, but systemd --user delivers a PATH that lacks the
-  // node-global bin dir holding `pi` (/usr/local/lib/node_modules/node/bin).
+  // `pi -p` headless engine, but systemd --user delivers a PATH that lacks
+  // the node-global bin dir holding `pi` (/usr/local/lib/node_modules/node/bin).
   // `bun` self-restored (~/.bun/bin) but `pi` did not, so every headless worker
   // exited 127 ("pi: command not found") and the #16 reconciler failed the row.
   // Fix: worker-shell.sh must self-restore the node-global bin dir, mirroring
-  // the existing bun guard. This test boots the REAL worker-shell.sh on a
-  // stripped PATH that DELIBERATELY omits both the fake-pi dir AND the real
-  // node-global dir, then asserts the boot does NOT die with pi-not-found —
-  // i.e. the shell restored pi's dir itself.
+  // the existing bun guard. This test sources the REAL worker-shell.sh via
+  // ARC_WORKER_SHELL_SOURCE_ONLY=1, then runs `ensure_pi_on_path` against a
+  // stripped PATH and asserts `command -v pi` resolves afterwards.
   //
-  // We force the headless engine to a `pi` that immediately exits 0 by shadowing
-  // CLAUDE_BIN only (which never substitutes a non-"claude" argv[0]); the real
-  // `pi` is invoked. We assert on the NEGATIVE (no 127 / no "command not found")
-  // rather than the agent's output, since the real pi makes a network call we
-  // do not want in a unit test — so we additionally short-circuit it by giving
-  // the row a fast-failing acceptance is unnecessary; instead we only need the
-  // shell to REACH the agent without a PATH failure. To keep the test hermetic
-  // and offline, we point the alias at a trivial command via a stub config is
-  // not available here, so we assert the resolver step: with pi restored to PATH,
-  // `command -v pi` (the exact guard predicate) succeeds in the stripped env.
+  // The earlier inline-derivation probe (hardcoded `$NODE_BIN_DIR/../lib/node_
+  // modules/node/bin`) drifted out of sync when 358b01f added the
+  // `~/node_modules/.bin` candidate — the inline path was never the candidate
+  // the live `ensure_pi_on_path` used. Sourcing the script keeps the test
+  // hermetic to the shipped guard.
   const realPi = spawnSync("bash", ["-lc", "command -v pi"], { encoding: "utf8" });
   if (realPi.status !== 0 || !realPi.stdout.trim()) {
     // No real pi installed in this environment — the guard is a no-op here and
@@ -438,51 +506,46 @@ test("worker-shell.sh restores the node-global bin dir so the real `pi` resolves
   const piDir = dirname(realPi.stdout.trim());
 
   const shell = join(REPO, "bin", "worker-shell.sh");
-  // Stripped PATH WITHOUT fakeBinDir and WITHOUT piDir — exactly what systemd
-  // delivered when the bug fired. /usr/local/bin is present (holds `node`) but
-  // NOT the deeper node_modules bin that holds `pi`.
+  // Stripped PATH WITHOUT piDir and WITHOUT any other dir holding `pi` —
+  // exactly what systemd delivered when the bug fired. /usr/local/bin is
+  // present (holds `node`) but NOT the deeper node_modules bin that holds `pi`.
   const strippedPath = `/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
   expect(strippedPath.split(":")).not.toContain(piDir);
 
-  // Probe: in this exact stripped env, the guard predicate must end up TRUE.
-  // We run the guard line from worker-shell.sh against the stripped PATH and
-  // assert pi becomes resolvable. The guard derives piDir from `node`'s
-  // location, so it must work with only /usr/local/bin (node) on PATH.
+  // Drive the REAL `ensure_pi_on_path` against the stripped env. Before the
+  // guard, pi is missing; after, it resolves (the guard found the candidate
+  // the install actually uses — node_modules/node/bin OR ~/node_modules/.bin,
+  // whichever matches THIS host's install layout).
   const probe = spawnSync(
     "bash",
     [
       "-c",
-      // Mirror the guard contract: extract the `command -v node ... export PATH`
-      // line family from the shell and prove pi resolves afterwards. We source
-      // the guard by extracting lines that restore PATH for bun/pi, then test.
-      `set -e
-       export PATH=${JSON.stringify(strippedPath)}
+      `export PATH=${JSON.stringify(strippedPath)}
        command -v pi >/dev/null 2>&1 && echo "PI_BEFORE_FOUND" || echo "PI_BEFORE_MISSING"
-       # Apply the same restoration worker-shell.sh performs:
-       grep -E 'command -v (bun|pi)|NODE_GLOBAL|node_modules/node/bin' ${JSON.stringify(shell)} >/dev/null
-       # Re-run the worker-shell guard region by sourcing the script up to the claim
-       # is heavy; instead assert the shell's own guard makes pi resolvable by
-       # executing the documented derivation directly:
-       NODE_BIN_DIR="$(dirname "$(command -v node)")"
-       CANDIDATE="$NODE_BIN_DIR/../lib/node_modules/node/bin"
-       command -v pi >/dev/null 2>&1 || export PATH="$CANDIDATE:$PATH"
+       source ${JSON.stringify(shell)}
+       ensure_pi_on_path
        command -v pi >/dev/null 2>&1 && echo "PI_AFTER_FOUND" || echo "PI_AFTER_MISSING"`,
     ],
-    { encoding: "utf8", env: { HOME: process.env.HOME ?? "", PATH: strippedPath } },
+    { encoding: "utf8", env: { HOME: process.env.HOME ?? "", PATH: strippedPath, ARC_WORKER_SHELL_SOURCE_ONLY: "1" } },
   );
   // Before restoration pi is missing (reproduces the bug); after, it resolves.
   expect(probe.stdout).toContain("PI_BEFORE_MISSING");
   expect(probe.stdout).toContain("PI_AFTER_FOUND");
 
-  // And the REAL worker-shell.sh must carry that same self-restoration: assert
-  // the guard region is present and derives pi's dir from `node` (not a
-  // hardcoded path). This pins the fix in the shipped script. We do NOT boot
+  // And the REAL worker-shell.sh must carry the candidates that match real
+  // install layouts. This pins the fix in the shipped script. We do NOT boot
   // the real shell here because, with the guard working, the REAL network `pi`
   // would run and hang the unit test — the probe above already proves the guard
   // makes `pi` resolvable on the exact stripped PATH that broke the live daemon.
   const shellSrc = spawnSync("cat", [shell], { encoding: "utf8" }).stdout;
   expect(shellSrc).toContain("command -v pi");
+  // The two candidates that have caught real bugs:
+  //   - 358b01f: `~/node_modules/.bin` (local non-global install, the row
+  //     that fired this slice).
+  //   - 0e9b3ac (older): `node_modules/node/bin` (global node install,
+  //     original systemd-stripped bug).
   expect(shellSrc).toContain("node_modules/node/bin");
+  expect(shellSrc).toContain("node_modules/.bin");
   // Guard must be conditional (no-op when pi already resolves) and version-agnostic.
   expect(shellSrc).toMatch(/command -v node/);
 });
