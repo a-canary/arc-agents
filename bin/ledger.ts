@@ -31,7 +31,24 @@ const KNOWN_HYGIENE_SKILLS = [
 ] as const;
 
 const args = process.argv.slice(2);
-const cmd = args[0];
+// Strip a leading --db <path> (or --db=<path>) so bare invocations like
+// `ledger --db /path` work — without this, --db is misread as the verb.
+let cmd: string | undefined;
+{
+  let i = 0;
+  while (i < args.length && args[i]!.startsWith("--")) {
+    const a = args[i]!;
+    if (a === "--db" || a.startsWith("--db=")) {
+      i += a.includes("=") ? 1 : 2;
+      continue;
+    }
+    break;
+  }
+  cmd = args[i];
+  // Move any pre-verb flags to their original position; getFlag walks
+  // process.argv-derived args anyway, so order doesn't matter for flag
+  // lookup. No rewrite needed.
+}
 
 function out(data: unknown): void {
   if (process.stdout.isTTY && Array.isArray(data)) {
@@ -513,7 +530,14 @@ switch (cmd) {
     } ORDER BY ${SORT_KEY_SQL} LIMIT ?`;
     vals.push(limit);
     const db = openWithMigrate(getFlag("db"));
-    out(db.query(sql).all(...vals));
+    const rows = db.query(sql).all(...vals) as Record<string, unknown>[];
+    out(rows);
+    if (process.stderr.isTTY) {
+      const hint = state
+        ? `Next: \`ledger show <id>\` to inspect, or \`ledger claim <id>\` to start.`
+        : `Next: \`ledger list --state ready\` for the queue, or \`ledger show <id>\` to inspect.`;
+      process.stderr.write(hint + "\n");
+    }
     break;
   }
 
@@ -524,6 +548,15 @@ switch (cmd) {
     if (!issue) die(`no such issue: ${id}`);
     const events = db.query("SELECT seq, ts, agent, kind, payload_md FROM issue_events WHERE issue_id=? ORDER BY seq").all(id);
     out({ issue, events });
+    if (process.stderr.isTTY) {
+      const st = (issue as { state: string }).state;
+      const hint = st === "ready"
+        ? `Next: \`ledger claim ${id}\` to start work.`
+        : st === "wip" || st === "claimed" || st === "review"
+        ? `Next: \`ledger update ${id} --state merged --evidence ...\` to close (with --pr or --local-merged-sha), or \`--in-place\` for in-place closure.`
+        : `Next: state=${st}; no default verb.`;
+      process.stderr.write(hint + "\n");
+    }
     break;
   }
 
@@ -1459,7 +1492,20 @@ switch (cmd) {
     break;
   }
 
-  case undefined:
+  case undefined: {
+    // AXI P8: bare `ledger` (no args) shows live state (ready queue) instead
+    // of a usage screen. Zero-friction default = useful work.
+    const db = openWithMigrate(getFlag("db"));
+    const sql = `SELECT id, state, kind, type, title FROM issues WHERE state='ready' ORDER BY ${SORT_KEY_SQL} LIMIT ?`;
+    const limit = parseInt(getFlag("limit") ?? "100", 10);
+    out(db.query(sql).all(limit));
+    if (process.stderr.isTTY) {
+      const readyCount = (db.query(`SELECT COUNT(*) AS n FROM issues WHERE state='ready'`).get() as { n: number }).n;
+      process.stderr.write(`Next: claim <id> to start, or \`ledger list\` for filters (${readyCount} ready).\n`);
+    }
+    break;
+  }
+
   case "-h":
   case "--help":
   case "help": {

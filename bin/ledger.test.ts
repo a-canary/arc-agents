@@ -302,6 +302,33 @@ test("ls is an alias for list", async () => {
   }
 }, 10000);
 
+// Slice 2 (AXI P8): bare `ledger` (no args) prints the ready queue, not a
+// usage screen. Stderr hint also appears under TTY.
+test("bare `ledger` (no args) prints the ready queue (AXI P8)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const raw = new Database(db);
+    const stmt = raw.prepare(
+      `INSERT INTO issues (id, project, kind, type, title, body_md, state) VALUES (?, 'p', 'task', 'mvp', ?, '', ?)`,
+    );
+    stmt.run("bare-r-1", "ready row", "ready");
+    stmt.run("bare-r-2", "ready row 2", "ready");
+    stmt.run("bare-m-1", "merged row", "merged");
+    raw.close();
+
+    // No verb: bare invocation must return ready rows, not a usage screen.
+    const env = { ...process.env, ARC_SKIP_MERGE_TRUTH: "1" };
+    const r = await $`bun ${cli} --db ${db}`.env(env).quiet();
+    const rows = JSON.parse(r.stdout.toString()) as { id: string; state: string }[];
+    const ids = rows.map((r) => r.id).sort();
+    expect(ids).toEqual(["bare-r-1", "bare-r-2"]);
+    for (const row of rows) expect(row.state).toBe("ready");
+  } finally {
+    cleanup();
+  }
+}, 10000);
+
 test("positional create is rejected", async () => {
   const { db, cleanup } = freshDb();
   try {
