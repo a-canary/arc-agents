@@ -163,6 +163,9 @@ ensure_pi_on_path() {
     [ -n "$npm_prefix" ] && candidates+=( "${npm_prefix}/bin" )
   fi
   candidates+=( "${HOME}/.npm-global/bin" )
+  # Local (non-global) install: `npm i @mariozechner/pi-coding-agent` drops the
+  # `pi` symlink under ~/node_modules/.bin, which no global prefix probe finds.
+  candidates+=( "${HOME}/node_modules/.bin" )
   for d in "${candidates[@]}"; do
     if [ -x "${d}/pi" ]; then export PATH="${d}:${PATH}"; return 0; fi
   done

@@ -229,6 +229,18 @@ test("ensure_pi_on_path finds pi under ~/.npm-global/bin (per-user no-sudo prefi
   }
 });
 
+test("ensure_pi_on_path finds pi under ~/node_modules/.bin (local non-global install)", () => {
+  const home = mkdtempSync(join(tmpdir(), "pihome-"));
+  try {
+    const expected = plantPi(join(home, "node_modules", ".bin"));
+    const { rc, piPath } = callEnsurePi({ home });
+    expect(rc).toBe(0);
+    expect(piPath).toBe(expected);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
 test("ensure_pi_on_path finds pi via `npm prefix -g`/bin", () => {
   const home = mkdtempSync(join(tmpdir(), "pihome-"));
   const prefix = mkdtempSync(join(tmpdir(), "npmprefix-"));
