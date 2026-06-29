@@ -462,10 +462,19 @@ test("worker-shell.sh restores the node-global bin dir so the real `pi` resolves
        grep -E 'command -v (bun|pi)|NODE_GLOBAL|node_modules/node/bin' ${JSON.stringify(shell)} >/dev/null
        # Re-run the worker-shell guard region by sourcing the script up to the claim
        # is heavy; instead assert the shell's own guard makes pi resolvable by
-       # executing the documented derivation directly:
+       # executing the documented derivation directly. Mirror the candidate list
+       # from worker-shell.sh's ensure_pi_on_path() (node-global prefix + npm -g
+       # prefix + ~/.npm-global/bin + ~/node_modules/.bin):
        NODE_BIN_DIR="$(dirname "$(command -v node)")"
-       CANDIDATE="$NODE_BIN_DIR/../lib/node_modules/node/bin"
-       command -v pi >/dev/null 2>&1 || export PATH="$CANDIDATE:$PATH"
+       CANDIDATES="$NODE_BIN_DIR/../lib/node_modules/node/bin"
+       if command -v npm >/dev/null 2>&1; then
+         NPM_PREFIX="$(npm prefix -g 2>/dev/null || true)"
+         [ -n "$NPM_PREFIX" ] && CANDIDATES="$CANDIDATES:\${NPM_PREFIX}/bin"
+       fi
+       CANDIDATES="$CANDIDATES:\${HOME}/.npm-global/bin:\${HOME}/node_modules/.bin"
+       for c in $(echo "$CANDIDATES" | tr ':' '\n'); do
+         [ -x "$c/pi" ] && export PATH="$c:$PATH" && break
+       done
        command -v pi >/dev/null 2>&1 && echo "PI_AFTER_FOUND" || echo "PI_AFTER_MISSING"`,
     ],
     { encoding: "utf8", env: { HOME: process.env.HOME ?? "", PATH: strippedPath } },
