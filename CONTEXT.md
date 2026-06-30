@@ -58,8 +58,8 @@ An issue state from which there is no exit: `merged` and `cancelled`. Once a row
 The checklist a worker runs through before exiting its claude session: drive the task to a terminal state (merged + evidence + pr, or failed + evidence), or decompose it into HITL children (state=blocked). Suggested but not enforced: verify in-scope docs are still accurate; commit as the configured git user; remove the worktree. The Stop hook (`hooks/stop.sh`) reminds the worker of this checklist; it does not enforce stale-doc checks.
 
 ## Worktree
-A git working copy under `~/worktrees/<repo>-<slug>/` created by a worker for the lifetime of one task. Lifecycle:
-1. Worker creates it from `main` on a feature branch.
+A git working copy under `~/worktrees/<repo>-<slug>/` provisioned by the harness (not the worker) for the lifetime of one task. Creation happens in `bin/worker-shell.sh` *before* `claude`/`pi` is exec'd — `git worktree add --force -B worker/<slug> ~/worktrees/<repo>-<slug>/ main` (parent dirs auto-mkdir'd by git ≥ 2.30). The shell then `cd`s into the new dir and execs the engine, so the agent boots with that path as its CWD already on disk. If a worker ever finds its CWD missing (reaped-then-reclaimed race; wrong working tree; exec in a different root), `Bash` will fail with "no such file or directory" because it does not auto-mkdir — but `Write`/`Edit` auto-mkdir the target's parent, so the documented escape is to write any path inside the worktree (e.g. a `.gitkeep`) to bootstrap the dir, then resume bash. Lifecycle:
+1. Harness creates it from `main` on a feature branch (worker does not).
 2. Worker does work, commits locally.
 3. **Before merging to `main` in git**: worker must push the feature branch to origin. Unpushed commits on a reaped worktree are unrecoverable — `git worktree remove` deletes the `.git` and all commits not reachable from a remote branch.
 4. Worker merges to `main` in git, updates the ledger row to `state=merged`.
