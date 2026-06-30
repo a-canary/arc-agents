@@ -520,7 +520,8 @@ test("worker-shell.sh restores the node-global bin dir so the real `pi` resolves
     "bash",
     [
       "-c",
-      `export PATH=${JSON.stringify(strippedPath)}
+      `set -e
+       export PATH=${JSON.stringify(strippedPath)}
        command -v pi >/dev/null 2>&1 && echo "PI_BEFORE_FOUND" || echo "PI_BEFORE_MISSING"
        source ${JSON.stringify(shell)}
        ensure_pi_on_path
