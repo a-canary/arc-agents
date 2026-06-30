@@ -20,6 +20,10 @@ export const PROJECT_GH_REPO: Readonly<Record<string, string>> = {
   bitnet: "a-canary/bitnet",
   "starlight-slm": "a-canary/starlight-slm",
   "llm-judge": "a-canary/llm-judge",
+  // Local dir is `conjecture` (lowercase); github repo is `Conjecture` (capital C).
+  // Without this entry, the merge guard short-circuits (unknown project = skip),
+  // letting wrong-repo PRs slip through. Verified 2026-06-30 from PR #19.
+  conjecture: "a-canary/Conjecture",
 };
 
 // Parses a pr_url into "owner/repo", accepting the github.com form

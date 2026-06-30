@@ -15,10 +15,12 @@ and `=== PR_URL (if filed) === <url> ===`). The subagent must run this
 # Resolve local project name -> GitHub remote. Add new aliases here when
 # introducing a new project whose ledger `project` field differs from its
 # GitHub repo slug (only confirmed aliases: arc-webui -> webui,
-# webui-specs -> webui-specs — verified 2026-06-26 from issue.pr_url).
+# webui-specs -> webui-specs, conjecture -> Conjecture — verified
+# 2026-06-30 from trash-retired-files-conjecture-drop-dead PR #19).
 case "${PROJECT}" in
   arc-webui)    EXPECTED_REPO="a-canary/webui" ;;
   webui-specs)  EXPECTED_REPO="a-canary/webui-specs" ;;
+  conjecture)   EXPECTED_REPO="a-canary/Conjecture" ;;
   *)            EXPECTED_REPO="a-canary/${PROJECT}" ;;
 esac
 ACTUAL_REPO="$(echo "$PR_URL" | sed -E 's|.*github.com/([^/]+/[^/]+)/pull/.*|\1|')"
@@ -48,6 +50,7 @@ for defense in depth.
 | `pipeliner` | `a-canary/pipeliner` | 6 PRs |
 | `ke` | `a-canary/ke` | 8 PRs |
 | `discord-bridge` | `a-canary/discord-bridge` | 7 PRs |
+| `conjecture` | `a-canary/Conjecture` | 1 PR (#19, capital C) |
 
 When adding a new project whose local directory name differs from its
 GitHub repo slug, extend the `case` block above in this same order and
