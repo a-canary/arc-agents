@@ -98,6 +98,31 @@ A compute task's full lifecycle, end-to-end:
 
 The 4 successful E-rows (E3, E9, E10, E13) and the 7 eventually-successful E-rows (E1, E2, E4, E5, E7, E8, 000027) all followed this shape. The factory's role is *just* step 3a and 5–6; the operator's role is step 4. The factory's 30-min watchdog is the *signal* that step 3b (i) is not viable for long tasks and the row needs to fall through to step 4.
 
+## Operator-completion hook (Pattern 3)
+
+The lifecycle above assumes the worker is alive when the operator finishes. In the Round-2 capacity probe (`round-2-capacity-probe-execute-full-ft-o`, evidence in `~/vault/agents/director/journal/analysis-1782813826.md` Pattern 3) the worker died 17s after claim (`exit 1, 0 commits`) and was reaped; the actual vast run on box 42453957 SUCCESS'd ~40min later but the row stayed `state=failed` because the factory had no signal that the operator had landed artifacts. The fix is a ledger event the operator fires AFTER the compute lands:
+
+```bash
+bun ~/repos/arc-agents/bin/ledger.ts event <row-id> operator_landed \
+  '{"artifact_dir":".run-artifacts/round2","receipt_sha256":"...","box_id":"42453957"}'
+```
+
+The new `kind=operator_landed` event is added to `issue_events.kind` by migration `026_event_kind_operator_landed` (mirrors the 013/014/018 CHECK-expand pattern). It is purely informational today — no state transition fires on it — but it (a) gives operators an audit trail of when compute landed relative to the worker failure, and (b) sets up a future bookie transition `failed → ready` gated on the presence of an `operator_landed` event for the row (Pattern 3 follow-up; not this slice).
+
+**Worked example — Round-2 timeline with operator_landed:**
+
+| ts (UTC) | event | actor |
+|---|---|---|
+| 17:24:20 | `claimed` (worker `arc-worker-a-w8aebc`) | factory |
+| 17:24:37 | `failed` (`exit 1, 0 commits`) | worker → factory |
+| 17:24:40 | worktree reaped | `worktree-reaper` |
+| 17:25:00 | (operator notices failed row, launches vast run on box 42453957) | operator |
+| 18:04:40 | (compute SUCCESS on box, artifacts in `.run-artifacts/round2/`) | vast box |
+| 18:05:00 | **`operator_landed` event** (`artifact_dir=...`, `box_id=42453957`, `receipt_sha256=...`) | operator |
+| 18:06:00 | (future: bookie auto-promotes `failed → ready`, fresh worker claims and merges) | factory |
+
+Without the hook, only the first three rows existed — the operator's work was invisible. With the hook, steps 5 and 6 of the canonical shape above become self-documenting even when the worker has been reaped.
+
 ## Consequences
 
 **Positive:**

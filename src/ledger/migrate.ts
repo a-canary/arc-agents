@@ -1261,6 +1261,41 @@ export const migrations: Migration[] = [
       add("author_trust", "TEXT");
     },
   },
+  {
+    id: "026_event_kind_operator_landed",
+    // Expand issue_events.kind CHECK to include 'operator_landed'. ADR-0008
+    // Pattern 3 gap: a worker can fail (exit 124 / exit 1) on a compute-bearing
+    // row BEFORE the operator finishes the vast.ai run; the artifacts land on
+    // disk but the row stays state=failed with no audit trail of the operator's
+    // completion. The operator now emits `bin/ledger.ts event <id> operator_landed
+    // '{"artifact_dir":...,"receipt_sha256":...,"box_id":...}'` after the compute
+    // lands; a future bookie transition failed->ready can be gated on this kind.
+    // Same shape as 013/014/018 (CHECK-expand via table rebuild). Slot 026
+    // because 025 is taken by 025_feedback_mode_author_trust on origin/main.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE issue_events_new (
+          seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+          issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          ts         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          agent      TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','claimed','progress','blocked','unblocked',
+                                     'evidence','complete','failed','review','merged',
+                                     'budget-blocked','mirror-conflict','note','reclaimed',
+                                     'diff_review','triaged','operator_landed')),
+          payload_md TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO issue_events_new (seq, issue_id, ts, agent, kind, payload_md)
+        SELECT seq, issue_id, ts, agent, kind, payload_md FROM issue_events;
+      `);
+      db.exec("DROP TABLE issue_events");
+      db.exec("ALTER TABLE issue_events_new RENAME TO issue_events");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

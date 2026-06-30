@@ -543,3 +543,26 @@ test("017 column-resilience: extra product column survives", () => {
   expect(full.pool).toBe("pool_unset");
   expect(full.agent).toBe("agent_unset");
 });
+
+// ── Change 4: 026_event_kind_operator_landed CHECK expansion ────────────────
+
+test("026 accepts operator_landed; CHECK still rejects unknown kinds", () => {
+  const db = fresh();
+  db.run(`INSERT INTO issues (id, project, title, body_md, type, state, kind)
+          VALUES ('i1','p','t','b','mvp','ready','task')`);
+  // Pre-025 this insert would CHECK-fail; post-025 it's the operator's
+  // audit-trail hook (ADR-0008 §Operator-completion hook Pattern 3).
+  db.run(`INSERT INTO issue_events (issue_id, kind, agent, payload_md)
+          VALUES ('i1','operator_landed','planner-adr0002-proof',
+                  '{"artifact_dir":".run-artifacts/round2","box_id":"42453957"}')`);
+  const row = db
+    .query<{ agent: string }, [string]>(
+      "SELECT agent FROM issue_events WHERE issue_id=? AND kind='operator_landed'",
+    )
+    .get("i1");
+  expect(row?.agent).toBe("planner-adr0002-proof");
+  // Regression: unknown kinds still rejected (CHECK guard intact).
+  expect(() =>
+    db.run(`INSERT INTO issue_events (issue_id, kind, agent) VALUES ('i1','bogus_kind','x')`),
+  ).toThrow(/CHECK/);
+});
