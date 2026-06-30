@@ -4,6 +4,10 @@
 > Designed for single-operator (aaron) on one host — not yet packaged for
 > external use. Clone and read if curious.
 
+**Related repos:**
+- [a-canary/arc-skills](https://github.com/a-canary/arc-skills) — zero-dependency skills (incl. `/director`, `/task`, `/qa`, `/feedback`) that can drive this harness or run standalone via flat files
+- [a-canary/webui](https://github.com/a-canary/webui) — developer portal/dashboard that reads this repo's ledger
+
 Universal agent harness. **SQLite ledger as the message bus.** Every unit of
 work — task, chat, human-in-the-loop prompt — is a row. State transitions are
 atomic SQL. No daemons, no IPC, no queues — just the ledger.
