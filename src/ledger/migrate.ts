@@ -1231,6 +1231,36 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "025_feedback_mode_author_trust",
+    // Explicit per-row trust + intent for the Proposal confirmation gate
+    // (feedback-aggregate.ts isTrusted). Closes the source='direct' degeneracy:
+    // arc-webui stamps EVERY row source='direct', so the channel-keyed gate treated
+    // a single product-user webui row as the trusted operator and minted a PRD. The
+    // gate now keys on author_trust first, falling back to the channel only for
+    // legacy unstamped (NULL) rows.
+    //   mode         — imperative|hypothesis. NULL = hypothesis (the safe default:
+    //                  musings never auto-ship). No SQL DEFAULT — NULL is read as
+    //                  hypothesis in code, no table rewrite.
+    //   author_trust — operator|product. NULL = unstamped legacy row → channel fallback.
+    // Additive + idempotent: ALTER-ADD only if absent (PRAGMA table_info), matching
+    // 022/024 — this is the webui-co-owned feedback table which may already carry cols.
+    // ponytail: no CHECK constraints — the live webui-owned feedback table carries no
+    // CHECKs (see 022's rationale); intended values are documented, not enforced.
+    up: (db) => {
+      const cols = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(feedback)")
+          .all()
+          .map((r) => r.name),
+      );
+      const add = (name: string, decl: string) => {
+        if (!cols.has(name)) db.exec(`ALTER TABLE feedback ADD COLUMN ${name} ${decl}`);
+      };
+      add("mode", "TEXT");
+      add("author_trust", "TEXT");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

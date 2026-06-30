@@ -38,7 +38,15 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { openWithMigrate } from "../src/ledger/db";
 
-export type FeedbackRow = { id: string; body_md: string; source: string; submitter?: string | null };
+export type FeedbackRow = {
+  id: string;
+  body_md: string;
+  source: string;
+  submitter?: string | null;
+  // ponytail: webui-side stamping of mode/author_trust lands in the arc-webui repo;
+  // here we only READ author_trust (null = legacy unstamped row → channel fallback).
+  author_trust?: string | null;
+};
 type DB = ReturnType<typeof openWithMigrate>;
 
 /** A thematic group the LLM Collector extracted from the batch: a label, a one-line
@@ -73,7 +81,14 @@ export function buildAggregateRequest(project: string, rows: FeedbackRow[]): str
 // the :8080 portal is Aaron-only over tailscale, so `direct` IS the operator; mission/
 // operator are explicit. Everyone else (public, github, ai-agent, anon) is untrusted.
 const TRUSTED_SOURCES = new Set(["direct", "mission", "operator"]);
-export function isTrusted(source: string): boolean {
+// Trust keys on the EXPLICIT author_trust column first (closing the source='direct'
+// degeneracy: arc-webui stamps every row 'direct', so a single product user looked like
+// the operator and minted a PRD). 'operator' ⇒ trusted; 'product' ⇒ NOT trusted even on
+// a 'direct' channel. Only when author_trust is null/undefined (legacy unstamped rows,
+// pre-migration 025) do we fall back to the channel logic, preserving prior behavior.
+export function isTrusted(source: string, author_trust?: string | null): boolean {
+  if (author_trust === "operator") return true;
+  if (author_trust === "product") return false;
   return TRUSTED_SOURCES.has(source);
 }
 
@@ -88,10 +103,10 @@ export function confirmsProposal(rows: FeedbackRow[]): {
   trusted: number;
   untrusted: number;
 } {
-  const trusted = rows.filter((r) => isTrusted(r.source)).length;
+  const trusted = rows.filter((r) => isTrusted(r.source, r.author_trust)).length;
   const voices = new Set(
     rows
-      .filter((r) => !isTrusted(r.source))
+      .filter((r) => !isTrusted(r.source, r.author_trust))
       .map((r) => (r.submitter && r.submitter.trim()) || `id:${r.id}`),
   );
   const untrusted = voices.size;
@@ -185,7 +200,7 @@ function getFlag(argv: string[], name: string): string | undefined {
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source, submitter FROM feedback WHERE state IN ('new','OPEN') AND project=? ORDER BY created_at ASC LIMIT ?",
+      "SELECT id, body_md, source, submitter, author_trust FROM feedback WHERE state IN ('new','OPEN') AND project=? ORDER BY created_at ASC LIMIT ?",
     )
     .all(project, limit);
 }
@@ -196,7 +211,7 @@ export function selectNewFeedback(db: DB, project: string, limit: number): Feedb
  *  distinct submitter). Below the bar the pass is skipped and rows stay queued, so the
  *  scheduled tick is a no-op on thin backlogs. */
 export function triggerGate(rows: FeedbackRow[]): { fire: boolean; trusted: number; untrusted: number } {
-  const trusted = rows.filter((r) => isTrusted(r.source)).length;
+  const trusted = rows.filter((r) => isTrusted(r.source, r.author_trust)).length;
   const untrusted = rows.length - trusted;
   return { fire: trusted >= 1 || untrusted > 5, trusted, untrusted };
 }
