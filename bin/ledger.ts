@@ -22,6 +22,7 @@ import { parseFollowupTable } from "../src/ledger/followup-table";
 import { checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
+import { encode as toonEncode } from "../src/ledger/toon-encode";
 
 const KNOWN_HYGIENE_SKILLS = [
   "clarify-docs",
@@ -61,6 +62,11 @@ function out(data: unknown): void {
     const cols = Object.keys(first);
     console.log(cols.join("\t"));
     for (const r of rows) console.log(cols.map((c) => String(r[c] ?? "")).join("\t"));
+  } else if (Array.isArray(data) && args.includes("--toon")) {
+    // Opt-in token-efficient tabular output for array results.
+    // Default non-TTY array output stays JSON — it is the machine-readable
+    // contract that cli-invoke.ts (JSON.parse) and the factory depend on.
+    console.log(toonEncode(data as Record<string, unknown>[]));
   } else {
     console.log(JSON.stringify(data, null, 2));
   }
