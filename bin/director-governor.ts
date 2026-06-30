@@ -1,10 +1,21 @@
 #!/usr/bin/env bun
-// Director governor. A reactive + budget guard for a Director: a per-Director
-// PAUSE flag stops spawning NEW work; a KILL flag stops the Director entirely;
-// a token-per-week budget bounds planning+worker spend without an operator
-// watching. Modeled on bin/opus-burn-check.ts: a PURE decision function plus a
-// thin never-fatal CLI shell that always `process.exit(0)` — a governor must
-// not crash the thing it guards.
+// Standalone token/activity governor. Bound into a caller's loop via its own
+// AGENTS.md (e.g. arc-skills' /director `budget` binding) — this file knows
+// nothing about "Director" or any owning agent; it is a pure guard any
+// delegator can shell out to before spawning new work against a repo.
+// A PAUSE flag stops spawning NEW work; a KILL flag stops the caller entirely;
+// a per-repo weekly token budget bounds spend without an operator watching.
+// Modeled on bin/opus-burn-check.ts: a PURE decision function plus a thin
+// never-fatal CLI shell that always `process.exit(0)` — a governor must not
+// crash the thing it guards.
+//
+// KNOWN GAP: codeburn exposes only a HOST-WIDE weekly token sum — there is no
+// per-repo attribution today. So `repoBudget` below is a real per-repo
+// threshold, but `tokensThisWeek` is still the host-wide spend compared
+// against it. Two repos with different budgets will trip at different
+// thresholds, but neither sees its own isolated spend yet. Fix requires
+// tagging spend by repo/session at the source — tracked as a follow-up, not
+// solved here.
 
 import { spawnSync } from "node:child_process";
 import {
@@ -14,7 +25,7 @@ import {
   unlinkSync,
   mkdtempSync,
 } from "node:fs";
-import { homedir, tmpdir } from "node:os";
+import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 // ── Shape types ──────────────────────────────────────────────────────────────
@@ -22,64 +33,67 @@ import { join } from "node:path";
 export interface GovernorState {
   killed: boolean; // kill flag present
   paused: boolean; // pause flag present
-  tokensThisWeek: number; // spend in the current week
-  weeklyBudget: number; // per-Director cap
+  tokensThisWeek: number; // host-wide spend in the current week (see KNOWN GAP above)
+  repoBudget: number; // this repo's weekly cap, supplied by the caller's AGENTS.md binding
 }
 
+export type RestrictTo = "critical-only" | null;
+
 export interface GovernorVerdict {
-  allowDirector: boolean; // false ⇒ Director must not run at all
-  allowSpawn: boolean; // false ⇒ must not spawn NEW work
+  allowCaller: boolean; // false ⇒ caller must not run at all
+  allowSpawn: boolean; // false ⇒ must not spawn ordinary NEW work
+  restrictTo: RestrictTo; // "critical-only" ⇒ may still spawn production-stability/security work
   reason: string; // terse deterministic reason
 }
 
 // ── Pure decision function (golden-tested) ───────────────────────────────────
 // Precedence, most severe first:
-//   1. killed      ⇒ Director must not run at all.
+//   1. killed      ⇒ caller must not run at all.
 //   2. paused      ⇒ alive, but no new work (beats budget).
-//   3. over budget ⇒ alive, but no new work (>= is the gate; budget<=0 = no cap).
+//   3. over budget ⇒ alive, ordinary work blocked, but critical-failure/security
+//                    work may still proceed (>= is the gate; budget<=0 = no cap).
 //   4. ok          ⇒ run + spawn freely.
 // Pure: no I/O, no globals, no Date/Math/console.
 export function governor(state: GovernorState): GovernorVerdict {
   if (state.killed) {
-    return { allowDirector: false, allowSpawn: false, reason: "killed" };
+    return { allowCaller: false, allowSpawn: false, restrictTo: null, reason: "killed" };
   }
   if (state.paused) {
-    return { allowDirector: true, allowSpawn: false, reason: "paused" };
+    return { allowCaller: true, allowSpawn: false, restrictTo: null, reason: "paused" };
   }
-  const hasBudget = state.weeklyBudget > 0;
-  if (hasBudget && state.tokensThisWeek >= state.weeklyBudget) {
+  const hasBudget = state.repoBudget > 0;
+  if (hasBudget && state.tokensThisWeek >= state.repoBudget) {
     return {
-      allowDirector: true,
+      allowCaller: true,
       allowSpawn: false,
-      reason: `weekly token budget exhausted (${state.tokensThisWeek}/${state.weeklyBudget})`,
+      restrictTo: "critical-only",
+      reason: `weekly token budget exhausted (${state.tokensThisWeek}/${state.repoBudget}) — critical-failure/security work only`,
     };
   }
-  return { allowDirector: true, allowSpawn: true, reason: "ok" };
+  return { allowCaller: true, allowSpawn: true, restrictTo: null, reason: "ok" };
 }
 
 // ── Flag resolution (injectable, so governor() stays pure) ────────────────────
 
 export interface ResolveOpts {
-  home: string;
-  group: string;
-  weeklyBudget: number;
+  sentinelDir: string; // caller-supplied dir for KILL/PAUSE files (e.g. <parent-repo>/.arc/director/)
+  repoBudget: number;
   tokensThisWeek: number;
 }
 
 // ponytail: sentinel-file flags are the simplest reactive control — `existsSync`
-// of a file under the director's vault dir. Upgrade to a ledger row if you need
-// history (who set it, when, why).
+// of a file under a caller-supplied directory. Upgrade to a ledger row if you
+// need history (who set it, when, why).
 export function resolveState(opts: ResolveOpts): GovernorState {
-  const dir = join(opts.home, "vault", "agents", "directors", opts.group);
   return {
-    killed: existsSync(join(dir, "KILL")),
-    paused: existsSync(join(dir, "PAUSE")),
+    killed: existsSync(join(opts.sentinelDir, "KILL")),
+    paused: existsSync(join(opts.sentinelDir, "PAUSE")),
     tokensThisWeek: opts.tokensThisWeek,
-    weeklyBudget: opts.weeklyBudget,
+    repoBudget: opts.repoBudget,
   };
 }
 
-// Sensible default per-Director weekly cap (tokens) when --weekly-budget absent.
+// Sensible default per-repo weekly cap (tokens) when --weekly-budget absent.
 export const DEFAULT_WEEKLY_BUDGET = 50_000_000;
 
 // ── codeburn weekly token sum (best-effort; never fatal) ──────────────────────
@@ -157,37 +171,39 @@ function readWeeklyTokens(): number {
 
 // ── Flag parsing ──────────────────────────────────────────────────────────────
 
-function parseArgs(argv: string[]): { group: string; weeklyBudget: number } {
-  let group = "";
+function parseArgs(argv: string[]): { sentinelDir: string; weeklyBudget: number } {
+  let sentinelDir = "";
   let weeklyBudget = DEFAULT_WEEKLY_BUDGET;
   for (let i = 0; i < argv.length; i++) {
-    if (argv[i] === "--group") group = argv[++i] ?? "";
+    if (argv[i] === "--sentinel-dir") sentinelDir = argv[++i] ?? "";
     else if (argv[i] === "--weekly-budget") {
       const n = Number(argv[++i]);
       if (Number.isFinite(n)) weeklyBudget = n;
     }
   }
-  return { group, weeklyBudget };
+  return { sentinelDir, weeklyBudget };
 }
 
 // ── Main (thin, never-fatal) ──────────────────────────────────────────────────
 
 if (import.meta.main) {
   try {
-    const { group, weeklyBudget } = parseArgs(process.argv.slice(2));
-    if (!group) {
-      console.log("[governor] usage: director-governor --group <G> [--weekly-budget N]");
+    const { sentinelDir, weeklyBudget } = parseArgs(process.argv.slice(2));
+    if (!sentinelDir) {
+      console.log(
+        "[governor] usage: director-governor --sentinel-dir <path> [--weekly-budget N]",
+      );
       process.exit(0);
     }
     const state = resolveState({
-      home: process.env.HOME ?? homedir(),
-      group,
-      weeklyBudget,
+      sentinelDir,
+      repoBudget: weeklyBudget,
       tokensThisWeek: readWeeklyTokens(),
     });
     const verdict = governor(state);
     console.log(
-      `[governor] ${group}: director=${verdict.allowDirector} spawn=${verdict.allowSpawn} (${verdict.reason})`,
+      `[governor] ${sentinelDir}: caller=${verdict.allowCaller} spawn=${verdict.allowSpawn}` +
+        `${verdict.restrictTo ? ` restrict=${verdict.restrictTo}` : ""} (${verdict.reason})`,
     );
   } catch {
     // A governor must never crash the thing it guards.

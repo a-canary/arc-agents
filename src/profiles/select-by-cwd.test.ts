@@ -1,5 +1,5 @@
 import { test, expect, describe } from "bun:test";
-import { selectRoleByCwd, directorGroupFromCwd, type Role } from "./select-by-cwd";
+import { selectRoleByCwd, type Role } from "./select-by-cwd";
 
 const HOME = "/home/u";
 
@@ -17,9 +17,6 @@ const cases: Array<{ name: string; cwd: string; expect: Role }> = [
   { name: "fallback home root", cwd: HOME, expect: "director" },
   { name: "fallback vault but not agents", cwd: `${HOME}/vault/ke`, expect: "director" },
   { name: "fallback vault/agents/other", cwd: `${HOME}/vault/agents/other`, expect: "director" },
-  { name: "directors plural group", cwd: `${HOME}/vault/agents/directors/onenation`, expect: "director" },
-  { name: "directors plural group nested", cwd: `${HOME}/vault/agents/directors/onenation/journal`, expect: "director" },
-  { name: "directors bare root", cwd: `${HOME}/vault/agents/directors`, expect: "director" },
 ];
 
 describe("selectRoleByCwd (A-0003)", () => {
@@ -50,22 +47,4 @@ describe("selectRoleByCwd (A-0003)", () => {
     const r = selectRoleByCwd("/nonexistent/path");
     expect(r).toBe("director");
   });
-});
-
-describe("directorGroupFromCwd (A-0003)", () => {
-  const groups: Array<{ name: string; cwd: string; expect: string | null }> = [
-    { name: "group root", cwd: `${HOME}/vault/agents/directors/onenation`, expect: "onenation" },
-    { name: "group nested deep", cwd: `${HOME}/vault/agents/directors/onenation/journal/x`, expect: "onenation" },
-    { name: "group trailing slash", cwd: `${HOME}/vault/agents/directors/onenation/`, expect: "onenation" },
-    { name: "bare directors root → null", cwd: `${HOME}/vault/agents/directors`, expect: null },
-    { name: "admin path → null", cwd: `${HOME}/vault/agents/admin/inbox`, expect: null },
-    { name: "singular director → null", cwd: `${HOME}/vault/agents/director/journal`, expect: null },
-    { name: "repos path → null", cwd: `${HOME}/repos/arc-agents/src`, expect: null },
-    { name: "/tmp → null", cwd: "/tmp", expect: null },
-  ];
-  for (const g of groups) {
-    test(g.name, () => {
-      expect(directorGroupFromCwd(g.cwd, { home: HOME })).toBe(g.expect);
-    });
-  }
 });

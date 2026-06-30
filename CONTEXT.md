@@ -98,7 +98,7 @@ The epistemological stance that every input — from the user, from research, fr
 A worker's escalation of a decision outside its scope, a risky action, or a blocker. In arc-agents the concern *mechanism* is HITL [Decomposition](#decomposition): the worker writes N HITL children + flips parent to `blocked`, rather than a separate `outbox/concern-*.md` file (as in the predecessor `~/agents/` system). The term is preserved for vocabulary continuity.
 
 ## AXI
-Agent eXecution Interface — the `ledger` CLI as a delegation surface external planners (e.g. arc-skills' `/director`) can bind to without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render, no TOON). **Flagged for re-analysis** — the full AXI protocol (verb surface, what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then. arc-agents does not own a standing mission-driver — see [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `/director` skill.
+Agent eXecution Interface — the `ledger` CLI as a delegation surface arc-skills' `/director` binds to (`task-delegation: arc-agents`) without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render, no TOON). **Flagged for re-analysis** — the full AXI protocol (verb surface, what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then.
 
 ## Steering Mode
 The `mode` of a feedback row: `imperative` (an order — fires a direct verb now) or `hypothesis` (a guess — validated on one concrete case before any scale). NULL is unstamped and treated as a hypothesis. Classified from the input by the pure `parse()` (a leading `!` ⇒ imperative).
@@ -107,10 +107,16 @@ The `mode` of a feedback row: `imperative` (an order — fires a direct verb now
 The trust class of a feedback row's author: `operator` (trusted — a single row acts) or `product` (untrusted — three distinct submitters needed to corroborate). Keyed on the *author*, not the channel; closes the `source='direct'` degeneracy where any single product row could mint a PRD.
 
 ## director-brief
-The AXI verb `ledger director-brief --project <P>`: a plain status utility partitioning git-log, project ledger rows, and open feedback into `done` / `current` / `next` buckets with size hints. Pure module `brief()` in `src/director/director-brief.ts` behind a thin CLI shell. Consumed by an external driver (e.g. `/director`) — not owned by any in-repo Director concept.
+The AXI verb `ledger director-brief --project <P>`: a plain status utility partitioning git-log, project ledger rows, and open feedback into `done` / `current` / `next` buckets with size hints. Pure module `brief()` in `src/director/director-brief.ts` behind a thin CLI shell. Consumed by [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `/director` — the actual instantiated, event-driven mission-owning agent (12hr cron backstop). arc-agents exposes the data; it does not run the loop.
 
 ## mission-gap
-A plain utility (`src/director/mission-gap.ts`, pure `gaps()`) that diffs a set of goals against ledger state and proposes capped, uncovered-goal gaps. Available for an external driver to call; arc-agents does not run this autonomously itself.
+A plain utility (`src/director/mission-gap.ts`, pure `gaps()`) that diffs a set of goals against ledger state and proposes capped, uncovered-goal gaps. Called by an external driver (`/director`'s gap-analysis step); arc-agents does not run this autonomously itself.
+
+## Governor
+A standalone token/activity guard (`bin/director-governor.ts`) bound into a caller's loop via the caller's own `AGENTS.md` — knows nothing about "Director" or any owning agent. Gates on `KILL`/`PAUSE` sentinel files (path supplied by the caller, e.g. `<parent-repo>/.arc/director/`) and a **per-repo** weekly token budget (`repoBudget`, also caller-supplied — different repos can declare different budgets). Over-budget no longer hard-stops: `restrictTo: "critical-only"` lets production-stability/security work continue while ordinary spawns pause. **Known gap:** the spend figure compared against `repoBudget` is still a host-wide codeburn sum — there is no per-repo token *attribution* yet, only a per-repo *threshold*. Never fails fatally — the shell always exits 0.
+
+## Parent repo (mission-driver construct)
+The repo where `/director`'s own state lives (`.arc/director/`) and whose `AGENTS.md` declares which other repos it manages and how (bindings: `task-delegation`, `workspace`, `budget`, etc. — see arc-skills' `/director` SKILL.md). Replaces the earlier vault-rooted "Director Group" (`~/vault/agents/directors/<group>/`) — that path and `directorGroupFromCwd()` were removed; see [ADR-0012](docs/adr/0012-director-agent-axi.md).
 
 ## Governor
 A reactive + budget guard (`bin/director-governor.ts`) any external delegator should consult before spawning new work against this repo: gates on `KILL`/`PAUSE` sentinel files and a weekly token budget (host-wide codeburn sum). Never fails fatally — the shell always exits 0. Kept as the rate-limit primitive even though the Director-as-owner framing it shipped under (ADR-0012) was reverted — see [ADR-0012](docs/adr/0012-director-agent-axi.md).
