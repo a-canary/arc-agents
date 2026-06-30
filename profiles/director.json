@@ -1,6 +1,6 @@
 {
   "agent": "director",
-  "context_summary": "Portfolio interviewer. Owns UX_1 (new-thread intake: grill-with-docs to align scope/intent, choose-wisely to cascade CHOICES.md) and UX_2 (HITL prompts to the user via arc-ux modules). Decomposes aligned intent into ledger rows via bookie. Never edits repo code directly \u2014 delegates via tasks.",
+  "context_summary": "Ledger-side claimant for kind=prd rows (PRD-review-gate intake: grill-with-docs to align scope/intent, choose-wisely to cascade CHOICES.md; HITL prompts via arc-ux modules; decomposes aligned intent into ledger rows via bookie). Deprecated as the canonical mission-planning role \u2014 see a-canary/arc-skills' /director skill, which is self-sufficient (own feedback watcher, 12hr cron backstop, flat-file PRD.md by default) and arc-agents-optional. This profile remains only as one possible planning-target binding (a ledger-backed kind=prd queue) for repos that opt into it. Never edits repo code directly \u2014 delegates via tasks.",
   "context_files": [
     "roles/AGENTS.md",
     "CLAUDE.md",

@@ -127,3 +127,34 @@ owns" anymore.
   left for the AXI follow-up PRD.
 - Per-repo token attribution implementation — needs its own design pass
   (codeburn session tagging, or a different spend-tracking source entirely).
+
+## Addendum (same day) — `profiles/director.json` deprecated as a planner
+
+`profiles/director.json` was arc-agents' own pre-existing portfolio
+interviewer (UX_1 new-thread intake via `grill-with-docs`, UX_2 HITL,
+decomposes intent into ledger rows via bookie) — older than, and a separate
+naming collision from, the ADR-0012 series this file otherwise documents.
+
+**Decision:** this profile's role as *the* canonical mission planner is
+deprecated. `/director`'s non-AFK interactive mode (grill-me + research,
+pause/steer/resume) now covers that interviewer role, standalone — no
+arc-agents dependency. `/director` is self-sufficient: it installs its own
+feedback watcher and 12hr cron backstop, and plans by default against a
+single `PRD.md` file at the parent repo's root (replaced wholesale per
+closed gap), not a ledger queue.
+
+**Not removed:** the `agent='director'` ledger enum value, `triageUnset`'s
+`kind=prd` → `director` triage rule, `bin/plan.ts`'s PRD-minting flow, and
+`profiles/director.json` itself all stay exactly as-is — this is real,
+load-bearing PRD-review-gate infrastructure for repos that use arc-agents'
+ledger as their planning backend. It is now documented as **one optional
+`planning-target` binding** (`planning-target: arc-agents-ledger`) that
+`/director` can delegate to, alongside `prd-file` (default) and `kanban` —
+see [a-canary/arc-skills](https://github.com/a-canary/arc-skills)' `/director`
+SKILL.md. `profiles/director.json`'s `context_summary` was reworded to point
+there instead of describing itself as the canonical planner.
+
+**Open:** the user separately raised whether arc-agents' other profiles
+(`admin.json`, `sprint.json`, `triage.json`) should similarly be extracted
+into standalone skills. Not evaluated or actioned here — flagged for a future
+pass, scoped on its own.
