@@ -95,12 +95,50 @@ test("markAggregated with no ids is a no-op", () => {
 test("isTrusted: operator channels trusted, end-user/agent channels not", () => {
   expect(isTrusted("direct")).toBe(true);
   expect(isTrusted("mission")).toBe(true);
-  expect(["public", "github", "ai-agent", "anon"].some(isTrusted)).toBe(false);
+  expect(["public", "github", "ai-agent", "anon"].some((s) => isTrusted(s))).toBe(false);
 });
 
 test("confirmsProposal: one trusted voice confirms", () => {
   const g = confirmsProposal([{ id: "a", source: "direct", submitter: "aaron", body_md: "" }]);
   expect(g).toMatchObject({ confirmed: true, trusted: 1, untrusted: 0 });
+});
+
+// ── author_trust gate: closes the source='direct' degeneracy (slice B3) ───
+test("author_trust='product' on a source='direct' row is NOT trusted (closes degeneracy)", () => {
+  expect(isTrusted("direct", "product")).toBe(false);
+});
+
+test("author_trust='operator' is trusted regardless of channel", () => {
+  expect(isTrusted("public", "operator")).toBe(true);
+  expect(isTrusted("direct", "operator")).toBe(true);
+});
+
+test("null/undefined author_trust falls back to channel logic (legacy back-compat)", () => {
+  expect(isTrusted("direct", null)).toBe(true);
+  expect(isTrusted("direct", undefined)).toBe(true);
+  expect(isTrusted("public", null)).toBe(false);
+});
+
+test("confirmsProposal: one product webui row (source='direct') does NOT confirm", () => {
+  const g = confirmsProposal([
+    { id: "a", source: "direct", submitter: "enduser", author_trust: "product", body_md: "" },
+  ]);
+  expect(g.confirmed).toBe(false);
+  expect(g.trusted).toBe(0);
+});
+
+test("confirmsProposal: one operator row confirms", () => {
+  const g = confirmsProposal([
+    { id: "a", source: "direct", submitter: "aaron", author_trust: "operator", body_md: "" },
+  ]);
+  expect(g).toMatchObject({ confirmed: true, trusted: 1 });
+});
+
+test("confirmsProposal: legacy row (author_trust=null, source='direct') still confirms (back-compat)", () => {
+  const g = confirmsProposal([
+    { id: "a", source: "direct", submitter: "aaron", author_trust: null, body_md: "" },
+  ]);
+  expect(g).toMatchObject({ confirmed: true, trusted: 1 });
 });
 
 test("confirmsProposal: three distinct untrusted submitters confirm", () => {
