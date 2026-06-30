@@ -23,6 +23,7 @@ import { checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
 import { encode as toonEncode } from "../src/ledger/toon-encode";
+import { brief as directorBrief, type GitLogEntry } from "../src/director/director-brief";
 
 const KNOWN_HYGIENE_SKILLS = [
   "clarify-docs",
@@ -1512,6 +1513,65 @@ switch (cmd) {
     break;
   }
 
+  case "director-brief": {
+    // Thin I/O shell over the pure src/director/director-brief.ts module (slice 6).
+    // Gathers three project sources, calls brief(), renders each bucket via
+    // toon-encode with definitive empty states + size hints. AXI-conformant.
+    const project = getFlag("project") ?? die("--project required");
+    const cap = getFlag("cap") !== undefined ? parseInt(getFlag("cap")!, 10) : undefined;
+    const db = openWithMigrate(getFlag("db"));
+
+    // DONE: last ~20 commit subjects from git log (cwd repo by default; --repo overrides).
+    const { spawnSync } = require("node:child_process") as typeof import("node:child_process");
+    const repo = getFlag("repo") ?? process.cwd();
+    const git = spawnSync("git", ["-C", repo, "log", "--oneline", "-20", "--no-color"], {
+      encoding: "utf8",
+    });
+    const gitLog: GitLogEntry[] = (git.status === 0 ? git.stdout : "")
+      .split("\n")
+      .filter((l) => l.trim().length > 0)
+      .map((l) => {
+        const sp = l.indexOf(" ");
+        return sp === -1
+          ? { sha: l, subject: "" }
+          : { sha: l.slice(0, sp), subject: l.slice(sp + 1) };
+      });
+
+    // CURRENT + NEXT source: project ledger rows (reuse the existing issues read path).
+    const ledgerRows = db
+      .query<{ id: string; title: string; state: string; claimed_by: string | null }, [string]>(
+        `SELECT id, title, state, claimed_by FROM issues WHERE project=? ORDER BY ${SORT_KEY_SQL}`,
+      )
+      .all(project)
+      .map((r) => ({ id: r.id, title: r.title, state: r.state, claimedBy: r.claimed_by ?? undefined }));
+
+    // NEXT also includes OPEN feedback for the project (existing feedback table; open =
+    // not-yet-resolved/closed). body_md is the summary line.
+    const feedback = db
+      .query<{ id: string; body_md: string }, [string]>(
+        `SELECT id, body_md FROM feedback WHERE project=? AND state IN ('new','OPEN','DEV') ORDER BY created_at DESC`,
+      )
+      .all(project)
+      .map((f) => ({ id: f.id, summary: f.body_md }));
+
+    const b = directorBrief(gitLog, ledgerRows, feedback, cap !== undefined ? { cap } : undefined);
+
+    const render = (items: { ref: string; label: string }[]) =>
+      items.length === 0
+        ? "(nothing)"
+        : toonEncode(items.map((i) => ({ ref: i.ref, label: i.label })) as Record<string, unknown>[]);
+
+    const report = {
+      project,
+      done: render(b.done),
+      current: render(b.current),
+      next: render(b.next),
+      hints: b.hints,
+    };
+    out(report);
+    break;
+  }
+
   case "-h":
   case "--help":
   case "help": {
@@ -1589,6 +1649,11 @@ switch (cmd) {
                                        (the doctor phantom_claims backlog).
                                        Default dry-run; --apply writes.
 
+  director-brief --project <P> [--cap N --repo <path>]
+                                       pure read: done (git log) / current (in-flight
+                                       ledger) / next (queued+blocked ledger + open
+                                       feedback) for a project group; TOON buckets +
+                                       size hints
   resolve-alias <issueId> [--db <path>]   pure read: print alias NAME for issue's agent
   alias-cmd <aliasName>                   pure read: print full command string for alias
                                           (includes {prompt} placeholder)
