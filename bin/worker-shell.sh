@@ -172,6 +172,39 @@ ensure_pi_on_path() {
   return 0
 }
 
+# Fast-forward the given repo's local `main` to `origin/main`. Closes the
+# "local main N behind origin" pattern documented in
+# analysis-1782813826.md §"Pattern 4 follow-up" — the same follow-up was
+# recommended in 000103 (analysis-1782187417.md Pattern 3) but never filed
+# until now. Worker-shell.sh is the structural fix: any worker that claims
+# against the repo observes a current `main` BEFORE its worktree is added,
+# which keeps `merge-guard`'s `--local-merged-sha` truth-check and the
+# `git worktree add -B <branch> ... main` base accurate. Pure: $1 = repo path
+# → 0 on ff/no-op, non-zero on missing-repo or no-remote (caller treats
+# non-zero as "skip ff, continue"; not fatal). No-op when origin/main is
+# already reachable from main.
+#
+# ponytail: cheap `fetch + merge --ff-only`; a real merge conflict is
+# impossible here because local main was at-or-behind origin/main by
+# construction (we're racing only the cron-pushed merges). If conflict ever
+# appears, the helper returns non-zero and the worker boots on the stale-but-
+# known main — same as today, just with one fewer race window.
+fast_forward_main() {
+  local repo="$1"
+  [ -d "${repo}/.git" ] || return 1
+  # Bail when there's no `origin` remote to fetch — common for fresh local
+  # clones without a remote, or hygiene rows against a worktree-only repo.
+  git -C "$repo" remote get-url origin >/dev/null 2>&1 || return 1
+  # Fast-forward only when there's actually something to ff: local main must
+  # be an ancestor of origin/main (i.e., origin has commits we don't). If
+  # they're equal or local is ahead, `merge --ff-only` would refuse — skip.
+  git -C "$repo" fetch -q origin main 2>/dev/null || return 1
+  if git -C "$repo" merge-base --is-ancestor main origin/main 2>/dev/null; then
+    git -C "$repo" merge --ff-only origin/main 2>/dev/null || return 1
+  fi
+  return 0
+}
+
 # Sourced by the test harness — define functions, then stop before doing any
 # real work (claim, exec, ledger writes). Production never sets this.
 if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
@@ -288,6 +321,15 @@ fi
 REPO_NAME="$(basename "$WT_REPO")"
 WT_DIR="${HOME}/worktrees/${REPO_NAME}-${CLAIM_ID}"
 WT_BRANCH="worker/${CLAIM_ID}"
+# Fast-forward the project's local `main` to origin/main BEFORE we add the
+# per-claim worktree. Pattern 3 follow-up of analysis-1782813826.md: rows
+# that claim against a stale local main see a stale parent base for
+# `git worktree add -B <branch> ... main` AND for `--local-merged-sha`
+# truth-checks. Failure to ff is non-fatal (orphan-claim revive logic still
+# resets on the next tick); we just race fewer windows. Crucially, this
+# runs BEFORE `worktree add` so even the FIRST claim after a merge observes
+# current main. See fast_forward_main() above for the helper contract.
+fast_forward_main "$WT_REPO" || true
 if [ ! -d "$WT_DIR" ]; then
   # -B resets the branch to main's tip if a stale branch lingers from a prior
   # reaped attempt; --force overrides a leftover claude-agent worktree lock.
