@@ -1,93 +1,91 @@
-# ADR 0012 — Director Agent + AXI-conformant ledger
+# ADR 0012 — Director ownership reverted; arc-agents stays a delegation target
 
 **Date:** 2026-06-30
-**Status:** accepted
-**Decides:** the Director Agent replaces the Planner, owns a project group, is steered by typed feedback, and delegates to the factory only through the `ledger` CLI (AXI)
+**Status:** accepted (supersedes the same-day "Director Agent + AXI-conformant ledger" decision)
+**Decides:** arc-agents does not own a standing "Director" concept; the per-conversation Planner is not replaced in-repo
 
 ---
 
 ## Context
 
-The system grew a per-conversation **Planner**: a session that shaped one piece
-of work and decomposed it into ledger rows. That model has no owner of a *group*
-of projects, no standing intent it drives from, and no single, machine-stable
-surface through which planning delegates execution. Steering was implicit —
-every feedback row was treated the same regardless of who sent it or whether it
-was an instruction or a guess — which let a single product-channel row mint a
-PRD on its own.
+Earlier the same day, ADR-0012 (original) proposed a **Director Agent**: a group-owning,
+autonomously-driving agent living in arc-agents, steered by typed feedback
+(`mode`/`author_trust`), bounded by a `governor`, and delegating solely through
+the `ledger` CLI ("AXI"). Supporting modules (`mission-gap`, `director-brief`,
+`directorGroupFromCwd`) and CLI wiring landed across PRs #298–#302, with the
+ADR (#307) as the docs capstone.
 
-This ADR records the decision to replace the Planner with a **Director Agent**
-and to make the `ledger` CLI the sole delegation surface (the AXI — Agent
-eXecution Interface).
+Independently, in `a-canary/arc-skills`, a `/director` skill was designed in
+parallel as a **harness-agnostic mission driver** — same shape (gap-analysis
+loop, pause/resume, weekly token budget with bypass, steering via feedback)
+but explicitly built to depend on nothing but flat files, with arc-agents as
+one *optional* binding target (`task-delegation: arc-agents`) rather than the
+home of the driver itself.
 
-## Problem
-
-1. **No group owner.** Nothing autonomously holds the intent for a project group
-   (`onenation`, `trading`, `arc-factory`, `ai-research`) and drives it forward
-   between human touches.
-2. **Untyped steering.** Feedback carried no notion of *mode* (is this an order
-   or a hypothesis?) or *author trust* (operator vs product channel). The
-   aggregate gate keyed on channel, so `source='direct'` degenerated into "any
-   single row is trusted" → one product row could mint a PRD.
-3. **No stable delegation contract.** Planning code reached into the ledger DB
-   directly. Every consumer (factory, a future UI) re-implemented reads, so the
-   partitioning logic for "what's done / in-flight / next" had no single home.
+Both repos independently grew an agent named "Director" with near-identical
+responsibilities, on the same day, with no cross-repo reconciliation.
 
 ## Decision
 
-**A. Director Agent owns a project group.** Role is selected by cwd
-(`~/vault/agents/directors/<group>/`); the Director drives from that group's
-`AGENTS.md` Mission file (vault state, never pushed). It runs autonomously and is
-corrected by feedback, not by turn-by-turn instruction.
+**arc-skills' `/director` is the mission driver.** It is harness-agnostic by
+design — it must not depend on arc-agents being installed or operational.
+arc-agents does not grow its own competing Director concept.
 
-**B. Steering is typed on the author, not the channel.** Feedback rows gain
-`mode` (`imperative` | `hypothesis`; NULL = unstamped, treated as hypothesis)
-and `author_trust` (`operator` | `product`). The confirmation gate fires on **one
-trusted (operator)** row **or three distinct untrusted (product)** submitters —
-closing the `source='direct'` degeneracy. An imperative (`!`) from the operator
-fires a direct verb now; a hypothesis validates on one concrete case before any
-scale.
+**Reverted:**
+- The "Director" / "Director Group" concept as a standing, autonomous,
+  group-owning agent living in arc-agents.
+- `directorGroupFromCwd` and `~/vault/agents/directors/<group>/` as a
+  *Director-routing* mechanism. (`select-by-cwd.ts` itself may still serve
+  other profile-routing needs — not evaluated here.)
+- TOON as the default or implied output encoding. arc-agents CLI output stays
+  JSON by default; `--csv` / `--md` are acceptable opt-in renders. No TOON.
 
-**C. The `ledger` CLI is the only delegation surface (AXI).** Director, factory
-workers, and any UI read and write work exclusively through `ledger <verb>`.
-Non-TTY output is a machine contract: array results stay JSON by default (TOON
-opt-in via `--toon`), object reports are JSON. New verbs this feature adds:
-`director-brief --project <P>` (done/current/next buckets) and the steering /
-governor surfaces. No consumer re-reads the DB to reconstruct what a verb
-already returns.
+**Kept, reframed as plain arc-agents-local utilities (no source changes):**
+- `src/director/mission-gap.ts` (`gaps()`) — pure goal/ledger diff, capped
+  proposals. Useful to *any* external caller, not a self-driving feature.
+- `src/director/director-brief.ts` (`brief()`) — pure done/current/next
+  partitioner. Same: a utility, not an owner.
+- `bin/director-governor.ts` (`governor()`) — pause/kill sentinel + weekly
+  token budget guard. This is the rate-limit primitive `/director`'s own
+  `budget` binding can shell out to before spawning new work. Explicitly
+  requested to stay.
+- `bin/ledger.ts director-brief` CLI verb — stays wired; an external driver
+  (not an in-repo Director) is the caller.
 
-**D. Deep modules behind never-fatal shells.** Each capability is a pure compute
-function — `encode`, `parse` (steering), `brief`, `gaps` (mission-gap),
-`governor`, — wrapped in a thin I/O shell that always `process.exit(0)`. Pure
-functions test in isolation with golden inputs; the shells carry no logic worth
-testing.
-
-**E. Bounded by a governor and the Reversible-Verb Boundary.** `governor(state)`
-gates the Director on `KILL`/`PAUSE` sentinel files and a weekly token budget
-(host-wide codeburn sum); it never fails fatally. Every verb the Director may
-call is reversible — irreversible acts (deploys, secret edits, destructive
-ledger ops, live trades) route to a HITL gate, never to a Director verb.
-
-## Components (one slice each, all merged)
-
-| Capability | Module (pure) | Verb / surface |
-|---|---|---|
-| TOON encode | `toon-encode` | non-TTY ledger output |
-| ready-queue + hints | — | bare `ledger` |
-| steering classifier | `parse(input)→{mode,payload}` | feedback intake |
-| feedback typing | migration `025` | `mode`, `author_trust` cols |
-| director scaffold | `directorGroupFromCwd` | A-0003 cwd routing |
-| director-brief | `brief(gitLog,ledger,feedback)` | `director-brief --project P` |
-| mission-gap | `gaps(mission,ledger)` | capped proposals, under budget |
-| governor | `governor(state)` | `KILL`/`PAUSE` + weekly token cap |
+**Deferred — separate PRD required:**
+- The AXI protocol itself (what `ledger <verb>` surface is a stable contract,
+  what isn't, non-TTY output shape) was asserted by the original ADR-0012 but
+  never independently analyzed. Treat it as provisional. A follow-up PRD
+  should evaluate AXI on its own merits, decoupled from the Director-ownership
+  question this ADR reverts.
+- Steering typing (`mode: imperative|hypothesis`, `author_trust`) on feedback
+  rows is unaffected by this revert — it's a property of the ledger's
+  feedback table, not of who owns the driver. Left as-is, not evaluated here.
 
 ## Consequences
 
-- A standing, group-scoped owner exists; the per-conversation Planner is retired.
-- Trust is honest: an operator's single word acts; product noise needs corroboration.
-- The AXI CLI is a stable contract — a UI (see arc-webui `/director/plan`) consumes
-  `director-brief` over the CLI rather than duplicating the `brief()` deep module.
-- The Mission files live in the vault (operator overlay, A-0004), so the Director's
-  intent is steerable without a code change and never leaks to a public repo.
-- Rejected: letting the Director call irreversible verbs directly (collapses the
-  Reversible-Verb Boundary); keying trust on channel (the degeneracy this fixes).
+### Positive
+- One mission driver (`arc-skills/director`), not two divergent
+  implementations racing on the same problem in different repos.
+- arc-agents keeps the small, pure, already-tested utilities (`mission-gap`,
+  `director-brief`, `governor`) without the lock-in of owning the loop that
+  calls them.
+- No source/test deletion — the revert is documentation and framing only;
+  rollback risk is near zero.
+
+### Negative
+- `docs/adr/0012-director-agent-axi.md`'s original content is gone from the
+  default branch (recoverable from git history at `2336648`); anything that
+  linked to it as "the" Director design is now stale and needs to point at
+  `a-canary/arc-skills`'s `/director` SKILL.md instead.
+- The AXI protocol ships today without the dedicated analysis pass this ADR
+  defers — known gap, not a regression introduced here.
+
+### Open
+- Should `mission-gap`/`director-brief`/`governor` move under a more neutral
+  path than `src/director/` now that they're not Director-owned? Cosmetic;
+  not blocking, left for the AXI follow-up PRD.
+- Does `directorGroupFromCwd`'s `~/vault/agents/directors/<group>/` path
+  convention get renamed, or does it stay as a harmless legacy path the
+  Governor still reads from? Left as-is for now — functional, just no longer
+  description-accurate as "Director" storage.

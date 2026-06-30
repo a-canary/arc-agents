@@ -97,17 +97,8 @@ The epistemological stance that every input — from the user, from research, fr
 ## Concern
 A worker's escalation of a decision outside its scope, a risky action, or a blocker. In arc-agents the concern *mechanism* is HITL [Decomposition](#decomposition): the worker writes N HITL children + flips parent to `blocked`, rather than a separate `outbox/concern-*.md` file (as in the predecessor `~/agents/` system). The term is preserved for vocabulary continuity.
 
-## Director
-The agent that owns a project **group** and drives its standing intent forward autonomously, corrected by feedback rather than instructed turn-by-turn. Replaces the per-conversation Planner. Role is selected by cwd (`~/vault/agents/directors/<group>/`); it drives from that group's `AGENTS.md` Mission file. See [ADR-0012](docs/adr/0012-director-agent-axi.md).
-
-## Director Group
-A named set of projects one Director owns — `onenation`, `trading`, `arc-factory`, `ai-research`. The group is the directory under `~/vault/agents/directors/` that holds the Mission file; `directorGroupFromCwd` resolves it.
-
 ## AXI
-Agent eXecution Interface — the `ledger` CLI as the *sole* surface through which planning delegates execution. Director, factory workers, and any UI read and write work only through `ledger <verb>`; non-TTY output is a machine contract (array results JSON by default, `--toon` opt-in; object reports JSON). No consumer re-reads the DB to reconstruct what a verb already returns.
-
-## director-brief
-The AXI verb `ledger director-brief --project <P>`: partitions git-log, project ledger rows, and open feedback into `done` / `current` / `next` buckets with size hints. Pure module `brief()` behind a thin shell; renders via `toon-encode`.
+Agent eXecution Interface — the `ledger` CLI as a delegation surface external planners (e.g. arc-skills' `/director`) can bind to without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render, no TOON). **Flagged for re-analysis** — the full AXI protocol (verb surface, what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then. arc-agents does not own a standing mission-driver — see [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `/director` skill.
 
 ## Steering Mode
 The `mode` of a feedback row: `imperative` (an order — fires a direct verb now) or `hypothesis` (a guess — validated on one concrete case before any scale). NULL is unstamped and treated as a hypothesis. Classified from the input by the pure `parse()` (a leading `!` ⇒ imperative).
@@ -115,11 +106,14 @@ The `mode` of a feedback row: `imperative` (an order — fires a direct verb now
 ## author_trust
 The trust class of a feedback row's author: `operator` (trusted — a single row acts) or `product` (untrusted — three distinct submitters needed to corroborate). Keyed on the *author*, not the channel; closes the `source='direct'` degeneracy where any single product row could mint a PRD.
 
-## Governor
-The bound on Director spend and activity: `governor(state)` gates on `KILL`/`PAUSE` sentinel files under the group dir and a weekly token budget (host-wide codeburn sum). Never fails fatally — the shell always exits 0.
+## director-brief
+The AXI verb `ledger director-brief --project <P>`: a plain status utility partitioning git-log, project ledger rows, and open feedback into `done` / `current` / `next` buckets with size hints. Pure module `brief()` in `src/director/director-brief.ts` behind a thin CLI shell. Consumed by an external driver (e.g. `/director`) — not owned by any in-repo Director concept.
 
 ## mission-gap
-The AXI surface that diffs a group's Mission goals against current ledger state and proposes work for the uncovered gaps, capped under the token budget. Pure module `gaps(mission, ledger)`.
+A plain utility (`src/director/mission-gap.ts`, pure `gaps()`) that diffs a set of goals against ledger state and proposes capped, uncovered-goal gaps. Available for an external driver to call; arc-agents does not run this autonomously itself.
+
+## Governor
+A reactive + budget guard (`bin/director-governor.ts`) any external delegator should consult before spawning new work against this repo: gates on `KILL`/`PAUSE` sentinel files and a weekly token budget (host-wide codeburn sum). Never fails fatally — the shell always exits 0. Kept as the rate-limit primitive even though the Director-as-owner framing it shipped under (ADR-0012) was reverted — see [ADR-0012](docs/adr/0012-director-agent-axi.md).
 
 ## Pattern
 A symptom observed across multiple rows, workers, or cycles. Distinguished from a one-off observation: a single `state=failed` row is an observation; the same failure shape across N rows is a pattern. Patterns escalate to director-level review via [triage-failed](skills/triage-failed/SKILL.md), not per-row patching. Root-cause fixes only — patching symptoms while the root cause persists wastes every future cycle.
