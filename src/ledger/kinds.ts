@@ -1,4 +1,8 @@
-// Single source of truth for issue-kind categorisation.
+// Single source of truth for ISSUE-kind categorisation (the `issues.kind`
+// column). This file does NOT govern event kinds — those live in the
+// `issue_events.kind` CHECK constraint inside src/ledger/migrate.ts
+// (migration 002 + subsequent `Expand issue_events.kind CHECK` migrations).
+// Add a new event kind by editing migrate.ts, not here.
 //
 // The schema's CHECK constraint (src/ledger/migrate.ts) admits:
 //   task, event, reply, prd, prefetch, sprint
