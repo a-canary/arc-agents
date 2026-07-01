@@ -98,7 +98,7 @@ The epistemological stance that every input — from the user, from research, fr
 A worker's escalation of a decision outside its scope, a risky action, or a blocker. In arc-agents the concern *mechanism* is HITL [Decomposition](#decomposition): the worker writes N HITL children + flips parent to `blocked`, rather than a separate `outbox/concern-*.md` file (as in the predecessor `~/agents/` system). The term is preserved for vocabulary continuity.
 
 ## AXI
-Agent eXecution Interface — the `ledger` CLI as a delegation surface arc-skills' `/director` binds to (`task-delegation: arc-agents`) without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render, no TOON). **Flagged for re-analysis** — the full AXI protocol (verb surface, what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then.
+Agent Execution Interface — the `ledger` CLI as a delegation surface arc-skills' `/director` binds to (`task-delegation: arc-agents`) without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render). Full principles and the TOON deviation are documented in [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `docs/AXI.md`, adapted from the published [axi.md](https://axi.md) framework. **Flagged for re-analysis** — the full verb surface (what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then.
 
 ## Steering Mode
 The `mode` of a feedback row: `imperative` (an order — fires a direct verb now) or `hypothesis` (a guess — validated on one concrete case before any scale). NULL is unstamped and treated as a hypothesis. Classified from the input by the pure `parse()` (a leading `!` ⇒ imperative).
@@ -117,9 +117,6 @@ A standalone token/activity guard (`bin/director-governor.ts`) bound into a call
 
 ## Parent repo (mission-driver construct)
 The repo where `/director`'s own state lives (`.arc/director/`) and whose `AGENTS.md` declares which other repos it manages and how (bindings: `task-delegation`, `workspace`, `budget`, etc. — see arc-skills' `/director` SKILL.md). Replaces the earlier vault-rooted "Director Group" (`~/vault/agents/directors/<group>/`) — that path and `directorGroupFromCwd()` were removed; see [ADR-0012](docs/adr/0012-director-agent-axi.md).
-
-## Governor
-A reactive + budget guard (`bin/director-governor.ts`) any external delegator should consult before spawning new work against this repo: gates on `KILL`/`PAUSE` sentinel files and a weekly token budget (host-wide codeburn sum). Never fails fatally — the shell always exits 0. Kept as the rate-limit primitive even though the Director-as-owner framing it shipped under (ADR-0012) was reverted — see [ADR-0012](docs/adr/0012-director-agent-axi.md).
 
 ## Pattern
 A symptom observed across multiple rows, workers, or cycles. Distinguished from a one-off observation: a single `state=failed` row is an observation; the same failure shape across N rows is a pattern. Patterns escalate to director-level review via [triage-failed](skills/triage-failed/SKILL.md), not per-row patching. Root-cause fixes only — patching symptoms while the root cause persists wastes every future cycle.

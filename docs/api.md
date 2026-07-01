@@ -206,14 +206,6 @@ export function loadProfile(agent: string, root?: string): Profile
 export function loadAll(root?: string): Record<string, Profile>
 ```
 
-### `src/profiles/select-by-cwd.ts`
-
-```ts
-export type Role = "admin" | "director" | "developer"
-
-export function selectRoleByCwd(cwd: string, opts?: SelectOptions): Role
-```
-
 ### `src/interviewer/pre-drafter.ts`
 
 ```ts

@@ -62,13 +62,12 @@ contexts/   per-bounded-context glossaries (CONTEXT.md each), when multi-context
 
 External state: `~/vault/ledger.db` (canon), `~/vault/ke/` (knowledge engine), `~/vault/agents/<role>/` (memory, inbox, journal, outbox), `~/worktrees/<repo>-<slug>/` (worker scratch).
 
-## Role selection by cwd (`A-0003`)
+## Role selection (`A-0003`, superseded)
 
-1. `~/vault/agents/admin/` → Admin
-2. `~/vault/agents/director/` → Director
-3. `~/worktrees/<repo>-*/` → Developer
-4. `~/repos/<name>/` → Developer (read-mostly)
-5. fallback → Director
+Cwd-based vault-path role inference is retired — `src/profiles/select-by-cwd.ts`
+removed. An agent is invoked directly against a repo's root path; that repo's
+own `AGENTS.md` (bindings, worker roles, constraints) is the context, not a
+`~/vault/agents/<role>/` cwd match. See `CHOICES.md` `A-0003`.
 
 ## Hard constraints
 

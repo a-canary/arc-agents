@@ -33,14 +33,16 @@ Five dispatch profiles (`profiles/*.json`, loaded by `loadAll()`):
 - **Sprint** — re-entrant thin-vertical supervisor; drives ONE slice to evidence-backed done across re-entries.
 - **Triage** — drains `*_unset` ledger rows; batch-assigns {tier,pool,agent} via bookie.
 
-Three (admin · director · developer) are also cwd-selected session roles (A-0003); sprint + triage are dispatch-only (ledger pool, not cwd).
+Session-role selection no longer infers from cwd (A-0003, superseded); an agent
+is invoked directly against a repo root and reads that repo's `AGENTS.md`.
 
-### A-0003: Agent Selection by CWD
-1. `~/vault/agents/admin/` → Admin
-2. `~/vault/agents/director/` → Director
-3. `~/worktrees/<repo>-*/` → Developer
-4. `~/repos/<name>/` → Developer (read-mostly)
-5. fallback → Director
+### A-0003: Agent Selection by CWD — superseded
+Retired. Was: `~/vault/agents/admin/` → Admin, `~/vault/agents/director/` →
+Director, `~/worktrees/<repo>-*/` / `~/repos/<name>/` → Developer, fallback →
+Director. `src/profiles/select-by-cwd.ts` had zero in-repo callers at removal
+time (only its own test). Replaced: an agent runs from a repo's own path and
+loads that repo's `AGENTS.md` for bindings/roles/constraints — no vault-path
+sniffing. See [ADR-0012](docs/adr/0012-director-agent-axi.md) addendum.
 
 ### A-0004: Vault Overrides Repo
 Private wins where both exist. Vault never pushed.

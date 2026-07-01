@@ -158,3 +158,44 @@ there instead of describing itself as the canonical planner.
 (`admin.json`, `sprint.json`, `triage.json`) should similarly be extracted
 into standalone skills. Not evaluated or actioned here — flagged for a future
 pass, scoped on its own.
+
+## Addendum 2 (same day) — cwd-based role selection retired; arc-agents reframed as a CLI-agent scheduler/failover substrate
+
+**Decision:** `A-0003` (agent selection by cwd, `CHOICES.md`) is superseded.
+`src/profiles/select-by-cwd.ts` and its test are deleted — `selectRoleByCwd`
+had zero in-repo callers at removal time (only its own test referenced it),
+matching the same shape as `directorGroupFromCwd()` in the original revert.
+Replaced by: an agent is invoked directly against a repo's root path, and
+that repo's own `AGENTS.md` supplies bindings/roles/constraints. No
+`~/vault/agents/<role>/` cwd inference anywhere in the model going forward.
+
+**Reframe:** arc-agents' role in this architecture is a CLI-agent scheduler
+with cross-provider/cross-model failover — a substitute for a harness's
+built-in background-agent and cron scheduling, not a competing mission-owner.
+Where a harness would otherwise poll its own cron for `/director`'s 12hr
+backstop, arc-agents can instead dispatch that tick to whichever CLI agent
+(`claude`, or another provider) is configured in a repo's failover group
+(`src/config/load.ts`'s existing `getAliasCommands`/fast-smart alias
+mechanism), retrying the next candidate on failure. This is additive to,
+not a replacement for, `/director`'s own self-installed cron default
+(`scheduler: cron` in arc-skills' `/director` SKILL.md) — `scheduler:
+arc-agents` remains the opt-in binding that routes through this substrate
+instead.
+
+**Habitual-default framing:** `/director`'s own bindings (event-bus,
+task-delegation, workspace, planning-target, scheduler, …) each default to
+a flat-file/harness-native behavior (`jsonl`, `native`, `worktree`,
+`prd-file`, `cron`) — arc-agents-backed alternatives are enhancements an
+`AGENTS.md` binding opts into, not a baseline dependency. This ADR's
+Governor, `director-brief`, and (should a repo opt in) scheduling substrate
+are all instances of that same enhance-via-binding shape — none is load-bearing
+for `/director` to function standalone.
+
+**Not done here:** no new arc-agents code implementing the CLI-agent
+dispatch/failover substrate itself — this addendum records the reframe in
+scope and intent; implementation is future work, likely warranting its own
+PRD given it changes arc-agents' value proposition materially (see the
+`scheduler` binding's arc-agents branch in arc-skills' `/director` SKILL.md,
+which today only says "factory can schedule and execute the tick instead" —
+this addendum is the reasoning behind why that's still true and what it
+should grow into).
