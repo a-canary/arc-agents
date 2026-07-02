@@ -370,3 +370,157 @@ cadence:
   const out = JSON.parse(r.stdout.toString());
   expect(out.skill).toBe("improve-architecture");
 });
+
+// ── failed-dedup (defence against exit-127 / repeated-failure churn) ───
+//
+// When the headless-invoke fix hasn't landed yet (or the env still doesn't
+// have `pi` on PATH), every cron tick re-creates the same `(repo, skill)`
+// row that just failed exit 127. The factory churns through one tmux
+// session per tick per project with zero progress. The dedup halts new
+// inserts when a same-`(repo, skill)` row failed within 48h and emits a
+// single `note` event on the failed row's id (idempotent: re-ticks don't
+// add a second note).
+
+const FAILED_DEDUP_WINDOW_SEC = 48 * 3600; // matches bin/hygiene-tick.ts
+
+function seedFailedCron(repo: string, skill: string, createdAt: number, id?: string) {
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, created_at)
+     VALUES (?, ?, ?, '', 'cron', 'failed', 'task', 'hygiene', 'ops', ?)`,
+    [id ?? `failed-${repo}-${skill}-${createdAt}`, repo, `hygiene: ${repo} — /${skill}`, createdAt],
+  );
+  db.close();
+}
+
+test("failed-dedup: skips insert when same (repo, skill) failed within 48h and emits note on failed row", async () => {
+  // Restrict the config to ke-only so the dedup blocks the entire rotation
+  // and the {skipped: "failed-dedup"} shape actually emits.
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-codebase-architecture]
+repos: [ke]
+`,
+  );
+  const recent = Math.floor(Date.now() / 1000) - 3600;
+  const failedId = "failed-ke-improve-codebase-architecture-recent";
+  seedFailedCron("ke", "improve-codebase-architecture", recent, failedId);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBe("failed-dedup");
+  expect(out.repo).toBe("ke");
+  expect(out.skill).toBe("improve-codebase-architecture");
+  expect(out.existingId).toBe(failedId);
+
+  // No new cron row was created.
+  const rows = listCron();
+  expect(rows.length).toBe(1);
+  expect(rows[0]!.id).toBe(failedId);
+
+  // Note was appended to the failed row's event log.
+  const db = new Database(dbPath);
+  const notes = db
+    .query<{ payload_md: string }, [string]>(
+      `SELECT payload_md FROM issue_events WHERE issue_id=? AND kind='note'`,
+    )
+    .all(failedId);
+  db.close();
+  expect(notes.length).toBe(1);
+  expect(notes[0]!.payload_md).toMatch(/failed-dedup:/);
+});
+
+test("failed-dedup: does NOT skip when the most-recent failure is older than 48h", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-codebase-architecture]
+repos: [ke]
+`,
+  );
+  // Last failure 49h ago → stale → fire a new cron row.
+  const stale = Math.floor(Date.now() / 1000) - FAILED_DEDUP_WINDOW_SEC - 3600;
+  seedFailedCron("ke", "improve-codebase-architecture", stale);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBeUndefined();
+  expect(out.repo).toBe("ke");
+  expect(out.skill).toBe("improve-codebase-architecture");
+  expect(listCron().length).toBe(2); // stale failed + new ready
+});
+
+test("failed-dedup: does NOT skip when the same combo last failed >48h but another skill failed <48h", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-codebase-architecture]
+repos: [ke]
+`,
+  );
+  // The rotation's pick is improve-codebase-architecture. Seed the OTHER
+  // (repo, skill) failure recently; the dedup is keyed on the picked skill.
+  const recent = Math.floor(Date.now() / 1000) - 3600;
+  seedFailedCron("ke", "analyse-recent-sessions", recent);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBeUndefined();
+  expect(out.skill).toBe("improve-codebase-architecture");
+});
+
+test("failed-dedup: does NOT skip against a merged row of the same combo (only state=failed counts)", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-codebase-architecture]
+repos: [ke]
+`,
+  );
+  // Prior merged happy-path row from 1h ago should not block a new tick —
+  // merged means the previous attempt succeeded.
+  const recent = Math.floor(Date.now() / 1000) - 3600;
+  seedCron("ke", "improve-codebase-architecture", recent); // state defaults to "merged"
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBeUndefined();
+  expect(out.skill).toBe("improve-codebase-architecture");
+  expect(listCron().length).toBe(2); // merged + new ready
+});
+
+test("failed-dedup: a second tick within 48h is idempotent (single note per failed row)", async () => {
+  writeFileSync(
+    cfgPath,
+    `
+skills: [improve-codebase-architecture]
+repos: [ke]
+`,
+  );
+  const recent = Math.floor(Date.now() / 1000) - 3600;
+  const failedId = "failed-ke-improve-codebase-architecture-recent";
+  seedFailedCron("ke", "improve-codebase-architecture", recent, failedId);
+
+  await tick();
+  await tick();
+  await tick();
+
+  // Still only the original failed row in the table.
+  expect(listCron().length).toBe(1);
+
+  // Still only ONE note appended (idempotency contract: re-ticks do not
+  // stack notes on the failed row's event log).
+  const db = new Database(dbPath);
+  const notes = db
+    .query<{ payload_md: string }, [string]>(
+      `SELECT payload_md FROM issue_events WHERE issue_id=? AND kind='note'`,
+    )
+    .all(failedId);
+  db.close();
+  expect(notes.length).toBe(1);
+});
