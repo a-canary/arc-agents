@@ -172,6 +172,30 @@ ensure_pi_on_path() {
   return 0
 }
 
+# `claude-afk` is the typical Nth-of-N candidate in the `fast`/`minimax-build`
+# alias groups (G-0006 N-tier escalation). It lives in `~/.local/bin/` (or
+# `~/node_modules/.bin` for a per-worktree install) while `claude` itself is
+# symlinked into `/usr/local/bin/claude` — so the `command -v claude` restore
+# below never fires when `claude` resolves from the system path, leaving
+# `claude-afk` unreachable inside the factory-spawned tmux subshell. Net: every
+# alias failover that lists a `claude-afk` candidate silently degenerates to
+# N-1 candidates tested; rows go `failed` with `all N candidate engine(s) for
+# alias 'X' produced no work` (analysis-1783332184.md Pattern 1: 21 events, 8
+# projects, 30d). Mirror ensure_pi_on_path — same install-dir probes, never
+# fatal. Defined before the ARC_WORKER_SHELL_SOURCE_ONLY=1 short-circuit so
+# the test harness can call it on a stripped PATH.
+ensure_claude_afk_on_path() {
+  command -v claude-afk >/dev/null 2>&1 && return 0
+  local d
+  for d in "${HOME}/.local/bin" "${HOME}/node_modules/.bin"; do
+    if [ -x "${d}/claude-afk" ]; then
+      export PATH="${d}:${PATH}"
+      return 0
+    fi
+  done
+  return 0
+}
+
 # Fast-forward the given repo's local `main` to `origin/main`. Closes the
 # "local main N behind origin" pattern documented in
 # analysis-1782813826.md §"Pattern 4 follow-up" — the same follow-up was
@@ -220,6 +244,7 @@ command -v claude >/dev/null 2>&1 || export PATH="${HOME}/.local/bin:${PATH}"
 # Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
 # has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.
 ensure_pi_on_path
+ensure_claude_afk_on_path
 
 WORKER="${1:?worker name required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"

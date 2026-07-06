@@ -265,3 +265,82 @@ test("ensure_pi_on_path is a no-op (rc 0) when pi is nowhere to be found", () =>
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// ---- ensure_claude_afk_on_path: stripped-PATH failover invariant ----------
+//
+// Pattern 1 of analysis-1783332184.md: 21 events factory-wide in 30d with
+// evidence `headless reconcile: all 2 candidate engine(s) for alias '<X>'
+// produced no work (last rc=1)`. Both `fast` and `minimax-build` alias groups
+// list `claude-afk --model sonnet` as candidate 2, but `claude-afk` lives in
+// `~/.local/bin/` while `claude` is symlinked into `/usr/local/bin/` — so the
+// existing `command -v claude || PATH=~/.local/bin` guard at worker-shell.sh
+// line ~218 never fires (claude always resolves) and `claude-afk` stays
+// unresolvable inside the factory-spawned tmux subshell. Net: every alias
+// failover silently degenerates to 1 candidate tested. Mirror the
+// ensure_pi_on_path probes — same shape, same "never fatal" contract.
+
+function callEnsureClaudeAfk(opts: {
+  home: string;
+  basePath?: string;
+}): { rc: number; afkPath: string } {
+  const basePath = opts.basePath ?? "/usr/bin:/bin";
+  const env: Record<string, string> = {
+    ...process.env,
+    ARC_WORKER_SHELL_SOURCE_ONLY: "1",
+    HOME: opts.home,
+    PATH: basePath,
+  };
+  const r = spawnSync(
+    "bash",
+    [
+      "-c",
+      `source "$0" && ensure_claude_afk_on_path && command -v claude-afk || true`,
+      SCRIPT,
+    ],
+    { encoding: "utf8", env },
+  );
+  return { rc: r.status ?? -1, afkPath: (r.stdout ?? "").trim() };
+}
+
+function plantClaudeAfk(dir: string): string {
+  mkdirSync(dir, { recursive: true });
+  const afk = join(dir, "claude-afk");
+  writeFileSync(afk, "#!/usr/bin/env bash\necho fake-afk\n");
+  chmodSync(afk, 0o755);
+  return afk;
+}
+
+test("ensure_claude_afk_on_path finds claude-afk under ~/.local/bin", () => {
+  const home = mkdtempSync(join(tmpdir(), "afkhome-"));
+  try {
+    const expected = plantClaudeAfk(join(home, ".local", "bin"));
+    const { rc, afkPath } = callEnsureClaudeAfk({ home });
+    expect(rc).toBe(0);
+    expect(afkPath).toBe(expected);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ensure_claude_afk_on_path finds claude-afk under ~/node_modules/.bin (local non-global install)", () => {
+  const home = mkdtempSync(join(tmpdir(), "afkhome-"));
+  try {
+    const expected = plantClaudeAfk(join(home, "node_modules", ".bin"));
+    const { rc, afkPath } = callEnsureClaudeAfk({ home });
+    expect(rc).toBe(0);
+    expect(afkPath).toBe(expected);
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
+
+test("ensure_claude_afk_on_path is a no-op (rc 0) when claude-afk is nowhere to be found", () => {
+  const home = mkdtempSync(join(tmpdir(), "afkhome-"));
+  try {
+    const { rc, afkPath } = callEnsureClaudeAfk({ home });
+    expect(rc).toBe(0); // never fatal
+    expect(afkPath).toBe("");
+  } finally {
+    rmSync(home, { recursive: true, force: true });
+  }
+});
