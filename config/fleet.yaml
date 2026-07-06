@@ -1,0 +1,198 @@
+# Fleet registry — canonical source of truth for which repos run a /director,
+# their rollout order, and how each is driven.
+#
+# Populated by .wargame/wargames/director-census.md Move 2 (2026-07-06).
+# Canonical here; consuming location is a symlink (~/.config/arc/fleet.yaml)
+# per the symlink doctrine — never hand-maintain a divergent copy.
+#
+# tier:
+#   directed          — gets a /director, in the active rollout
+#   directed-external — already self-drives via its own loop; not converted
+#   scaffold-later     — has docs/mission but not yet in the rollout
+#   duplicate          — flag only, no destructive action (see ledger.md)
+#   skip               — no remote / dormant / orphan checkout / home repo
+#
+# driver: self | external | none
+#
+# rollout_order is only meaningful for tier=directed rows (operator-confirmed
+# 2026-07-06, overriding the runbook's "trading last" default — see ledger.md).
+
+repos:
+  - name: trading
+    path: ~/repos/trading
+    tier: directed
+    rollout_order: 1
+    driver: self
+    mission_oneliner: (variable)  # resolve from repo's own docs/memory at census Move 3 — do not invent
+    notes: draft-PR-only cap stays regardless of rollout position (CI billing-red / PAT-403 known condition)
+
+  - name: OneNation
+    path: ~/projects/OneNation
+    tier: directed
+    rollout_order: 2
+    driver: self
+    mission_oneliner: (variable)
+    notes: pilot repo for attended onboarding (drivers Move 2)
+
+  - name: arc-factory
+    path: ~/repos/arc-factory
+    tier: directed
+    rollout_order: 3
+    driver: self
+    mission_oneliner: (variable)
+
+  - name: arc-agents
+    path: ~/repos/arc-agents
+    tier: directed
+    rollout_order: 3
+    driver: self
+    mission_oneliner: (variable)
+    notes: this repo — director boots from a worktree, never the primary checkout
+
+  - name: arc-webui
+    path: ~/repos/arc-webui
+    tier: directed
+    rollout_order: 3
+    driver: self
+    mission_oneliner: (variable)
+
+  - name: research
+    path: ~/repos/research
+    tier: directed
+    rollout_order: 4
+    driver: self
+    mission_oneliner: (variable)  # has MISSION.md — resolve from it, not invented
+    notes: only repo with a pre-existing MISSION.md
+
+  - name: bug-bounty-agent
+    path: ~/repos/bug-bounty-agent
+    tier: directed-external
+    driver: external
+    mission_oneliner: (variable)
+    notes: already self-drives via its own heartbeat/budget-gated relaunch loop; converting to /director is a separate mission (see assumptions.md)
+
+  - name: arc-skills
+    path: ~/repos/arc-skills
+    tier: scaffold-later
+    driver: none
+    mission_oneliner: (variable)
+
+  - name: ke
+    path: ~/repos/ke
+    tier: scaffold-later
+    driver: none
+    mission_oneliner: (variable)
+
+  - name: pipeliner
+    path: ~/repos/pipeliner
+    tier: scaffold-later
+    driver: none
+    mission_oneliner: (variable)
+
+  - name: llm-judge
+    path: ~/repos/llm-judge
+    tier: scaffold-later
+    driver: none
+    mission_oneliner: (variable)
+
+  - name: cli-proxy
+    path: ~/repos/cli-proxy
+    tier: scaffold-later
+    driver: none
+    mission_oneliner: (variable)
+
+  - name: conjecture
+    path: ~/repos/conjecture
+    tier: scaffold-later
+    driver: none
+    mission_oneliner: (variable)
+
+  - name: OneNation-dup
+    path: ~/repos/OneNation
+    tier: duplicate
+    driver: none
+    notes: detached-HEAD duplicate of ~/projects/OneNation, same remote — flag only, no retirement (operator-confirmed 2026-07-06, see ledger.md)
+
+  - name: arc-skills-wt-pagefilter
+    path: ~/repos/arc-skills-wt-pagefilter
+    tier: duplicate
+    driver: none
+    notes: stray worktree checkout of arc-skills, not a distinct project
+
+  - name: bitnet
+    path: ~/repos/bitnet
+    tier: skip
+    driver: none
+    notes: docs=0, dormant since 2026-05-28
+
+  - name: discord-bridge
+    path: ~/repos/discord-bridge
+    tier: skip
+    driver: none
+    notes: docs=2 but dormant since 2026-06-07 — revisit if reactivated
+
+  - name: dream
+    path: ~/repos/dream
+    tier: skip
+    driver: none
+    notes: self-improvement library consumed by cron, not itself a directed project
+
+  - name: evolutionary
+    path: ~/repos/evolutionary
+    tier: skip
+    driver: none
+    notes: dormant since 2026-05-12
+
+  - name: expert-horde
+    path: ~/repos/expert-horde
+    tier: skip
+    driver: none
+    notes: dormant since 2026-06-19
+
+  - name: ndivisible
+    path: ~/repos/ndivisible
+    tier: skip
+    driver: none
+    notes: dormant since 2026-06-11
+
+  - name: starlight-slm
+    path: ~/repos/starlight-slm
+    tier: skip
+    driver: none
+    notes: dormant since 2026-06-16 — has campaign state, see project_starlight_campaign_runs_in_main memory; revisit if training resumes
+
+  - name: vast-warmpool
+    path: ~/repos/vast-warmpool
+    tier: skip
+    driver: none
+    notes: dormant since 2026-06-09
+
+  - name: video-clip-library
+    path: ~/repos/video-clip-library
+    tier: skip
+    driver: none
+    notes: dormant since 2026-05-22
+
+  - name: anti-sycophancy-benchmark
+    path: ~/repos/anti-sycophancy-benchmark
+    tier: skip
+    driver: none
+    notes: dormant since 2026-05-28
+
+  - name: projects-cli-proxy
+    path: ~/projects/cli-proxy
+    tier: skip
+    driver: none
+    notes: docs=0, orphan checkout distinct from ~/repos/cli-proxy — no remote reference found; flag only
+
+  - name: dream-analysis
+    path: ~/projects/dream-analysis
+    tier: skip
+    driver: none
+    notes: docs=0, dormant since 2026-05-27
+
+  - name: hermes-lcm
+    path: ~/projects/hermes-lcm
+    tier: skip
+    driver: none
+    notes: docs=0, dormant since 2026-06-12
