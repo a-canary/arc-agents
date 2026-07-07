@@ -55,6 +55,23 @@ test("checkMergeGuard: accepts project=cli-proxy with pr_url at a-canary/cli-pro
   expect(checkMergeGuard("cli-proxy", "a-canary/cli-proxy/pull/1")).toBeNull();
 });
 
+// Hygiene followup clarify-docs-ledger-merge-gate-alias-map:
+// local dir is `starlight-slm` (lowercase); github repo is `Starlight-SLM`
+// (capital S-L-M). Before this alias was added, the merge guard short-
+// circuited and let PRs slip through; workers had to use --in-place to
+// close merged rows. Verified 2026-07-07 from PRs #8 + #19.
+test("checkMergeGuard: accepts project=starlight-slm with pr_url at a-canary/Starlight-SLM (capital S-L-M)", () => {
+  expect(checkMergeGuard("starlight-slm", "https://github.com/a-canary/Starlight-SLM/pull/19")).toBeNull();
+  expect(checkMergeGuard("starlight-slm", "a-canary/Starlight-SLM/pull/8")).toBeNull();
+});
+
+test("checkMergeGuard: refuses project=starlight-slm with pr_url pointing at a-canary/starlight-slm (lowercase, the bug)", () => {
+  const refusal = checkMergeGuard("starlight-slm", "https://github.com/a-canary/starlight-slm/pull/19");
+  expect(refusal).not.toBeNull();
+  expect(refusal).toContain("a-canary/Starlight-SLM"); // expected (capital)
+  expect(refusal).toContain("a-canary/starlight-slm"); // actual (lowercase)
+});
+
 test("checkMergeGuard: accepts all known project→repo mappings", () => {
   for (const [project, repo] of Object.entries(PROJECT_GH_REPO)) {
     const n = Math.floor(Math.random() * 1000) + 1;

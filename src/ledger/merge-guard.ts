@@ -18,7 +18,11 @@ export const PROJECT_GH_REPO: Readonly<Record<string, string>> = {
   "cli-proxy": "a-canary/cli-proxy",
   ke: "a-canary/ke",
   bitnet: "a-canary/bitnet",
-  "starlight-slm": "a-canary/starlight-slm",
+  // Local dir is `starlight-slm` (lowercase); github repo is `Starlight-SLM`
+  // (capital S-L-M). Without this entry, the merge guard short-circuits
+  // (unknown project = skip), letting wrong-repo PRs slip through.
+  // Verified 2026-07-07 from PRs #8 + #19 (both to a-canary/Starlight-SLM).
+  "starlight-slm": "a-canary/Starlight-SLM",
   "llm-judge": "a-canary/llm-judge",
   // Local dir is `conjecture` (lowercase); github repo is `Conjecture` (capital C).
   // Without this entry, the merge guard short-circuits (unknown project = skip),
