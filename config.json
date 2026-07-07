@@ -8,6 +8,15 @@
       "claude-afk --model fable -p {prompt}",
       "claude-afk --model opus -p {prompt}",
       "pi -p --provider minimax --model MiniMax-M3 --thinking high {prompt}"
+    ],
+    "opus-max": [
+      "claude-afk --model fable -p {prompt}",
+      "claude-afk --model opus -p {prompt}",
+      "pi -p --provider minimax --model MiniMax-M3 --thinking high {prompt}"
+    ],
+    "minimax-build": [
+      "pi -p --provider minimax --model MiniMax-M3 --thinking off {prompt}",
+      "claude-afk --model sonnet --thinking off -p {prompt}"
     ]
   },
   "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },
