@@ -16,11 +16,13 @@ and `=== PR_URL (if filed) === <url> ===`). The subagent must run this
 # introducing a new project whose ledger `project` field differs from its
 # GitHub repo slug (only confirmed aliases: arc-webui -> webui,
 # webui-specs -> webui-specs, conjecture -> Conjecture — verified
-# 2026-06-30 from trash-retired-files-conjecture-drop-dead PR #19).
+# 2026-06-30 from trash-retired-files-conjecture-drop-dead PR #19,
+# starlight-slm -> Starlight-SLM — verified 2026-07-07 from PRs #8+#19).
 case "${PROJECT}" in
   arc-webui)    EXPECTED_REPO="a-canary/webui" ;;
   webui-specs)  EXPECTED_REPO="a-canary/webui-specs" ;;
   conjecture)   EXPECTED_REPO="a-canary/Conjecture" ;;
+  starlight-slm) EXPECTED_REPO="a-canary/Starlight-SLM" ;;
   *)            EXPECTED_REPO="a-canary/${PROJECT}" ;;
 esac
 ACTUAL_REPO="$(echo "$PR_URL" | sed -E 's|.*github.com/([^/]+/[^/]+)/pull/.*|\1|')"
@@ -37,9 +39,9 @@ bookie merge guard (which catches the same class of bug at merge time)
 for defense in depth.
 
 **Project-name alias map.** Most rows follow `project=<local-repo-dir>`
-→ `remote=a-canary/<local-repo-dir>`. Two confirmed exceptions
+→ `remote=a-canary/<local-repo-dir>`. Three confirmed exceptions
 (sampled 2026-06-26 from `issues.pr_url`, dominant PR repo per
-`project` column):
+`project` column; starlight-slm added 2026-07-07):
 
 | project (ledger) | remote (GitHub) | evidence |
 | --- | --- | --- |
@@ -51,6 +53,7 @@ for defense in depth.
 | `ke` | `a-canary/ke` | 8 PRs |
 | `discord-bridge` | `a-canary/discord-bridge` | 7 PRs |
 | `conjecture` | `a-canary/Conjecture` | 1 PR (#19, capital C) |
+| `starlight-slm` | `a-canary/Starlight-SLM` | 2 PRs (#8, #19, capital S-L-M) |
 
 When adding a new project whose local directory name differs from its
 GitHub repo slug, extend the `case` block above in this same order and
