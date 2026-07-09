@@ -22,7 +22,26 @@ import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
 
-export type Plan = { title: string; body_md: string; tracers: string[] };
+// A candidate mission objective the planner may propose alongside the PRD (M-0010).
+// goal is the only required field; metric/gate are optional. provenance is DELIBERATELY
+// absent — the writer pins it (see serializeObjective), it is never caller-settable.
+export type ProposedObjective = { goal: string; metric?: string; gate?: string };
+export type Plan = { title: string; body_md: string; tracers: string[]; objective?: ProposedObjective };
+
+// serializeObjective — the slice-B writer. Turns a proposed objective into the exact
+// M-0010 ```objectives``` fence line arc-webui's parseObjectives reads:
+//   - goal: X | provenance: inferred | metric: Y | gate: Z
+// provenance is HARD-CODED "inferred" (not a parameter): the campaign invariant is that
+// agents propose inferred objectives and only a human promotes to user-directed. Enforcing
+// it here means no planner path can emit a self-declared user-directed objective. Field
+// values are flattened (pipes/newlines stripped) so one objective stays one parseable row.
+export function serializeObjective(o: ProposedObjective): string {
+  const flat = (s: string) => s.replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  const parts = [`goal: ${flat(o.goal)}`, "provenance: inferred"];
+  if (o.metric && flat(o.metric)) parts.push(`metric: ${flat(o.metric)}`);
+  if (o.gate && flat(o.gate)) parts.push(`gate: ${flat(o.gate)}`);
+  return "- " + parts.join(" | ");
+}
 
 // Baked grill-with-docs grounding: the architecture a plan must respect. Kept as a
 // constant (not a file read) because it produces excellent plans on its own (proven)
@@ -74,6 +93,7 @@ export function buildPlanningPrompt(request: string, context: string, project = 
     "- title: a concise plan title, a string under 80 characters",
     "- body_md: a markdown PRD body, as a string, with these sections in order: Problem (from the user's perspective); Solution (from the user's perspective); User Stories (a long numbered list, each line of the form 'As an <actor>, I want <feature>, so that <benefit>', covering every aspect of the feature); Implementation Decisions (modules to build or modify, their interfaces, schema and contract changes — prose only, no file paths or code snippets); Testing Decisions (which modules to test and what a good behavioural test looks like); Out of Scope.",
     "- tracers: an array of 1 to 3 strings; each a small vertical slice, smallest first, each shippable on its own and independently grabbable by a worker",
+    "- objective (OPTIONAL): only if this request implies a NEW, measurable mission-level outcome the project should track, propose ONE candidate objective as an object with keys goal (a short outcome statement), metric (a short machine-readable metric name), and gate (a numeric target like '100-300' or '8', NOT prose). Omit this key entirely when the request is a plain feature with no measurable mission outcome — do not invent one. It will be recorded as an inferred proposal a human reviews and promotes; never mark it directed.",
   ].join("\n");
 }
 
@@ -88,7 +108,7 @@ export function parsePlanJson(stdout: string): Plan | null {
   const end = s.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) return null;
   s = s.slice(start, end + 1);
-  let obj: { title?: unknown; body_md?: unknown; tracers?: unknown };
+  let obj: { title?: unknown; body_md?: unknown; tracers?: unknown; objective?: unknown };
   try { obj = JSON.parse(s); } catch { return null; }
   if (!obj || typeof obj.title !== "string" || !obj.title.trim()) return null;
   if (!Array.isArray(obj.tracers) || obj.tracers.length === 0) return null;
@@ -100,7 +120,20 @@ export function parsePlanJson(stdout: string): Plan | null {
     title: obj.title.trim(),
     body_md: typeof obj.body_md === "string" ? obj.body_md : "",
     tracers: tracers.slice(0, 5),
+    objective: parseObjective(obj.objective),
   };
+}
+
+// A proposed objective is optional and must not sink the whole plan: a missing key, a
+// non-object, or a goal-less object all degrade to undefined (no proposal), never null.
+function parseObjective(raw: unknown): ProposedObjective | undefined {
+  if (!raw || typeof raw !== "object") return undefined;
+  const o = raw as { goal?: unknown; metric?: unknown; gate?: unknown };
+  if (typeof o.goal !== "string" || !o.goal.trim()) return undefined;
+  const out: ProposedObjective = { goal: o.goal.trim() };
+  if (typeof o.metric === "string" && o.metric.trim()) out.metric = o.metric.trim();
+  if (typeof o.gate === "string" && o.gate.trim()) out.gate = o.gate.trim();
+  return out;
 }
 
 export function planToPlanArgs(plan: Plan, project: string, thread: string): string[] {
@@ -108,10 +141,26 @@ export function planToPlanArgs(plan: Plan, project: string, thread: string): str
     "--project", project,
     "--thread", thread,
     "--title", clamp(plan.title, 80),
-    "--body", plan.body_md,
+    "--body", withProposedObjective(plan.body_md, plan.objective),
   ];
   for (const t of plan.tracers) argv.push("--tracer", t);
   return argv;
+}
+
+// Append a proposed objective to the PRD body as a real, parseable M-0010 ```objectives```
+// fence, wrapped in a heading that tells the human reviewer this is an INFERRED proposal to
+// promote by hand (copy the block into the project's CHOICES.md, edit provenance to
+// user-directed) — never an applied change. No objective proposed → body unchanged.
+function withProposedObjective(body: string, objective?: ProposedObjective): string {
+  if (!objective) return body;
+  return (
+    body +
+    "\n\n## Proposed objective (inferred — human promotes)\n\n" +
+    "The planner inferred a candidate mission objective from this request. To adopt it, " +
+    "copy the block below into this project's CHOICES.md `objectives` fence and change " +
+    "`provenance: inferred` to `user-directed`. Leaving it inferred, or deleting it, is fine.\n\n" +
+    "```objectives\n" + serializeObjective(objective) + "\n```\n"
+  );
 }
 
 function getFlag(argv: string[], name: string): string | undefined {
