@@ -9,8 +9,6 @@ Use when a hygiene worker has scrollback and event-log access to a window of rec
 
 This skill is the explicit, on-demand counterpart to the stop-hook's `ke-learn`: instead of one session's takeaways, it spans N sessions and looks for shape.
 
-Wiring this skill into the stop-hook reminder (and any bookie hygiene-emit verb) is Slice D's responsibility — until that lands, workers reach this skill by directory listing or by an explicit pointer from the director.
-
 ## When to use
 
 - ≥3 recent worker rows showed the same failure mode, the same wasted exploration, or the same hand-holding question.
@@ -49,9 +47,82 @@ Do **not** use this skill to debug a single failed row — use `triage-failed` f
 
 ## Termination
 
-<- **merged** — analysis report committed (or staged in vault), follow-up rows filed manually via `bin/ledger.ts hygiene-emit --skill <s> --title <t> --body <path-to-report> [--observed-in-task <id>]` (one call per row; skills: clarify-docs, improve-architecture, trash-retired-files, analyse-recent-sessions; dedups automatic), evidence rows annotated, PR (if any) merged. This step is a hard gate: if there are no follow-up rows to file, the analysis is complete and the task may merge without any hygiene-emit call.
-- **failed** — couldn't find a pattern with N≥3 evidence; record the negative result in evidence (still useful — it rules out a hypothesis) and exit failed.
-- **blocked** — pattern points at a decision only the human can make (e.g. "switch model tier for class=hygiene"); decompose into a HITL child carrying the analysis report and the proposed action.
+### `merged` — hard gate sequence
+
+**Step 1 — Stage the analysis report.**
+
+```bash
+TARGET_DIR="~/vault/agents/director/inbox"
+REPORT_PATH="$TARGET_DIR/analysis-<unix-ts>.md"
+mkdir -p "$TARGET_DIR"
+# ... write the report to $REPORT_PATH
+```
+
+Stage it in vault (never push vault). The report path is passed to `--body` in Step 2.
+
+**Step 2 — File follow-up rows via `hygiene-emit` (delegated to bookie via Agent tool).**
+
+Parse the follow-up table from the report (columns: `#`, `Title (slug)`, `Type`, `Notes`, `LOC`) and call `hygiene-emit` for each row:
+
+```bash
+# ponytail: hygiene-emit is a ledger CLI write; workers delegate all writes to bookie.
+LEDGER="bun ~/repos/arc-agents/bin/ledger.ts"
+CURRENT_TASK="<current ledger row id>"
+
+# Extract table rows after the "## Recommended follow-up rows" heading.
+# Skip the markdown header delimiter line (|---|...).
+FOLLOWUP_BLOCK=$(awk '/^## Recommended follow-up rows/,0' "$REPORT_PATH" | awk 'NR>2 && /\| [A-Z0-9]/ {print}')
+echo "$FOLLOWUP_BLOCK" | while IFS='|' read -r _ num title notes loc; do
+  # ponytail: no jq dependency — awk is stdlib.
+  title=$(echo "$title" | xargs)  # trim whitespace
+  if [ -z "$title" ]; then continue; fi
+  echo "Filing: $title"
+  $LEDGER hygiene-emit \
+    --skill analyse-recent-sessions \
+    --title "$title" \
+    --body "$REPORT_PATH" \
+    --observed-in-task "$CURRENT_TASK"
+done
+```
+
+**Valid skills for `--skill`:** `clarify-docs`, `improve-architecture`, `trash-retired-files`, `analyse-recent-sessions`. All hygiene-emit rows are created as `type=quality tier=hygiene`. Dedup is automatic against ready/blocked/wip/claimed rows with the same skill + similar title.
+
+**If the table is empty (0 follow-ups):** this step is a no-op; proceed to Step 4.
+
+**Step 3 — Annotate evidence rows with `note` events (delegated to bookie via Agent tool).**
+
+For each pattern, row-id evidence appears under `**Evidence — primary source: <source>**`. Call `event` for each:
+
+```bash
+echo "Annotating evidence rows..."
+# ponytail: awk + while is stdlib; no jq needed.
+awk '/^## Pattern [0-9]/,/^## / { if (/row-[a-z]|^`[a-z0-9-]+`$/ || /`[a-z0-9-]{10,}`/) print }' \
+  "$REPORT_PATH" | grep -oE '`[a-z0-9-]{10,}`' | tr -d '`' | sort -u | while read -r row_id; do
+  $LEDGER event "$row_id" note "Analysis in $REPORT_PATH"
+done
+```
+
+**Step 4 — Update parent row to merged via bookie (Agent tool).**
+
+After all hygiene-emit + event calls succeed, delegate to bookie:
+```
+update --state merged --evidence "<one-liner summary>" --pr <url-or-branch>
+```
+
+**Merge gate:** merged state is accepted only when `hygiene_complete=1` on the row. `hygiene-emit` sets this atomically. If the follow-up table was empty, manually set it:
+```bash
+$LEDGER update "$CURRENT_TASK" --hygiene-complete
+```
+
+**PR (if any):** file a PR, get an independent reviewer to return no blockers, then merge to main.
+
+### `failed`
+
+Couldn't find a pattern with N≥3 evidence. Record the negative result in evidence (still useful — rules out a hypothesis). Delegate to bookie: `update --state failed --evidence "no pattern found in N rows examined"`.
+
+### `blocked`
+
+Pattern points at a decision only the human can make (e.g. "switch model tier for class=hygiene"). Decompose into a HITL child carrying the analysis report and the proposed action. Delegate to bookie: `decompose <task-id> --child "<HITL step>"`.
 
 ## Pattern shortlist (already documented — point future analyses here)
 
