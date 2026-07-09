@@ -1296,6 +1296,35 @@ export const migrations: Migration[] = [
       db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
     },
   },
+  {
+    id: "027_feedback_declined_at",
+    // Explicit don't-re-propose cooldown marker on dismissed feedback. PR #18
+    // (arc-webui) sets state='resolved' + declined_at when a human rejects the
+    // linked Proposal in the approval gate. Implemented here as
+    // feedback-aggregate.markDeclined, exported so arc-webui can call it. The
+    // Collector (feedback-aggregate.ts selectNewFeedback) skips rows where this
+    // column is set, regardless of their state — the marker is the truth.
+    //
+    // Distinct from migration 024's stale_candidate_at (the Validator's tentative
+    // verdict) and the Validator's final resolution='superseded' write. Both paths
+    // produce the same observable effect (Collector skips the row); declined_at is
+    // the dismiss verdict's authoritative column, supersede is the stale verdict's.
+    //
+    // Slot 027 because 025_feedback_mode_author_trust and 026_event_kind_operator_landed
+    // are taken on origin/main. Nullable: null == "eligible for re-aggregation".
+    // Idempotent ALTER follows the 022_feedback_table pattern: check PRAGMA first.
+    up: (db) => {
+      const cols = new Set(
+        db.query<{ name: string }, []>("PRAGMA table_info(feedback)").all().map((r) => r.name),
+      );
+      if (!cols.has("declined_at")) {
+        db.exec("ALTER TABLE feedback ADD COLUMN declined_at INTEGER");
+      }
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_feedback_declined_at ON feedback(declined_at) WHERE declined_at IS NOT NULL",
+      );
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

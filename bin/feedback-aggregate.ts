@@ -196,11 +196,17 @@ function getFlag(argv: string[], name: string): string | undefined {
 /** Fetch up to `limit` unaggregated feedback rows for a project, oldest first.
  *  Tolerates 'OPEN' as well as 'new': agent-CLI rows are born 'new', but arc-webui
  *  normalizes them to 'OPEN' on read, so the live backlog is mostly 'OPEN'. A
- *  'new'-only query would silently skip every webui-touched row. */
+ *  'new'-only query would silently skip every webui-touched row.
+ *
+ *  Also excludes rows with non-null `declined_at` — the don't-re-propose cooldown
+ *  marker (migration 027, set by markDeclined when PR #18's approval gate dismisses
+ *  a Proposal). The marker is the truth: a row is skipped regardless of its state
+ *  column. PR #285's Validator (resolution='superseded') achieves the same
+ *  observable effect via state='resolved'. */
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source, submitter, author_trust FROM feedback WHERE state IN ('new','OPEN') AND project=? ORDER BY created_at ASC LIMIT ?",
+      "SELECT id, body_md, source, submitter, author_trust FROM feedback WHERE state IN ('new','OPEN') AND declined_at IS NULL AND project=? ORDER BY created_at ASC LIMIT ?",
     )
     .all(project, limit);
 }
@@ -231,6 +237,22 @@ export function markAggregated(db: DB, ids: string[], themeId: string): void {
   if (ids.length === 0) return;
   const ph = ids.map(() => "?").join(",");
   db.run(`UPDATE feedback SET state='resolved', theme_id=? WHERE id IN (${ph})`, [themeId, ...ids]);
+}
+
+/** Dismiss verdict: flip state to 'resolved' AND stamp `declined_at = now()`. PR #18
+ *  (arc-webui) wires this from the Proposal-approval gate's "no" button. Exporting
+ *  it from the arc-agents feedback module keeps the SQL primitive in one place —
+ *  both writers (arc-webui's dismiss handler and future arc-agents callers) hit the
+ *  same shape. No-op on an empty id list. The `declined_at` column (migration 027)
+ *  is the authoritative don't-re-propose marker; selectNewFeedback skips any row
+ *  where it is set, regardless of state. */
+export function markDeclined(db: DB, ids: string[]): void {
+  if (ids.length === 0) return;
+  const ph = ids.map(() => "?").join(",");
+  db.run(
+    `UPDATE feedback SET state='resolved', declined_at=CAST(strftime('%s','now') AS INTEGER) WHERE id IN (${ph})`,
+    ids,
+  );
 }
 
 // --- 2-pass stale/superseded (collector flag + validator accept/reject) ---
