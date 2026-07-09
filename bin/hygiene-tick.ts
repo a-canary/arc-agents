@@ -66,29 +66,6 @@ function hasOpenHygiene(repo: string): boolean {
   return (row?.n ?? 0) > 0;
 }
 
-// Round-robin: count of cron tasks for repo determines which skill to run.
-// With per-(repo, skill) cooldowns, the rotation index is the starting point
-// and we walk forward to the first skill not in cooldown. Returns null if
-// every skill in the rotation is in cooldown (caller should treat the repo
-// as ineligible and try the next candidate).
-function nextSkillFor(repo: string, now: number): string | null {
-  const row = db
-    .query<{ n: number }, [string]>(
-      `SELECT COUNT(*) AS n FROM issues WHERE type='cron' AND project=?`,
-    )
-    .get(repo);
-  const n = row?.n ?? 0;
-  const startIdx = n % skills.length;
-  for (let off = 0; off < skills.length; off++) {
-    const skill = skills[(startIdx + off) % skills.length]!;
-    if (!inCooldown(repo, skill, now)) return skill;
-  }
-  return null;
-}
-
-// Rotation: pick the repo (a) without an open hygiene task and (b) whose last
-// cron task is oldest — repos never ticked sort first (NULL last_created).
-// Tie-break by config order.
 function lastCreatedFor(repo: string): number | null {
   const row = db
     .query<{ ts: number | null }, [string]>(
@@ -123,6 +100,36 @@ function inCooldown(repo: string, skill: string, now: number): boolean {
   return now - last < Math.floor(days * 86400);
 }
 
+// failed-dedup: when the same (repo, skill) cron row failed within the
+// recent window (default 48h — covers one retry attempt but doesn't
+// permanently strand a combo that just had a transient failure), refuse
+// to insert a duplicate and emit a single note on the failed row's id.
+// Defence against the "exit 127 hygiene cron crash" pattern: see
+// analysis-1782965639.md Pattern 2.
+const FAILED_DEDUP_WINDOW_SEC = 48 * 3600;
+
+function recentFailedDedup(repo: string, skill: string, now: number): { id: string; ts: number } | null {
+  const row = db
+    .query<{ id: string; ts: number }, [string, string, number]>(
+      `SELECT id, created_at AS ts FROM issues
+       WHERE type='cron' AND state='failed' AND project=? AND title=?
+         AND created_at >= ?
+       ORDER BY created_at DESC, id DESC LIMIT 1`,
+    )
+    .get(repo, `hygiene: ${repo} — /${skill}`, now - FAILED_DEDUP_WINDOW_SEC);
+  return row ? { id: row.id, ts: row.ts } : null;
+}
+
+function alreadyNoted(failedId: string): boolean {
+  const row = db
+    .query<{ n: number }, [string]>(
+      `SELECT COUNT(*) AS n FROM issue_events
+       WHERE issue_id=? AND kind='note' AND payload_md LIKE 'failed-dedup:%'`,
+    )
+    .get(failedId);
+  return (row?.n ?? 0) > 0;
+}
+
 let pick: { repo: string; skill: string } | null = null;
 const now = Math.floor(Date.now() / 1000);
 const candidates = repos
@@ -134,16 +141,53 @@ const candidates = repos
     if (a.last !== b.last) return (a.last ?? 0) - (b.last ?? 0);
     return a.idx - b.idx;
   });
-for (const c of candidates) {
-  const skill = nextSkillFor(c.repo, now);
-  if (skill) {
+
+// Track the first dedup hit so we can report it if the entire rotation
+// (across all eligible (repo, skill) combos) is blocked. We still walk
+// every candidate so a single blocked combo doesn't strand the whole cron.
+let firstDedup: { repo: string; skill: string; existingId: string } | null = null;
+
+outer: for (const c of candidates) {
+  // Walk skills forward from the rotation index until we find one that's
+  // both not in cooldown AND not blocked by a recent failure.
+  const row = db
+    .query<{ n: number }, [string]>(
+      `SELECT COUNT(*) AS n FROM issues WHERE type='cron' AND project=?`,
+    )
+    .get(c.repo);
+  const startIdx = (row?.n ?? 0) % skills.length;
+  for (let off = 0; off < skills.length; off++) {
+    const skill = skills[(startIdx + off) % skills.length]!;
+    if (inCooldown(c.repo, skill, now)) continue;
+    const dedup = recentFailedDedup(c.repo, skill, now);
+    if (dedup) {
+      if (!alreadyNoted(dedup.id)) {
+        db.run(
+          `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'hygiene-tick', ?)`,
+          [dedup.id, `failed-dedup: skipped re-creating hygiene:${c.repo} — /${skill} within ${FAILED_DEDUP_WINDOW_SEC / 3600}h window`],
+        );
+      }
+      if (!firstDedup) firstDedup = { repo: c.repo, skill, existingId: dedup.id };
+      continue;
+    }
     pick = { repo: c.repo, skill };
-    break;
+    break outer;
   }
 }
 
 if (!pick) {
-  process.stdout.write(JSON.stringify({ skipped: true }) + "\n");
+  if (firstDedup) {
+    process.stdout.write(
+      JSON.stringify({
+        skipped: "failed-dedup",
+        repo: firstDedup.repo,
+        skill: firstDedup.skill,
+        existingId: firstDedup.existingId,
+      }) + "\n",
+    );
+  } else {
+    process.stdout.write(JSON.stringify({ skipped: true }) + "\n");
+  }
   process.exit(0);
 }
 
