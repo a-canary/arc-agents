@@ -9,6 +9,7 @@ import {
   triggerGate,
   projectsWithOpenFeedback,
   markAggregated,
+  markDeclined,
   isTrusted,
   confirmsProposal,
   parseCategoriesJson,
@@ -504,6 +505,63 @@ test("projectsWithOpenFeedback: distinct projects with queued rows, excludes res
     insertSrc(db, "b1", "beta", "OPEN", "public");
     insertSrc(db, "g1", "gamma", "resolved", "public");
     expect(projectsWithOpenFeedback(db)).toEqual(["alpha", "beta"]);
+  } finally {
+    cleanup();
+  }
+});
+
+// --- Slice 5: explicit don't-re-propose cooldown marker (migration 027) ---
+// The dismiss cascade (PR #18 in arc-webui) sets a `declined_at` timestamp on the
+// feedback row IN ADDITION to flipping state. The Collector (selectNewFeedback) must
+// skip declined rows regardless of their state column — the marker is the truth.
+test("markDeclined sets declined_at AND flips state to resolved", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-a", "arc-webui", "new", "a");
+    insert(db, "fb-b", "arc-webui", "new", "b");
+    const before = Math.floor(Date.now() / 1000);
+    markDeclined(db, ["fb-a"]);
+    const after = Math.floor(Date.now() / 1000);
+    const ra = db.query<{ state: string; declined_at: number | null }, [string]>(
+      "SELECT state, declined_at FROM feedback WHERE id=?",
+    ).get("fb-a")!;
+    const rb = db.query<{ state: string; declined_at: number | null }, [string]>(
+      "SELECT state, declined_at FROM feedback WHERE id=?",
+    ).get("fb-b")!;
+    expect(ra.state).toBe("resolved");
+    expect(ra.declined_at).not.toBeNull();
+    expect(ra.declined_at!).toBeGreaterThanOrEqual(before);
+    expect(ra.declined_at!).toBeLessThanOrEqual(after);
+    expect(rb.state).toBe("new");
+    expect(rb.declined_at).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("markDeclined with no ids is a no-op", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-a", "arc-webui", "new", "a");
+    markDeclined(db, []);
+    expect(row(db, "fb-a")).toEqual({ state: "new", theme_id: null });
+  } finally {
+    cleanup();
+  }
+});
+
+test("selectNewFeedback excludes rows with non-null declined_at, regardless of state", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-a", "arc-webui", "new", "a");
+    insert(db, "fb-b", "arc-webui", "new", "x");
+    markDeclined(db, ["fb-b"]);
+    // pathological: state='new' BUT declined_at set — marker MUST still exclude it.
+    insert(db, "fb-c", "arc-webui", "new", "y");
+    db.run("UPDATE feedback SET declined_at=strftime('%s','now') WHERE id=?", ["fb-c"]);
+    insert(db, "fb-d", "other", "new", "d");
+    const rows = selectNewFeedback(db, "arc-webui", 20);
+    expect(rows.map((r) => r.id)).toEqual(["fb-a"]);
   } finally {
     cleanup();
   }
