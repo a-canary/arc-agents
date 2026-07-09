@@ -1891,3 +1891,138 @@ test("hygiene-emit with --observed-in-task pointing at missing row falls back to
     cleanup();
   }
 });
+
+
+// --in-place guard (bin-ledger-ts-restrict-in-place-to-requi) ------------------
+// Ghost merges happen when --in-place is used without evidence. The fix:
+// (1) --in-place requires --evidence (≤280 chars) so workers explain the no-PR situation.
+// (2) --in-place is already mutex with --pr (existing guard).
+
+test("update --in-place refused when --evidence missing (ghost-merge guard)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await stubDiffReview(db, c.id);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/--evidence.*required|--in-place requires --evidence/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place refused when --evidence exceeds 280 chars", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await stubDiffReview(db, c.id);
+    const long = "x".repeat(281);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", long);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/280/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place with valid --evidence (≤280) and diff_review succeeds", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await stubDiffReview(db, c.id);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "hygiene task, no code change");
+    if (r.exitCode !== 0) {
+      const stderr = r.stderr.toString();
+      if (stderr.includes("gh ") || stderr.includes("merge truth")) {
+        expect(stderr).not.toMatch(/--evidence.*required/);
+        return;
+      }
+      throw new Error(stderr);
+    }
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string; evidence_md: string } };
+    expect(shown.issue.state).toBe("merged");
+    expect(shown.issue.evidence_md).toBe("hygiene task, no code change");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place refused when --pr also supplied (mutex existing guard)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await stubDiffReview(db, c.id);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--pr", "#99", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/mutually exclusive/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place refused when row's worktree_path no longer exists on disk", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    const nonexistent = "/tmp/this-worktree-does-not-exist-" + Date.now();
+    await runStrict(db, "update", c.id, "--worktree", nonexistent);
+    await stubDiffReview(db, c.id);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "hygiene only");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/no longer exists on disk/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place succeeds when worktree_path exists on disk", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await runStrict(db, "update", c.id, "--worktree", process.cwd());
+    await stubDiffReview(db, c.id);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "hygiene task");
+    if (r.exitCode !== 0) {
+      const stderr = r.stderr.toString();
+      if (stderr.includes("gh ") || stderr.includes("merge truth")) {
+        expect(stderr).not.toMatch(/--evidence.*required/);
+        expect(stderr).not.toMatch(/no longer exists on disk/);
+        return;
+      }
+      throw new Error(stderr);
+    }
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string } };
+    expect(shown.issue.state).toBe("merged");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place with no worktree_path set (rows from non-worktree sources) succeeds with evidence", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await stubDiffReview(db, c.id);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "CLI task, no worktree");
+    if (r.exitCode !== 0) {
+      const stderr = r.stderr.toString();
+      if (stderr.includes("gh ") || stderr.includes("merge truth")) {
+        expect(stderr).not.toMatch(/--evidence.*required/);
+        expect(stderr).not.toMatch(/no longer exists on disk/);
+        return;
+      }
+      throw new Error(stderr);
+    }
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string } };
+    expect(shown.issue.state).toBe("merged");
+  } finally {
+    cleanup();
+  }
+});
