@@ -349,6 +349,17 @@ switch (cmd) {
     if (inPlace && pr) {
       die("--in-place is mutually exclusive with --pr. Use --in-place alone (with --evidence) for in-place merges, --pr to verify a PR, or --local-merged-sha to verify a sha.");
     }
+    // Ponytail: in-place merges are the ghost-merge attack surface (analysis-1781194129
+    // Pattern 1 / analysis-1780502957 Pattern 4). Require --evidence so the worker
+    // explains the no-PR situation. If the row has a worktree_path, also verify the
+    // worktree still exists on disk — a deleted worktree is strong signal the
+    // worker fabricated the merge.
+    if (inPlace && !evidence) {
+      die("--in-place requires --evidence <note> explaining why no git artifact (\u2264280 chars). Absent evidence, a ghost merge cannot be distinguished from a real one.");
+    }
+    if (inPlace && evidence && evidence.length > 280) {
+      die(`--evidence for --in-place must be \u2264280 chars (got ${evidence.length}). Concise evidence is intentional \u2014 long justifications are a ghost-merge smell.`);
+    }
     const branch = getFlag("branch");
     const worktree = getFlag("worktree");
     const hitl = getFlag("hitl");
@@ -360,6 +371,26 @@ switch (cmd) {
       die("--blocked-by is set by the `decompose` verb, not `update`. Use `ledger decompose <parent> --child \"<title>\"` to wire parent.blocked_by + parent.state=blocked atomically.");
     }
     const db = openWithMigrate(getFlag("db"));
+
+    // in-place worktree existence check: must run after db is available.
+    if (inPlace) {
+      // Fetch worktree_path from the row; a missing worktree dir on in-place merge
+      // is a strong ghost-merge signal (worker deleted the evidence before claiming
+      // the merge). Only check when worktree_path is set (some rows have no worktree).
+      const rowWorktree = db
+        .query<{ worktree_path: string | null }, [string]>(
+          "SELECT worktree_path FROM issues WHERE id=?",
+        )
+        .get(id)?.worktree_path;
+      if (rowWorktree) {
+        const { existsSync } = require("node:fs") as typeof import("node:fs");
+        if (!existsSync(rowWorktree)) {
+          die(
+            `--in-place refused: worktree '${rowWorktree}' no longer exists on disk. A deleted worktree before in-place merge is a ghost-merge signal \u2014 supply --pr or --local-merged-sha instead.`,
+          );
+        }
+      }
+    }
 
     if (state) {
       const cur = db.query<{ state: string; pr_url: string | null }, [string]>(
