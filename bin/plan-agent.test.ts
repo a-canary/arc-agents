@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, ARCH_CONTEXT, groundingFor } from "./plan-agent";
+import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, buildFallbackPlan, ARCH_CONTEXT, groundingFor } from "./plan-agent";
 
 test("buildPlanningPrompt embeds request + context, asks for the json shape, avoids the hang trigger", () => {
   const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: arc-webui is server-rendered.");
@@ -55,7 +55,7 @@ test("parsePlanJson returns null on garbage, missing keys, or empty tracers", ()
 
 test("planToPlanArgs maps a plan to plan.ts argv, one --tracer per slice, title clamped", () => {
   const argv = planToPlanArgs(
-    { title: "y".repeat(200), body_md: "BODY", tracers: ["s1", "s2"] },
+    { title: "y".repeat(200), body_md: "BODY", tracers: ["s1", "s2"], relationships: [] },
     "arc-webui",
     "t-abc",
   );
@@ -184,4 +184,105 @@ test("buildPlanningPrompt invites an optional candidate objective without forcin
   const p = buildPlanningPrompt("Add a dark-mode toggle", "CTX");
   expect(p.toLowerCase()).toContain("objective"); // asks for a candidate objective
   expect(p).not.toContain("```"); // still no hang trigger
+});
+
+// ── Pairwise PRD relationships (orthogonal / replace / dependency / fork) ──
+//
+// Parent PRD user-webui-chat-planner-should-be-tasked-isz6 (#18 merged) requires
+// every emitted PRD to classify itself against every in-flight or recently-
+// proposed PRD. plan-agent.ts owns the LLM prompt + the deterministic fallback;
+// plan.ts owns the persistence (migration 028 adds the prd_relationships table).
+// Acceptance criteria below mirror the task brief.
+
+test("buildPlanningPrompt requires pairwise classification with the four kind values", () => {
+  const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: x");
+  // Must name the four kinds the planner may emit
+  for (const k of ["orthogonal", "replace", "dependency", "fork"]) {
+    expect(p.toLowerCase()).toContain(k);
+  }
+  // Must name the JSON key the planner must emit
+  expect(p).toContain("relationships");
+});
+
+test("Plan type accepts a relationships array (compile-time: spread into toPlanArgs)", () => {
+  // Smoke: buildFallbackPlan shape matches the new contract — has relationships.
+  const plan = buildFallbackPlan("Add dark mode");
+  expect(Array.isArray(plan.relationships)).toBe(true);
+});
+
+test("parsePlanJson reads a relationships array with valid kinds", () => {
+  const out = JSON.stringify({
+    title: "T", body_md: "B", tracers: ["s"],
+    relationships: [
+      { other_prd_id: "prd-x", kind: "orthogonal" },
+      { other_prd_id: "prd-y", kind: "dependency" },
+    ],
+  });
+  const plan = parsePlanJson(out);
+  expect(plan?.relationships).toEqual([
+    { other_prd_id: "prd-x", kind: "orthogonal" },
+    { other_prd_id: "prd-y", kind: "dependency" },
+  ]);
+});
+
+test("parsePlanJson filters out relationships with invalid kind values", () => {
+  const out = JSON.stringify({
+    title: "T", body_md: "B", tracers: ["s"],
+    relationships: [
+      { other_prd_id: "prd-x", kind: "orthogonal" },     // ok
+      { other_prd_id: "prd-y", kind: "garbage" },          // drop
+      { other_prd_id: "prd-z", kind: "DEPENDENCY" },       // drop (case)
+      { other_prd_id: "prd-w", kind: "dependency" },       // ok
+    ],
+  });
+  const plan = parsePlanJson(out);
+  expect(plan?.relationships).toEqual([
+    { other_prd_id: "prd-x", kind: "orthogonal" },
+    { other_prd_id: "prd-w", kind: "dependency" },
+  ]);
+});
+
+test("parsePlanJson accepts a missing relationships field (becomes empty array)", () => {
+  const out = JSON.stringify({ title: "T", body_md: "B", tracers: ["s"] });
+  const plan = parsePlanJson(out);
+  expect(plan?.relationships).toEqual([]);
+});
+
+test("buildFallbackPlan marks every existing PRD as 'orthogonal' (degrade-safely)", () => {
+  // The deterministic emitter fallback must emit a default 'orthogonal'
+  // relationship for every existing in-flight / recently-proposed PRD so
+  // the new PRD is never accidentally classified against stale proposals.
+  const existing = ["prd-a", "prd-b", "prd-c"];
+  const plan = buildFallbackPlan("x", existing);
+  expect(plan.relationships!.length).toBe(3);
+  for (const r of plan.relationships!) {
+    expect(r.kind).toBe("orthogonal");
+    expect(existing).toContain(r.other_prd_id);
+  }
+});
+
+test("buildFallbackPlan returns an empty relationships array when there are no existing PRDs", () => {
+  const plan = buildFallbackPlan("x");
+  expect(plan.relationships).toEqual([]);
+});
+
+test("planToPlanArgs emits one --relationship per pair (json-encoded)", () => {
+  const argv = planToPlanArgs(
+    {
+      title: "T", body_md: "B", tracers: ["s"],
+      relationships: [
+        { other_prd_id: "prd-x", kind: "orthogonal" },
+        { other_prd_id: "prd-y", kind: "dependency" },
+      ],
+    },
+    "arc-webui",
+    "t-abc",
+  );
+  const relFlags = argv.filter((a, i) => a === "--relationship" && i + 1 < argv.length);
+  expect(relFlags.length).toBe(2);
+  // first --relationship arg is at the index right after the first --relationship flag
+  const first = argv[argv.indexOf("--relationship") + 1];
+  const second = argv[argv.lastIndexOf("--relationship") + 1];
+  expect(JSON.parse(first!)).toEqual({ other_prd_id: "prd-x", kind: "orthogonal" });
+  expect(JSON.parse(second!)).toEqual({ other_prd_id: "prd-y", kind: "dependency" });
 });

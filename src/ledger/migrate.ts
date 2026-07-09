@@ -1325,6 +1325,39 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "028_prd_relationships",
+    // Pairwise PRD relationships required by `bin/plan-agent.ts` so a newly
+    // emitted Proposal classifies itself against every existing in-flight /
+    // recently-proposed PRD (orthogonal | replace | dependency | fork).
+    //
+    // Persistence: separate table (not a column on `issues`), because each PRD
+    // has N relationships (one row per (prd_id, other_prd_id) pair), the kind
+    // vocabulary is closed, and the lookup pattern is bidirectional. Out-of-scope:
+    // cancellation enforcement at approval time — follow-up #4. Slot 028 because
+    // 024-027 are taken on origin/main.
+    //
+    // No FK constraint on issues.state — a row may be in any state when its
+    // relationships land; the kind describes what the relationship IS.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE IF NOT EXISTS prd_relationships (
+          prd_id        TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          other_prd_id  TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          kind          TEXT NOT NULL
+                        CHECK (kind IN ('orthogonal','replace','dependency','fork')),
+          created_at    INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          PRIMARY KEY (prd_id, other_prd_id)
+        );
+      `);
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_prd_relationships_prd ON prd_relationships(prd_id)",
+      );
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_prd_relationships_other ON prd_relationships(other_prd_id)",
+      );
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
