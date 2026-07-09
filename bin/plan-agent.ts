@@ -36,7 +36,10 @@ export type Plan = { title: string; body_md: string; tracers: string[]; objectiv
 // it here means no planner path can emit a self-declared user-directed objective. Field
 // values are flattened (pipes/newlines stripped) so one objective stays one parseable row.
 export function serializeObjective(o: ProposedObjective): string {
-  const flat = (s: string) => s.replace(/[|\r\n]+/g, " ").replace(/\s+/g, " ").trim();
+  // strip |, newlines, and backticks: the first two break the one-row/pipe-split
+  // contract; a backtick in a value could terminate the ```objectives fence early
+  // and truncate the reader's block (defense-in-depth — never a legit M-0010 value).
+  const flat = (s: string) => s.replace(/[|`\r\n]+/g, " ").replace(/\s+/g, " ").trim();
   const parts = [`goal: ${flat(o.goal)}`, "provenance: inferred"];
   if (o.metric && flat(o.metric)) parts.push(`metric: ${flat(o.metric)}`);
   if (o.gate && flat(o.gate)) parts.push(`gate: ${flat(o.gate)}`);
