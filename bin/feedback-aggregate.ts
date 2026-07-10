@@ -439,7 +439,7 @@ function aggregateProject(db: DB, project: string, limit: number, validate: bool
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
-  const validate = getFlag(argv, "validate-stale") !== undefined;
+  const validate = hasFlag(argv, "validate-stale");
   const allProjects = hasFlag(argv, "all-projects");
 
   const db = openWithMigrate();
