@@ -4,7 +4,14 @@
   "effortLevel": "max",
   "autoCompactWindow": 100000,
   "permissions": {
-    "defaultMode": "auto"
+    "defaultMode": "auto",
+    "allow": [
+      "Bash(docker build:*)",
+      "Bash(docker compose:*)",
+      "Bash(docker logs:*)",
+      "Bash(docker ps:*)",
+      "Bash(docker run --rm arcsim:*)"
+    ]
   },
   "hooks": {
     "PreToolUse": [
