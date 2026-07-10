@@ -66,6 +66,20 @@ test("selectNewFeedback returns only 'new' rows for the project, oldest first", 
   }
 });
 
+test("selectNewFeedback skips auto-oversight log rows — display-only, never drained", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-a", "allmissions", "OPEN", "a");
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", [
+      "ao-1", "allmissions", "auto-oversight", "oversight log", "OPEN",
+    ]);
+    const rows = selectNewFeedback(db, "allmissions", 20);
+    expect(rows.map((r) => r.id)).toEqual(["fb-a"]);
+  } finally {
+    cleanup();
+  }
+});
+
 test("markAggregated links rows to the PRD and resolves them, leaving others", () => {
   const { db, cleanup } = freshDb();
   try {
