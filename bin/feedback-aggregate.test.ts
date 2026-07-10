@@ -18,6 +18,7 @@ import {
   flagStaleFeedback,
   validateStaleCandidates,
   type FeedbackRow,
+  hasFlag,
 } from "./feedback-aggregate";
 
 function freshDb() {
@@ -565,4 +566,10 @@ test("selectNewFeedback excludes rows with non-null declined_at, regardless of s
   } finally {
     cleanup();
   }
+});
+
+test("hasFlag: detects bare --all-projects (getFlag returned undefined — the dry-drain bug)", () => {
+  expect(hasFlag(["--all-projects"], "all-projects")).toBe(true);
+  expect(hasFlag(["--all-projects=1"], "all-projects")).toBe(true);
+  expect(hasFlag([], "all-projects")).toBe(false);
 });

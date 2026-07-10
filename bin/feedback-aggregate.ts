@@ -186,6 +186,11 @@ export function summarizeCategories(rows: FeedbackRow[], categories: Category[])
   });
 }
 
+/** Bare boolean flag — getFlag can't detect these (returns argv[i+1], undefined when last). */
+export function hasFlag(argv: string[], name: string): boolean {
+  return argv.some((a) => a === `--${name}` || a.startsWith(`--${name}=`));
+}
+
 function getFlag(argv: string[], name: string): string | undefined {
   const i = argv.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`));
   if (i === -1) return undefined;
@@ -435,7 +440,7 @@ async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const limit = Number(getFlag(argv, "limit") ?? "20") || 20;
   const validate = getFlag(argv, "validate-stale") !== undefined;
-  const allProjects = getFlag(argv, "all-projects") !== undefined;
+  const allProjects = hasFlag(argv, "all-projects");
 
   const db = openWithMigrate();
   // --all-projects sweeps every project with queued feedback (the scheduled drainer);
