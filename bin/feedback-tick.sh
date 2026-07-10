@@ -12,6 +12,11 @@
 # Cron (every 5 min):
 #   */5 * * * * /home/aaron/repos/arc-agents/bin/feedback-tick.sh >> /home/aaron/.cache/arc-feedback-tick.log 2>&1
 set -euo pipefail
+# Cron's minimal PATH breaks the MiniMax collector two ways: `pi` isn't found, and
+# `pi`'s `env node` shebang resolves the system node 18 (no /v regex flag). Prepend
+# the modern node bin dir so the collector categorizes instead of falling back to
+# a single 'general' lump.
+export PATH="/usr/local/lib/node_modules/node/bin:$PATH"
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUN="${BUN:-/home/aaron/.bun/bin/bun}"
 exec flock -n /tmp/arc-feedback-tick.lock "$BUN" "$REPO/bin/feedback-aggregate.ts" --all-projects
