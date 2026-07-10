@@ -211,7 +211,7 @@ function getFlag(argv: string[], name: string): string | undefined {
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source, submitter, author_trust FROM feedback WHERE state IN ('new','OPEN') AND declined_at IS NULL AND project=? ORDER BY created_at ASC LIMIT ?",
+      "SELECT id, body_md, source, submitter, author_trust FROM feedback WHERE state IN ('new','OPEN') AND declined_at IS NULL AND source != 'auto-oversight' AND project=? ORDER BY created_at ASC LIMIT ?",
     )
     .all(project, limit);
 }
@@ -231,7 +231,7 @@ export function triggerGate(rows: FeedbackRow[]): { fire: boolean; trusted: numb
 export function projectsWithOpenFeedback(db: DB): string[] {
   return db
     .query<{ project: string }, []>(
-      "SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN') ORDER BY project",
+      "SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN') AND source != 'auto-oversight' ORDER BY project",
     )
     .all()
     .map((r) => r.project);
