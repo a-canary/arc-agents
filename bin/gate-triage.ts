@@ -78,7 +78,8 @@ if (import.meta.main) {
     if (v.gate === "human") { human++; console.log(`HUMAN GATE: ${r.id} — ${v.reason}`); continue; }
     if (r.kind === "task") {
       // webui approve route is prd-only (serve.ts "not a prd" 400) — re-queue orphaned task directly
-      db.query("update issues set state='ready' where id = ? and state='review'").run(r.id);
+      db.query("update issues set body_md = body_md || ?, state='ready' where id = ? and state='review'")
+        .run("\n> re-queued by gate-triage after >48h orphaned in review. Worker: verify the premise against the live repo FIRST — the work may already be shipped or stale; if so, close with a reason instead of executing.\n", r.id);
       auto++; console.log(`auto-requeued task: ${r.id} — ${v.reason}`);
       continue;
     }
