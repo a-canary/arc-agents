@@ -6,7 +6,8 @@
 // This function is idempotent: running it on a canonicalised DB affects 0 rows.
 // It is data-only (UPDATE); no DDL, no schema migration needed.
 //
-// Out of scope (phase 2/3): pi-* / cc / arc-framework cleanup, mixed-case
+// Out of scope (phase 2/3): pi-* / cc / arc-framework cleanup, blog table
+// still carries mixed-case Starlight-SLM (issues-only by design), mixed-case
 // validator guard.
 
 import type { Database } from "bun:sqlite";
