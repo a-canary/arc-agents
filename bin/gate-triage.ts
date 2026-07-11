@@ -22,6 +22,17 @@ const WEBUI = process.env.WEBUI_URL ?? "http://localhost:8080";
 const STAMP = "<!-- gate-triage -->";
 const MODEL = process.env.GATE_MODEL ?? "opus";
 // prds always; tasks only when orphaned in review >48h (fresh review tasks belong to worker-reviewer flow)
+// A review-orphaned task whose worker run already left commits on its branch (reconcile logs
+// "N commit(s)") — re-queueing it churns a worker claim; it needs merge review instead.
+export function hasSalvageableCommits(db: Database, issueId: string): boolean {
+  const row = db
+    .query(
+      "select 1 from issue_events where issue_id = ? and kind = 'progress' and payload_md like '%commit(s)%' limit 1",
+    )
+    .get(issueId);
+  return row !== null;
+}
+
 export const SELECT_SQL =
   "select id, title, kind, coalesce(body_md,'') body from issues where state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
 
@@ -77,6 +88,20 @@ if (import.meta.main) {
     db.query("update issues set body_md = body_md || ? where id = ?").run(stamp(v), r.id);
     if (v.gate === "human") { human++; console.log(`HUMAN GATE: ${r.id} — ${v.reason}`); continue; }
     if (r.kind === "task") {
+      // Orphaned task that already produced commits (worker branch salvageable): re-running a
+      // worker just bounces it back to review — it needs a MERGE REVIEW, not re-execution.
+      // Surface it as a webui-visible feedback row and leave it in review.
+      if (hasSalvageableCommits(db, r.id)) {
+        db.query(
+          "insert or ignore into feedback (id, project, source, submitter, state, body_md, created_at) values (?, ?, 'gate-triage', 'gate-triage', 'OPEN', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
+        ).run(
+          `gt-merge-review-${r.id.slice(0, 24)}`,
+          "allmissions",
+          `**needs merge review** — task \`${r.id}\` orphaned in review >48h with commits already on its worker branch. Re-execution would churn; review + merge (or close) the existing work instead.`,
+        );
+        console.log(`needs merge review: ${r.id} — salvageable commits, feedback row filed`);
+        continue;
+      }
       // webui approve route is prd-only (serve.ts "not a prd" 400) — re-queue orphaned task directly
       db.query("update issues set body_md = body_md || ?, state='ready' where id = ? and state='review'")
         .run("\n> re-queued by gate-triage after >48h orphaned in review. Worker: verify the premise against the live repo FIRST — the work may already be shipped or stale; if so, close with a reason instead of executing.\n", r.id);

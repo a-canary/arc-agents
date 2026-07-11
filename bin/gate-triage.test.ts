@@ -51,3 +51,18 @@ test("selection: prds always, tasks only when review-stale >48h", () => {
   const ids = (db.query(SELECT_SQL).all("<!-- gate-triage -->") as Array<{ id: string }>).map((r) => r.id).sort();
   expect(ids).toEqual(["p1", "t-old"]);
 });
+
+import { hasSalvageableCommits } from "./gate-triage";
+
+test("hasSalvageableCommits: true only when a progress event logged commits", () => {
+  const db = new Database(":memory:");
+  db.run("create table issue_events (seq integer primary key, issue_id text, ts integer, agent text, kind text, payload_md text)");
+  const ins = db.query("insert into issue_events (issue_id, ts, agent, kind, payload_md) values (?,?,?,?,?)");
+  ins.run("t-work", 1, "cli", "progress", "→ review\n\nheadless reconcile: exited 1 with 2 commit(s) on worker/t-work");
+  ins.run("t-empty", 1, "cli", "progress", "→ review\n\nno work produced");
+  ins.run("t-other", 1, "bookie", "diff_review", "mentions commit(s) but wrong kind");
+  expect(hasSalvageableCommits(db, "t-work")).toBe(true);
+  expect(hasSalvageableCommits(db, "t-empty")).toBe(false);
+  expect(hasSalvageableCommits(db, "t-other")).toBe(false);
+  expect(hasSalvageableCommits(db, "t-missing")).toBe(false);
+});
