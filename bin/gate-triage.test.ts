@@ -66,3 +66,21 @@ test("hasSalvageableCommits: true only when a progress event logged commits", ()
   expect(hasSalvageableCommits(db, "t-other")).toBe(false);
   expect(hasSalvageableCommits(db, "t-missing")).toBe(false);
 });
+
+test("merge-review feedback ids use the full task id (24-char prefixes collide)", () => {
+  const db = new Database(":memory:");
+  db.run(
+    "create table feedback (id text primary key, project text, source text, submitter text, state text, body_md text, created_at text)",
+  );
+  const ids = [
+    "arc-webui-dashboard-show-counters-a",
+    "arc-webui-dashboard-show-counters-b", // same first 24 chars
+  ];
+  for (const id of ids) {
+    db.query(
+      "insert or ignore into feedback (id, project, source, submitter, state, body_md, created_at) values (?, 'allmissions', 'gate-triage', 'gate-triage', 'OPEN', ?, '2026-07-11T00:00:00Z')",
+    ).run(`gt-merge-review-${id}`, id);
+  }
+  const n = db.query("select count(*) as n from feedback").get() as { n: number };
+  expect(n.n).toBe(2);
+});

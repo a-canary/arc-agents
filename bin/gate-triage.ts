@@ -95,7 +95,7 @@ if (import.meta.main) {
         db.query(
           "insert or ignore into feedback (id, project, source, submitter, state, body_md, created_at) values (?, ?, 'gate-triage', 'gate-triage', 'OPEN', ?, strftime('%Y-%m-%dT%H:%M:%fZ','now'))",
         ).run(
-          `gt-merge-review-${r.id.slice(0, 24)}`,
+          `gt-merge-review-${r.id}`,
           "allmissions",
           `**needs merge review** — task \`${r.id}\` orphaned in review >48h with commits already on its worker branch. Re-execution would churn; review + merge (or close) the existing work instead.`,
         );
