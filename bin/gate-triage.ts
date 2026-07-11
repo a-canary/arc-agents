@@ -21,6 +21,9 @@ const DB = process.env.LEDGER_DB ?? `${process.env.HOME}/vault/ledger.db`;
 const WEBUI = process.env.WEBUI_URL ?? "http://localhost:8080";
 const STAMP = "<!-- gate-triage -->";
 const MODEL = process.env.GATE_MODEL ?? "opus";
+// prds always; tasks only when orphaned in review >48h (fresh review tasks belong to worker-reviewer flow)
+export const SELECT_SQL =
+  "select id, title, coalesce(body_md,'') body from issues where state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
 
 const ESCALATION = `Risky moves (delete/overwrite beyond your worktree, force-push, prod deploy/restart, docker outside your own stack, spend, secrets, cron/systemd edits) — STOP and dispatch a Task subagent (model: opus) to adjudicate with the exact command and blast radius; proceed only on an explicit APPROVE, else park the task with the denial as evidence.`;
 
@@ -66,9 +69,7 @@ Reply with ONLY JSON: {"gate":"human"|"auto","reason":"<one sentence>","allowed_
 
 if (import.meta.main) {
   const db = new Database(DB);
-  const rows = db.query(
-    "select id, title, coalesce(body_md,'') body from issues where kind='prd' and state='review' and coalesce(body_md,'') not like '%' || ? || '%' order by rowid",
-  ).all(STAMP) as Array<{ id: string; title: string; body: string }>;
+  const rows = db.query(SELECT_SQL).all(STAMP) as Array<{ id: string; title: string; body: string }>;
   let human = 0, auto = 0, skipped = 0;
   for (const r of rows) {
     const v = judge(r.title, r.body);

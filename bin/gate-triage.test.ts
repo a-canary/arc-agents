@@ -34,3 +34,20 @@ describe("stamp", () => {
     expect(s).toContain("auto-approved");
   });
 });
+
+import { Database } from "bun:sqlite";
+import { SELECT_SQL } from "./gate-triage";
+
+test("selection: prds always, tasks only when review-stale >48h", () => {
+  const db = new Database(":memory:");
+  db.run("create table issues (id text, title text, body_md text, kind text, state text, updated_at integer)");
+  const now = Math.floor(Date.now() / 1000);
+  const ins = db.query("insert into issues values (?,?,?,?,?,?)");
+  ins.run("p1", "prd fresh", "", "prd", "review", now);
+  ins.run("t-old", "task stale", "", "task", "review", now - 3 * 86400);
+  ins.run("t-new", "task fresh", "", "task", "review", now - 3600);
+  ins.run("t-done", "task merged", "", "task", "merged", now - 9 * 86400);
+  ins.run("p-stamped", "prd stamped", "<!-- gate-triage -->", "prd", "review", now);
+  const ids = (db.query(SELECT_SQL).all("<!-- gate-triage -->") as Array<{ id: string }>).map((r) => r.id).sort();
+  expect(ids).toEqual(["p1", "t-old"]);
+});
