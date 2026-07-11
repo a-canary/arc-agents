@@ -11,7 +11,7 @@ HOUR_ID="ao-watchdog-$(date -u +%Y%m%d%H)" LOOKBACK_MIN="$LOOKBACK_MIN" bun -e '
   const {Database}=require("bun:sqlite");
   const d=new Database(process.env.HOME+"/vault/ledger.db");
   const cutoff=new Date(Date.now()-Number(process.env.LOOKBACK_MIN)*60*1000).toISOString();
-  const n=d.query("select count(*) c from feedback where source=\"auto-oversight\" and id like \"ao-%\" and created_at>=?").get(cutoff).c;
+  const n=d.query("select count(*) c from feedback where source=\"auto-oversight\" and id like \"ao-%\" and id not like \"ao-watchdog-%\" and created_at>=?").get(cutoff).c;
   if(n===0){
     d.query("insert or ignore into feedback (id,project,source,submitter,body_md,state,created_at) values (?,?,?,?,?,?,?)")
      .run(process.env.HOUR_ID,"allmissions","auto-oversight","ao-watchdog",
