@@ -51,10 +51,9 @@ async function stubDiffReview(db: string, id: string): Promise<void> {
     id,
     "diff_review",
     JSON.stringify({
-      consequences: [],
-      surprises_vs_brief: [],
-      gaps_vs_brief: [],
-      adr_conflicts: [],
+      reviewer_identity: "stub-reviewer",
+      reviewed_sha: "abcdef1234567890",
+      verdict: "pass",
     }),
   );
 }
@@ -1479,6 +1478,186 @@ test("update --state merged accepts after diff_review event logged", async () =>
   }
 });
 
+// --- diff_review payload contract (analysis-1780502957 Pattern 1 Part A) ----
+// The legacy gate accepted "any diff_review event exists" — a worker could
+// log its own review with reviewer_identity == row.claimed_by and close the
+// row. The new gate requires the latest diff_review event to parse as
+// JSON {reviewer_identity, reviewed_sha, verdict} AND the reviewer_identity
+// to differ from the row's claimed_by.
+
+async function seedClaimedRow(db: string, title: string, claimedBy: string): Promise<string> {
+  // Create the row, then claim under our pinned worker id. Atomic, uses the
+  // CLI's own sqlite handle, no second connection (WAL mis-use).
+  const c = (await run(
+    db,
+    "create",
+    "--kind",
+    "task",
+    "--type",
+    "mvp",
+    "--title",
+    title,
+  )) as { id: string };
+  const claimed = (await run(db, "claim", claimedBy)) as { claimed: string | null };
+  if (claimed.claimed !== c.id) {
+    throw new Error(`claim picked '${claimed.claimed}', wanted '${c.id}' (test raced)`);
+  }
+  return c.id;
+}
+
+async function logDiffReviewRaw(db: string, id: string, payload: string): Promise<void> {
+  // JSON.stringify + shell-escape is fiddly inside bun's $`` — pass the JSON
+  // as a single positional arg, same way the CLI does.
+  await run(db, "event", id, "diff_review", payload);
+}
+
+test("merged gate: rejects diff_review payload that is non-JSON", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "non-json", "arc-worker-a-x");
+    await logDiffReviewRaw(db, id, "this is just prose, not a JSON object");
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/diff_review.*JSON|not valid JSON/i);
+  } finally { cleanup(); }
+});
+
+test("merged gate: rejects diff_review payload missing required field", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "missing", "arc-worker-a-y");
+    await logDiffReviewRaw(db, id, JSON.stringify({ reviewer_identity: "r", reviewed_sha: "abc1234" /* no verdict */ }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("verdict");
+  } finally { cleanup(); }
+});
+
+test("merged gate: rejects diff_review with invalid reviewed_sha (not hex)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "bad-sha", "arc-worker-a-z");
+    await logDiffReviewRaw(db, id, JSON.stringify({ reviewer_identity: "r", reviewed_sha: "not-a-sha", verdict: "pass" }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/reviewed_sha/);
+  } finally { cleanup(); }
+});
+
+test("merged gate: rejects diff_review with invalid verdict", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "bad-verdict", "arc-worker-a-w");
+    await logDiffReviewRaw(db, id, JSON.stringify({ reviewer_identity: "r", reviewed_sha: "abc1234", verdict: "approved" }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/verdict.*pass.*fail.*comment/);
+  } finally { cleanup(); }
+});
+
+test("merged gate: rejects self-review when reviewer_identity == claimed_by", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "self-review", "arc-worker-a-7kcc01");
+    await logDiffReviewRaw(db, id, JSON.stringify({
+      reviewer_identity: "arc-worker-a-7kcc01",
+      reviewed_sha: "abc1234",
+      verdict: "pass",
+    }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/self-review/i);
+    expect(r.stderr.toString()).toContain("arc-worker-a-7kcc01");
+  } finally { cleanup(); }
+});
+
+test("merged gate: rejects self-review case-insensitively", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "self-review-ci", "arc-worker-a-7kcc01");
+    await logDiffReviewRaw(db, id, JSON.stringify({
+      reviewer_identity: "ARC-WORKER-A-7KCC01", // case-insensitive match
+      reviewed_sha: "abc1234",
+      verdict: "pass",
+    }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/self-review/i);
+  } finally { cleanup(); }
+});
+
+test("merged gate: accepts valid contract with different reviewer_identity", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "valid", "arc-worker-a-7kcc01");
+    await logDiffReviewRaw(db, id, JSON.stringify({
+      reviewer_identity: "claude-afk-reviewer",
+      reviewed_sha: "abcdef1",
+      verdict: "pass",
+    }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).toBe(0);
+  } finally { cleanup(); }
+});
+
+test("merged gate: accepts verdict=fail (reviewer says no — gate still closes if THIS-WORKER is not the reviewer)", async () => {
+  // verdict=fail is well-formed; the merge gate does not gate on verdict
+  // (that's the reviewer's freedom). The row's owner decides whether to act.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "fail-verdict", "arc-worker-a-qq");
+    await logDiffReviewRaw(db, id, JSON.stringify({
+      reviewer_identity: "opus-rival",
+      reviewed_sha: "abcdef1",
+      verdict: "fail",
+    }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).toBe(0);
+  } finally { cleanup(); }
+});
+
+test("merged gate: uses the LATEST diff_review event, not the first", async () => {
+  // First event is malformed (would be rejected); second is a valid contract
+  // with a different reviewer_identity. Latest must win.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const id = await seedClaimedRow(db, "stale-then-valid", "arc-worker-a-rr");
+    await logDiffReviewRaw(db, id, "not json first");
+    await logDiffReviewRaw(db, id, JSON.stringify({
+      reviewer_identity: "opus-second",
+      reviewed_sha: "abc1234",
+      verdict: "pass",
+    }));
+    const r = await runRaw(db, "update", id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).toBe(0);
+  } finally { cleanup(); }
+});
+
+test("merged gate: legacy rows with null claimed_by skip self-review check", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "no-claim")) as { id: string };
+    // claimed_by is null (no claim verb run) — gate must not fire self-review.
+    await logDiffReviewRaw(db, c.id, JSON.stringify({
+      reviewer_identity: "any-reviewer-name",
+      reviewed_sha: "abc1234",
+      verdict: "pass",
+    }));
+    const r = await runRaw(db, "update", c.id, "--state", "merged", "--evidence", "x");
+    expect(r.exitCode).toBe(0);
+  } finally { cleanup(); }
+});
+
 // ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
 
 test("alias-cmd prints the full failover group, one candidate per line", async () => {
@@ -1662,8 +1841,15 @@ test("update --state merged refused when pr_url null and no --pr supplied (stric
       id: string;
     };
     await run(db, "update", c.id, "--state", "wip");
-    // diff_review event must exist before the merge-truth precondition runs
-    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    // diff_review event must exist before the merge-truth precondition runs;
+    // contract: {reviewer_identity, reviewed_sha, verdict} (worker is fine —
+    // claimed_by is empty since the row was never atomic-claimed via the
+    // claim verb).
+    await run(db, "event", c.id, "diff_review", JSON.stringify({
+      reviewer_identity: "stub-reviewer",
+      reviewed_sha: "abcdef1234567890",
+      verdict: "pass",
+    }));
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--evidence", "did the thing");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toContain("refused");
@@ -1682,7 +1868,11 @@ test("update --state merged refused when --pr looks like a branch, not a URL/num
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    await run(db, "event", c.id, "diff_review", JSON.stringify({
+      reviewer_identity: "stub-reviewer",
+      reviewed_sha: "abcdef1234567890",
+      verdict: "pass",
+    }));
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--pr", "feat/foo", "--evidence", "x");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toContain("does not look like a PR URL");
@@ -1696,7 +1886,11 @@ test("update --state merged refused for non-hex --local-merged-sha (strict)", as
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    await run(db, "event", c.id, "diff_review", JSON.stringify({
+      reviewer_identity: "stub-reviewer",
+      reviewed_sha: "abcdef1234567890",
+      verdict: "pass",
+    }));
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--local-merged-sha", "not-a-sha", "--evidence", "x");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toContain("not a hex sha");
@@ -1710,7 +1904,11 @@ test("update --state merged via --local-merged-sha works when sha is on origin/m
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await run(db, "event", c.id, "diff_review", JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }));
+    await run(db, "event", c.id, "diff_review", JSON.stringify({
+      reviewer_identity: "stub-reviewer",
+      reviewed_sha: "abcdef1234567890",
+      verdict: "pass",
+    }));
     // Use the sha of HEAD in this worktree — guaranteed to be reachable from
     // origin/main since the worktree was created off origin/main.
     const sha = (await $`git rev-parse HEAD`.cwd(new URL("..", import.meta.url).pathname).quiet()).stdout.toString().trim();

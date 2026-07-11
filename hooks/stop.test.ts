@@ -66,9 +66,13 @@ test("passes through when task is merged", () => {
     "event",
     c.id,
     "diff_review",
-    JSON.stringify({ consequences: [], surprises_vs_brief: [], gaps_vs_brief: [], adr_conflicts: [] }),
+    JSON.stringify({
+      reviewer_identity: "hook-test-reviewer",
+      reviewed_sha: "abcdef1234567890",
+      verdict: "pass",
+    }),
   ]);
-  ledger(["update", c.id, "--state", "merged", "--evidence", "ok", "--pr", "branch/x"]);
+  ledger(["update", c.id, "--state", "merged", "--evidence", "ok", "--in-place"]);
   const r = runHook({ ARC_TASK_ID: c.id });
   expect(r.status).toBe(0);
   expect(r.stdout.trim()).toBe("");

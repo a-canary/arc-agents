@@ -7,7 +7,32 @@ description: "Pre-commit phase. Independent subagent reviews the finalized diff 
 
 A worker self-reviewing its own diff misses what it rationalized away during implementation. This skill spawns a **fresh subagent** that has never seen the worker's reasoning, gives it only `(diff, task brief, touched ADR files)`, and asks it to predict consequences and flag surprises/gaps versus the brief.
 
-Mandatory before `bookie update --state merged`. The ledger CLI refuses merge if no `diff_review` event exists for the issue.
+Mandatory before `bookie update --state merged`. The ledger CLI refuses merge unless the **latest `diff_review` event** parses as JSON of shape:
+
+```json
+{
+  "reviewer_identity": "<distinct from the row's claimed_by>",
+  "reviewed_sha":      "<7–40 hex chars>",
+  "verdict":           "pass" | "fail" | "comment"
+}
+```
+
+Self-review (reviewer_identity === row.claimed_by) is rejected. Legacy payloads (`{consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts}`) parse as JSON objects but are missing the required fields and are rejected as well — the gate requires the new contract. The reviewer may still produce a report with `consequences/axi_violations/...` keys; those keys are simply ignored by the parser.
+
+The remaining schema (`consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts, axi_violations`) is the reviewer's *content*; it lives outside the gate and should still be emitted for auditability. Wrap the contract fields together with the report in one event payload:
+
+```json
+{
+  "reviewer_identity": "claude-afk-reviewer",
+  "reviewed_sha":      "$(git rev-parse HEAD)",
+  "verdict":           "pass",
+  "consequences":      [],
+  "surprises_vs_brief": [],
+  "gaps_vs_brief":     [],
+  "adr_conflicts":     [],
+  "axi_violations":    []
+}
+```
 
 ## When to run
 
@@ -21,7 +46,7 @@ After the diff is finalized (all code/test/doc edits done) and before `git add` 
 
 Nothing else — no event log, no chat history, no prior reasoning. Independence is the point.
 
-## Required output schema
+## Required output schema (audit content, sent with the contract fields above)
 
 ```json
 {
@@ -33,7 +58,7 @@ Nothing else — no event log, no chat history, no prior reasoning. Independence
 }
 ```
 
-Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is empty whenever the diff touches no agent-consumed CLI/tool output — most diffs. The ledger gate checks only that a `diff_review` event exists, not its fields, so the extra key is backward-compatible.
+Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is empty whenever the diff touches no agent-consumed CLI/tool output — most diffs. The legacy gate accepted this body alone — it now rejects it because the three contract fields (`reviewer_identity`, `reviewed_sha`, `verdict`) are missing. **Always emit all three contract fields alongside the content.**
 
 ## Procedure (worker side)
 
@@ -52,8 +77,15 @@ Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is
 6. Address every `surprises_vs_brief`, `gaps_vs_brief`, `adr_conflicts` entry by either editing the diff (then re-running) or including an explicit justification in `evidence_md` at merge time naming each unresolved item.
 7. Emit the report as a ledger event:
    ```bash
-   bun bin/ledger.ts event <task-id> diff_review "$(echo "$RESULT" | jq -c .)" --agent bookie
+   {
+     echo "$RESULT" | jq --arg rid "$(git config user.name)-$(date +%s%N)" \
+                          --arg sha "$(git rev-parse HEAD)" \
+                          '. + {reviewer_identity:$rid, reviewed_sha:$sha, verdict:(.verdict // "pass")}';
+   } > /tmp/diff-review.contract.json
+   jq -c . /tmp/diff-review.contract.json
+   bun bin/ledger.ts event <task-id> diff_review "$(jq -c . /tmp/diff-review.contract.json)" --agent bookie
    ```
+   `reviewer_identity` must NOT match the row's `claimed_by` (worker self-review is rejected). `reviewed_sha` is the commit the reviewer inspected (typically `HEAD` on the worker branch). `verdict` is `pass`, `fail`, or `comment` — the merge gate does not gate on verdict value, only on shape + independence.
    This is the only ledger write in the diff-review workflow (the reviewer is the read-only subagent, not a ledger actor).
 8. Proceed to `git add` / `git commit` / push / PR.
 
@@ -102,7 +134,7 @@ No editorializing. No output outside the JSON object.
 
 ## Enforcement
 
-- `bin/ledger.ts update --state merged` refuses if no `kind=diff_review` event exists.
+- `bin/ledger.ts update --state merged` refuses unless the **latest** `kind=diff_review` event for the issue parses as the contract JSON and the `reviewer_identity` differs from the row's `claimed_by`.
 - Bookie mirrors the rule in its hard-refusal list (`.claude/agents/bookie.md` rule #7).
 - The gate applies to `merged` because that is when scope creep ships.
 
