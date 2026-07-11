@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseVerdict, stamp } from "./gate-triage.ts";
+import { parseVerdict, stamp } from "./gate-triage";
 
 describe("parseVerdict", () => {
   test("accepts valid auto verdict with tool list", () => {
