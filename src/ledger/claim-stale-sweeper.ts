@@ -14,25 +14,45 @@
 
 import type { Database } from "bun:sqlite";
 
+// Defaults from docs/decisions/claim-stale-sweeper-cooldown.md. Live-tunable
+// via ARC_SWEEPER_COOLDOWN_MAX / ARC_SWEEPER_COOLDOWN_WINDOW_SEC. Read lazily so
+// the test suite can mutate process.env between cases.
+function cooldownMaxDefault(): number {
+  return parseInt(process.env.ARC_SWEEPER_COOLDOWN_MAX ?? "10", 10);
+}
+function cooldownWindowDefault(): number {
+  return parseInt(process.env.ARC_SWEEPER_COOLDOWN_WINDOW_SEC ?? "3600", 10);
+}
+
 export type SweepOptions = {
   staleAfterSec?: number;
   arctestStaleAfterSec?: number;
+  cooldownMax?: number;
+  cooldownWindowSec?: number;
   now?: number; // unix seconds, defaults to current time
 };
 
 export type SweepResult = {
   reset: number;
   ids: string[];
+  cooldownExcluded: string[]; // row ids that hit the sweeper cooldown (>=N reclaims in window)
 };
 
 export function sweepStaleClaims(db: Database, opts: SweepOptions = {}): SweepResult {
   const staleAfterSec = opts.staleAfterSec ?? 7200;
   const arctestStaleAfterSec = opts.arctestStaleAfterSec ?? 300;
+  const cooldownMax = opts.cooldownMax ?? cooldownMaxDefault();
+  const cooldownWindowSec = opts.cooldownWindowSec ?? cooldownWindowDefault();
   const now = opts.now ?? Math.floor(Date.now() / 1000);
   const cutoff = now - staleAfterSec;
   const arctestCutoff = now - arctestStaleAfterSec;
+  const cooldownCutoff = now - cooldownWindowSec;
 
-  const stale = db
+  // Pull all stale candidates first, then filter out the ones in sweeper
+  // cooldown. We resolve the exclusion list from these stale candidates so a
+  // runaway row that's already claimed cannot starve another healthy row from
+  // the sweep — only the runaway is excluded.
+  const staleRaw = db
     .query<{ id: string; claimed_by: string | null; claimed_at: number | null }, [number, number]>(
       `SELECT id, claimed_by, claimed_at FROM issues
        WHERE state='claimed'
@@ -43,11 +63,56 @@ export function sweepStaleClaims(db: Database, opts: SweepOptions = {}): SweepRe
     )
     .all(cutoff, arctestCutoff);
 
-  if (stale.length === 0) return { reset: 0, ids: [] };
+  // Cooldown: a row whose sweeper-generated reclaim events in the trailing
+  // window have hit cooldownMax. Group by issue_id, only count events the
+  // sweeper itself emitted (kind='reclaimed' AND agent='claim-stale-sweeper').
+  // Param order: cooldownCutoff (ts>=), then candidate ids (IN list), then
+  // cooldownMax (HAVING threshold). Must match placeholder order in SQL.
+  const cooldownParams: (number | string)[] = [cooldownCutoff];
+  for (const r of staleRaw) cooldownParams.push(r.id);
+  cooldownParams.push(cooldownMax);
+  const cooldownHits = db
+    .query<{ issue_id: string; n: number }, (number | string)[]>(
+      `SELECT issue_id, COUNT(*) AS n
+         FROM issue_events
+        WHERE kind='reclaimed' AND agent='claim-stale-sweeper' AND ts >= ?
+              AND issue_id IN (${
+                staleRaw.length === 0 ? "SELECT '' WHERE 0" : staleRaw.map(() => "?").join(",")
+              })
+        GROUP BY issue_id
+       HAVING COUNT(*) >= ?`,
+    )
+    .all(...(cooldownParams as (number | string)[]));
+  const inCooldown = new Set(cooldownHits.map((c) => c.issue_id));
+  const cooldownExcluded = cooldownHits.map((c) => c.issue_id);
+  const stale = staleRaw.filter((r) => !inCooldown.has(r.id));
+
+  if (stale.length === 0 && cooldownHits.length === 0) {
+    return { reset: 0, ids: [], cooldownExcluded };
+  }
 
   const ids = stale.map((r) => r.id);
 
   db.transaction(() => {
+    // First-skip-per-window note: when a row hits the cooldown for the first
+    // time in this trailing window, write a kind='note' event so the exclusion
+    // is auditable. Subsequent skips within the same window do NOT emit (would
+    // just be noise; the next skip-first resets the window).
+    for (const c of cooldownHits) {
+      const prior = db
+        .query<{ n: number }, [string, number]>(
+          `SELECT COUNT(*) AS n FROM issue_events
+            WHERE issue_id=? AND kind='note' AND agent='claim-stale-sweeper'
+              AND ts >= ?`,
+        )
+        .get(c.issue_id, cooldownCutoff);
+      if ((prior?.n ?? 0) === 0) {
+        db.run(
+          `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'claim-stale-sweeper', ?)`,
+          [c.issue_id, `sweeper cooldown: row ${c.issue_id} excluded (${c.n} reclaims in last ${cooldownWindowSec}s)`],
+        );
+      }
+    }
     for (const r of stale) {
       const orphan = r.claimed_at == null || r.claimed_by == null;
       const arctest = !orphan && r.claimed_by != null && r.claimed_by.startsWith("arctest-");
@@ -69,5 +134,5 @@ export function sweepStaleClaims(db: Database, opts: SweepOptions = {}): SweepRe
     }
   })();
 
-  return { reset: ids.length, ids };
+  return { reset: ids.length, ids, cooldownExcluded };
 }

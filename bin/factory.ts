@@ -82,6 +82,7 @@ export type TickResult = {
   swept: string[];
   worktrees: ReapedWorktree[];
   backstop: BackstopResult[];
+  sweeper_cooldown_excluded: { orphan: string[]; stale: string[] };
   live: number;
   ready: number;
   unclaimable_ready: number;
@@ -94,9 +95,14 @@ export function tick(): TickResult {
   const reapedExited = reapExited();
   const reapedAge = reapStale();
   const db = openWithMigrate(process.env.ARC_LEDGER_DB);
-  const orphans = reapOrphanClaims(db);
+  const orphanResult = reapOrphanClaims(db);
+  const orphans = orphanResult.ids;
   const sweep = sweepStaleClaims(db);
   const reapedDone = reapFinished(db);
+  const sweeperCooldownExcluded = {
+    orphan: orphanResult.cooldownExcluded,
+    stale: sweep.cooldownExcluded,
+  };
   const worktrees = reapWorktrees(db);
   // (c) 7-day backstop: periodic disk-scan for orphan worktrees with no live row.
   // Interval-gated so the readdir + per-dir git calls don't run every 5s tick.
@@ -159,6 +165,7 @@ export function tick(): TickResult {
     swept: [...orphans, ...sweep.ids],
     worktrees,
     backstop,
+    sweeper_cooldown_excluded: sweeperCooldownExcluded,
     live: curAny + curInteractive,
     ready: allReady.length,
     unclaimable_ready: unclaimable,
@@ -177,6 +184,7 @@ export type Metrics = {
   reaps_per_hr: number;
   seconds_since_last_spawn: number | null;
   unclaimable_ready: number;
+  sweeper_cooldown_excluded: { count: number; ids: string[] };
   slots: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
 };
 
@@ -203,6 +211,17 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
     )
     .get(hourAgo);
   const unclaimable = countUnclaimableReady(db);
+  // Cooldown-excluded rows: distinct issue_ids with a kind='note' audit event
+  // from claim-stale-sweeper in the trailing window. The note is emitted once
+  // per window per row (not per skip), so this counts distinct runaways — not
+  // the raw skip rate.
+  const cooldownRows = db
+    .query<{ issue_id: string }, [number]>(
+      `SELECT DISTINCT issue_id FROM issue_events
+        WHERE kind='note' AND agent='claim-stale-sweeper'
+          AND payload_md LIKE 'sweeper cooldown:%' AND ts >= ?`,
+    )
+    .all(hourAgo);
   db.close();
 
   return {
@@ -211,6 +230,7 @@ export function metrics(now: number = Math.floor(Date.now() / 1000)): Metrics {
     reaps_per_hr: reaps?.n ?? 0,
     seconds_since_last_spawn: since,
     unclaimable_ready: unclaimable,
+    sweeper_cooldown_excluded: { count: cooldownRows.length, ids: cooldownRows.map((r) => r.issue_id) },
     slots: {
       any: { live: liveAny, cap: SLOTS_ANY },
       interactive: { live: liveInteractive, cap: SLOTS_INTERACTIVE },
