@@ -378,6 +378,17 @@ export ARC_WORKTREE="$WT_DIR"
 # Per-(kind,type) system prompt resolved in TS — see src/worker/templates.ts.
 SYS_PROMPT="$(bun "$LEDGER_BIN" render-prompt "$CLAIM_ID" --worker "$WORKER" "${DB_FLAG[@]}")"
 
+# gate-triage (bin/gate-triage.ts) stamps an opus-chosen minimal tool list into
+# the task body; enforce it as --allowedTools on claude engines. Policy is set
+# per-task by opus, not by a human. No stamp -> no flag (engine default).
+TOOLS_CSV="$(bun "$LEDGER_BIN" show "$CLAIM_ID" "${DB_FLAG[@]}" 2>/dev/null \
+  | grep -oE 'allowed-tools: [A-Za-z, ]+' | head -n1 | sed 's/^allowed-tools: //' || true)"
+TOOLS_FLAG=()
+if [[ -n "$TOOLS_CSV" ]]; then
+  IFS=', ' read -r -a _gate_tools <<< "$TOOLS_CSV"
+  TOOLS_FLAG=(--allowedTools "${_gate_tools[@]}")
+fi
+
 USER_PROMPT="Task ${CLAIM_ID}. You are isolated in worktree ${WT_DIR} (branch
 ${WT_BRANCH}, off main) — do all work here, never in ${WT_REPO}. Run \`bun ${LEDGER_BIN} ${DB_FLAG[*]} show ${CLAIM_ID}\`
 to read it, then execute. On terminal state, ask bookie to update (merged +
@@ -441,6 +452,11 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   if [[ "${CMD_PARTS[0]:-}" == "claude" ]]; then
     CMD_PARTS[0]="$CLAUDE"
   fi
+  # --allowedTools is claude-specific; other engines would choke on it.
+  ENGINE_TOOLS=()
+  if [[ "${CMD_PARTS[0]:-}" == "$CLAUDE" ]]; then
+    ENGINE_TOOLS=("${TOOLS_FLAG[@]}")
+  fi
   # Pre-flight: a candidate whose binary isn't on PATH (engine not installed
   # here) is skipped without running — straight to the next candidate.
   if ! command -v "${CMD_PARTS[0]}" >/dev/null 2>&1; then
@@ -456,7 +472,7 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   if [[ "$HEADLESS" != "1" ]]; then
     # Interactive engine of last resort — exec hands over the TTY. The pane pipe
     # set at spawn survives the exec and keeps mirroring for the worker's life.
-    exec "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
+    exec "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
   fi
 
   # Headless attempt — run as a child, capture rc, then reconcile-or-failover.
@@ -465,7 +481,7 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
     PIPE_READY=1
   fi
   set +e
-  timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
+  timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
   AGENT_RC=$?
   set -e
   LAST_RC=$AGENT_RC

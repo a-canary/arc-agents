@@ -451,8 +451,11 @@ test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a strippe
   const realLocal = process.env.HOME + "/.local/bin";
   // Path that has bun + claude resolvable (guards become no-ops) but DELIBERATELY
   // omits any dir containing `pi`. The only way `pi` can be found is via
-  // ensure_pi_on_path's ~/node_modules/.bin candidate.
-  const strippedPath = `${realBun}:${realLocal}:/usr/local/sbin:/usr/local/bin:/usr/sbin:/usr/bin:/sbin:/bin`;
+  // ensure_pi_on_path's ~/node_modules/.bin candidate. /usr/local is excluded:
+  // on hosts with a global pi under the node prefix, the node-sibling probe
+  // (`dirname(node)/../lib/node_modules/node/bin`) and `npm prefix -g` would
+  // resolve the REAL pi ahead of the planted fake and break hermeticity.
+  const strippedPath = `${realBun}:${realLocal}:/usr/sbin:/usr/bin:/sbin:/bin`;
 
   const id = createTask("pi-strip");
   const shell = join(REPO, "bin", "worker-shell.sh");
