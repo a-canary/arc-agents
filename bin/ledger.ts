@@ -8,6 +8,7 @@ import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
+import { parseDiffReviewPayload, checkReviewerIndependence } from "../src/ledger/diff-review";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
@@ -400,16 +401,32 @@ switch (cmd) {
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
       if (state === "merged") {
-        const review = db
-          .query<{ c: number }, [string]>(
-            "SELECT COUNT(*) AS c FROM issue_events WHERE issue_id=? AND kind='diff_review'",
+        // diff_review payload contract: require the LATEST diff_review event
+        // to parse as JSON {reviewer_identity, reviewed_sha, verdict}, and
+        // the reviewer_identity must not match the row's claimed_by. This
+        // replaces the legacy "is there any diff_review event at all" check
+        // (analysis-1780502957 Pattern 1 Part A: worker self-review).
+        const latestReview = db
+          .query<{ payload_md: string | null; agent: string | null }, [string]>(
+            `SELECT payload_md, agent FROM issue_events
+             WHERE issue_id=? AND kind='diff_review'
+             ORDER BY seq DESC LIMIT 1`,
           )
           .get(id);
-        if (!review || review.c === 0) {
+        if (!latestReview) {
           die(
             `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging.`,
           );
         }
+        const reviewParse = parseDiffReviewPayload(latestReview.payload_md);
+        if (!reviewParse.ok) {
+          die(`refuse merged: ${reviewParse.reason}`);
+        }
+        const claimedBy = db
+          .query<{ claimed_by: string | null }, [string]>("SELECT claimed_by FROM issues WHERE id=?")
+          .get(id)?.claimed_by;
+        const indepMsg = checkReviewerIndependence(reviewParse.payload.reviewer_identity, claimedBy);
+        if (indepMsg) die(indepMsg);
         // analysis-1780502957 Pattern 1 Part A: enforce pr_url's repo matches
         // the row's project field. The guard runs at the bookie layer so
         // a worker cannot mark a row merged against the wrong github repo.
