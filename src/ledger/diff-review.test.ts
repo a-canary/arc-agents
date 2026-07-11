@@ -67,7 +67,7 @@ test("parseDiffReviewPayload refuses wrong-type fields", () => {
 });
 
 test("parseDiffReviewPayload accepts all three valid verdicts", () => {
-  for (const v of ["pass", "fail", "comment"]) {
+  for (const v of ["pass", "fail", "comment"] as const) {
     const r = parseDiffReviewPayload(JSON.stringify({ reviewer_identity: "r", reviewed_sha: "abc1234", verdict: v }));
     expect(r.ok).toBe(true);
     if (r.ok) expect(r.payload.verdict).toBe(v);
