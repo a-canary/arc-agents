@@ -51,3 +51,36 @@ test("selection: prds always, tasks only when review-stale >48h", () => {
   const ids = (db.query(SELECT_SQL).all("<!-- gate-triage -->") as Array<{ id: string }>).map((r) => r.id).sort();
   expect(ids).toEqual(["p1", "t-old"]);
 });
+
+import { hasSalvageableCommits } from "./gate-triage";
+
+test("hasSalvageableCommits: true only when a progress event logged commits", () => {
+  const db = new Database(":memory:");
+  db.run("create table issue_events (seq integer primary key, issue_id text, ts integer, agent text, kind text, payload_md text)");
+  const ins = db.query("insert into issue_events (issue_id, ts, agent, kind, payload_md) values (?,?,?,?,?)");
+  ins.run("t-work", 1, "cli", "progress", "→ review\n\nheadless reconcile: exited 1 with 2 commit(s) on worker/t-work");
+  ins.run("t-empty", 1, "cli", "progress", "→ review\n\nno work produced");
+  ins.run("t-other", 1, "bookie", "diff_review", "mentions commit(s) but wrong kind");
+  expect(hasSalvageableCommits(db, "t-work")).toBe(true);
+  expect(hasSalvageableCommits(db, "t-empty")).toBe(false);
+  expect(hasSalvageableCommits(db, "t-other")).toBe(false);
+  expect(hasSalvageableCommits(db, "t-missing")).toBe(false);
+});
+
+test("merge-review feedback ids use the full task id (24-char prefixes collide)", () => {
+  const db = new Database(":memory:");
+  db.run(
+    "create table feedback (id text primary key, project text, source text, submitter text, state text, body_md text, created_at text)",
+  );
+  const ids = [
+    "arc-webui-dashboard-show-counters-a",
+    "arc-webui-dashboard-show-counters-b", // same first 24 chars
+  ];
+  for (const id of ids) {
+    db.query(
+      "insert or ignore into feedback (id, project, source, submitter, state, body_md, created_at) values (?, 'allmissions', 'gate-triage', 'gate-triage', 'OPEN', ?, '2026-07-11T00:00:00Z')",
+    ).run(`gt-merge-review-${id}`, id);
+  }
+  const n = db.query("select count(*) as n from feedback").get() as { n: number };
+  expect(n.n).toBe(2);
+});
