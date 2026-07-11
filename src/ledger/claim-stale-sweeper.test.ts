@@ -176,3 +176,98 @@ test("non-arctest claim under 2hr threshold is not reset even if older than 5min
   const r = sweepStaleClaims(db, { now });
   expect(r.reset).toBe(0);
 });
+
+test("cooldown: row with 11 sweeper reclaim events in trailing 1h is NOT reset (orphan path)", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  // 1hr-old stale claim (well past 2hr threshold? no — adjust to > 2hr so it
+  // would otherwise be eligible for reset)
+  ins(db, "runaway", "claimed", now - 7201, "arc-worker-z");
+  // Pre-seed 11 reclaimed events from the sweeper in the last hour.
+  for (let i = 0; i < 11; i++) {
+    db.run(
+      `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts) VALUES (?, 'reclaimed', 'claim-stale-sweeper', 'seed', ?)`,
+      ["runaway", now - 60],
+    );
+  }
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(0);
+  expect(r.ids).toEqual([]);
+  expect(r.cooldownExcluded).toEqual(["runaway"]);
+  // The row's claimed state must be UNCHANGED.
+  const row = db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='runaway'").get();
+  expect(row?.state).toBe("claimed");
+});
+
+test("cooldown: row with 9 sweeper reclaim events in trailing 1h IS reset (under threshold)", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "warm", "claimed", now - 7201, "arc-worker-y");
+  for (let i = 0; i < 9; i++) {
+    db.run(
+      `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts) VALUES (?, 'reclaimed', 'claim-stale-sweeper', 'seed', ?)`,
+      ["warm", now - 60],
+    );
+  }
+  const r = sweepStaleClaims(db, { now });
+  expect(r.reset).toBe(1);
+  expect(r.ids).toEqual(["warm"]);
+  expect(r.cooldownExcluded).toEqual([]);
+});
+
+test("cooldown: first skip emits kind=note audit event; second skip in same window does not", () => {
+  const db = setup();
+  const now = 1_000_000_000;
+  ins(db, "noisy", "claimed", now - 7201, "arc-worker-n");
+  for (let i = 0; i < 11; i++) {
+    db.run(
+      `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts) VALUES (?, 'reclaimed', 'claim-stale-sweeper', 'seed', ?)`,
+      ["noisy", now - 60],
+    );
+  }
+  sweepStaleClaims(db, { now });
+  const notes = db
+    .query<{ payload_md: string }, []>(
+      `SELECT payload_md FROM issue_events WHERE issue_id='noisy' AND kind='note' AND agent='claim-stale-sweeper'`,
+    )
+    .all();
+  expect(notes.length).toBe(1);
+  expect(notes[0]!.payload_md).toMatch(/sweeper cooldown/);
+  expect(notes[0]!.payload_md).toContain("11 reclaims");
+
+  // Second sweep in the same window: cooldown still applies, but no new note.
+  // Add 12th reclaim event so we're back at 12 → still in cooldown.
+  db.run(
+    `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts) VALUES (?, 'reclaimed', 'claim-stale-sweeper', 'seed', ?)`,
+    ["noisy", now - 30],
+  );
+  sweepStaleClaims(db, { now: now + 10 });
+  const notes2 = db
+    .query<{ payload_md: string }, []>(
+      `SELECT payload_md FROM issue_events WHERE issue_id='noisy' AND kind='note' AND agent='claim-stale-sweeper'`,
+    )
+    .all();
+  expect(notes2.length).toBe(1);
+});
+
+test("cooldown: ARC_SWEEPER_COOLDOWN_MAX env knob tunes threshold", () => {
+  const prev = process.env.ARC_SWEEPER_COOLDOWN_MAX;
+  process.env.ARC_SWEEPER_COOLDOWN_MAX = "3";
+  try {
+    const db = setup();
+    const now = 1_000_000_000;
+    ins(db, "low-thresh", "claimed", now - 7201, "arc-worker-l");
+    for (let i = 0; i < 3; i++) {
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts) VALUES (?, 'reclaimed', 'claim-stale-sweeper', 'seed', ?)`,
+        ["low-thresh", now - 60],
+      );
+    }
+    const r = sweepStaleClaims(db, { now });
+    expect(r.reset).toBe(0);
+    expect(r.cooldownExcluded).toEqual(["low-thresh"]);
+  } finally {
+    if (prev === undefined) delete process.env.ARC_SWEEPER_COOLDOWN_MAX;
+    else process.env.ARC_SWEEPER_COOLDOWN_MAX = prev;
+  }
+});

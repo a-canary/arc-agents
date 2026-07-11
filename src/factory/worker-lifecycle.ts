@@ -23,6 +23,21 @@ import { runLedgerJson } from "../ledger/cli-invoke";
 export const REPO = dirname(dirname(dirname(fileURLToPath(import.meta.url))));
 export const SHELL = join(REPO, "bin", "worker-shell.sh");
 
+// Sweeper cooldown: skip rows where the trailing-window count of sweeper
+// reclaim events hits the threshold. Live-tunable via env; defaults mirror
+// docs/decisions/claim-stale-sweeper-cooldown.md. Read lazily so the test
+// suite (and live retunes without process restart) see current env.
+function readCooldownMax(): number {
+  return parseInt(process.env.ARC_SWEEPER_COOLDOWN_MAX ?? "10", 10);
+}
+function readCooldownWindowSec(): number {
+  return parseInt(process.env.ARC_SWEEPER_COOLDOWN_WINDOW_SEC ?? "3600", 10);
+}
+// Frozen-at-load defaults for backward compat: callers that previously read
+// SWEEPER_COOLDOWN_MAX at import time still get a sane number.
+export const SWEEPER_COOLDOWN_MAX = readCooldownMax();
+export const SWEEPER_COOLDOWN_WINDOW_SEC = readCooldownWindowSec();
+
 // Legacy ARC_WORKER_MAX collapses both pools into one general bucket.
 const LEGACY_MAX = process.env.ARC_WORKER_MAX ? parseInt(process.env.ARC_WORKER_MAX, 10) : null;
 export const SLOTS_ANY = LEGACY_MAX ?? parseInt(process.env.ARC_SLOTS_ANY ?? "4", 10);
@@ -95,18 +110,73 @@ export function reapExited(): string[] {
 //
 // Guarded by PREFIX so we never touch claims from other factories sharing the
 // ledger (e.g. arc-worker vs arctest-* runs).
+//
+// Cooldown (B per docs/decisions/claim-stale-sweeper-cooldown.md): a row that
+// has been reclaimed by this sweeper SWEEPER_COOLDOWN_MAX+ times in the
+// trailing SWEEPER_COOLDOWN_WINDOW_SEC window is excluded — runaway rows burn
+// the same 6s/cycle CPU. The exclusion is auditable: first skip per window
+// per row writes a kind='note' event.
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
-export function reapOrphanClaims(db: any): string[] {
+export function reapOrphanClaims(
+  db: any,
+  opts: { cooldownMax?: number; cooldownWindowSec?: number; now?: number } = {},
+): { ids: string[]; cooldownExcluded: string[] } {
+  const cooldownMax = opts.cooldownMax ?? readCooldownMax();
+  const cooldownWindowSec = opts.cooldownWindowSec ?? readCooldownWindowSec();
+  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const cooldownCutoff = now - cooldownWindowSec;
   const live = new Set(listWorkers().map((s) => s.name));
-  const rows = db
+  const candidates = db
     .query(
       `SELECT id, claimed_by FROM issues WHERE state='claimed' AND claimed_by LIKE ?`,
     )
     .all(`${PREFIX}-%`) as { id: string; claimed_by: string }[];
-  const orphaned = rows.filter((r) => !live.has(r.claimed_by));
-  if (orphaned.length === 0) return [];
+  const orphanedRaw = candidates.filter((r) => !live.has(r.claimed_by));
+  if (orphanedRaw.length === 0) return { ids: [], cooldownExcluded: [] };
+
+  // Mirror the sweepStaleClaims cooldown subquery. Param order must match
+  // placeholder order: cooldownCutoff (ts>=) → ids (IN list) → cooldownMax
+  // (HAVING threshold).
+  const cooldownParams: (number | string)[] = [cooldownCutoff];
+  for (const r of orphanedRaw) cooldownParams.push(r.id);
+  cooldownParams.push(cooldownMax);
+  const cooldownHits = db
+    .query(
+      `SELECT issue_id, COUNT(*) AS n
+         FROM issue_events
+        WHERE kind='reclaimed' AND agent='claim-stale-sweeper' AND ts >= ?
+              AND issue_id IN (${
+                orphanedRaw.length === 0 ? "SELECT '' WHERE 0" : orphanedRaw.map(() => "?").join(",")
+              })
+        GROUP BY issue_id
+       HAVING COUNT(*) >= ?`,
+    )
+    .all(...(cooldownParams as (number | string)[])) as { issue_id: string; n: number }[];
+  const inCooldown = new Set(cooldownHits.map((c) => c.issue_id));
+  const cooldownExcluded = cooldownHits.map((c) => c.issue_id);
+  const orphaned = orphanedRaw.filter((r) => !inCooldown.has(r.id));
+  if (orphaned.length === 0 && cooldownHits.length === 0) {
+    return { ids: [], cooldownExcluded };
+  }
+
   const ids: string[] = [];
   db.transaction(() => {
+    // First-skip-per-window note (auditable exclusion).
+    for (const c of cooldownHits) {
+      const prior = db
+        .query(
+          `SELECT COUNT(*) AS n FROM issue_events
+            WHERE issue_id=? AND kind='note' AND agent='claim-stale-sweeper'
+              AND ts >= ?`,
+        )
+        .get(c.issue_id, cooldownCutoff) as { n: number } | undefined;
+      if ((prior?.n ?? 0) === 0) {
+        db.run(
+          `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'claim-stale-sweeper', ?)`,
+          [c.issue_id, `sweeper cooldown: row ${c.issue_id} excluded (${c.n} reclaims in last ${cooldownWindowSec}s)`],
+        );
+      }
+    }
     for (const r of orphaned) {
       db.run(
         `UPDATE issues SET state='ready', claimed_by=NULL, claimed_at=NULL, updated_at=strftime('%s','now') WHERE id=?`,
@@ -119,7 +189,7 @@ export function reapOrphanClaims(db: any): string[] {
       ids.push(r.id);
     }
   })();
-  return ids;
+  return { ids, cooldownExcluded };
 }
 
 // triageUnset: fill pool/agent sentinels (*_unset) on ready rows so they become
