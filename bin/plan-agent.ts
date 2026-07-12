@@ -21,6 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
+import { PROJECT_REPO_MAP } from "../src/project-repo-map";
 
 // A candidate mission objective the planner may propose alongside the PRD (M-0010).
 // goal is the only required field; metric/gate are optional. provenance is DELIBERATELY
@@ -285,7 +286,8 @@ export function listExistingPrdIds(project: string): string[] {
 export function resolveProjectRepo(project: string): string | null {
   const override = process.env[`ARC_PROJECT_REPO_${project.toUpperCase().replace(/-/g, "_")}`];
   if (override) return override;
-  const repo = join(import.meta.dir, "..", "..", project);
+  const repoDir = PROJECT_REPO_MAP[project] ?? project;
+  const repo = join(import.meta.dir, "..", "..", repoDir);
   return existsSync(repo) ? repo : null;
 }
 

@@ -9,6 +9,9 @@
 # subagent. Reads stay direct. See .claude/agents/bookie.md.
 set -euo pipefail
 
+# shellcheck source=../src/project-repo-map.sh
+source "$(dirname "${BASH_SOURCE[0]}")/../src/project-repo-map.sh"
+
 # Headless reconcile decision (pure: stdin args → "review"|"failed" on stdout).
 # Extracted so it can be unit-tested by sourcing this script with
 # ARC_WORKER_SHELL_SOURCE_ONLY=1 (which returns before any claim/exec).
@@ -127,15 +130,14 @@ resolve_repo() {
     return
   fi
 
-  # Hardcoded project → repo mappings (hygiene: keep synced with task brief).
-  # cli-proxy: /home/aaron/repos/cli-proxy
-  # expert-horde: /home/aaron/repos/expert-horde
-  # starlight: /home/aaron/repos/expert-horde  (same checkout, different project name)
-  case "$project" in
-    cli-proxy)     echo "${HOME}/repos/cli-proxy";     return ;;
-    expert-horde)  echo "${HOME}/repos/expert-horde";  return ;;
-    starlight)     echo "${HOME}/repos/expert-horde";  return ;;
-  esac
+  # Shared project -> repo-dir-name map (src/project-repo-map.sh), for
+  # projects whose repo dir name differs from the project name.
+  local mapped
+  mapped="$(project_repo_map_lookup "$project")"
+  if [ -n "$mapped" ]; then
+    echo "${HOME}/repos/${mapped}"
+    return
+  fi
 
   echo "${HOME}/repos/${project}"
 }
