@@ -344,3 +344,41 @@ test("ensure_claude_afk_on_path is a no-op (rc 0) when claude-afk is nowhere to 
     rmSync(home, { recursive: true, force: true });
   }
 });
+
+// ---- extract_project_field / extract_parent_id_field ----------------------
+//
+// A row's project field being empty made worker-shell fall back to the
+// script's own repo (arc-agents) even when the row belongs to a different
+// project — e.g. a hygiene row filed against an arc-webui PRD. The caller
+// loop (bin/worker-shell.sh, after the claim) walks parent_id via these two
+// pure extractors until it finds a non-empty project or runs out of
+// ancestors. Tested here in isolation since the loop itself calls the real
+// ledger and isn't unit-testable without one.
+
+function callExtract(fn: "extract_project_field" | "extract_parent_id_field", json: string): string {
+  const r = spawnSync(
+    "bash",
+    ["-c", `source "$0" && ${fn} "$1"`, SCRIPT, json],
+    { encoding: "utf8", env: { ...process.env, ARC_WORKER_SHELL_SOURCE_ONLY: "1" } },
+  );
+  return (r.stdout ?? "").trim();
+}
+
+test("extract_project_field reads the project value out of a ledger show blob", () => {
+  const json = `{"issue":{"id":"x","project":"arc-webui","parent_id":null}}`;
+  expect(callExtract("extract_project_field", json)).toBe("arc-webui");
+});
+
+test("extract_project_field returns empty for a blob with no project (or empty project)", () => {
+  expect(callExtract("extract_project_field", `{"issue":{"id":"x","project":"","parent_id":"p1"}}`)).toBe("");
+  expect(callExtract("extract_project_field", `{"issue":{"id":"x","parent_id":"p1"}}`)).toBe("");
+});
+
+test("extract_parent_id_field reads the parent_id value out of a ledger show blob", () => {
+  const json = `{"issue":{"id":"x","project":"","parent_id":"prd-123"}}`;
+  expect(callExtract("extract_parent_id_field", json)).toBe("prd-123");
+});
+
+test("extract_parent_id_field returns empty when parent_id is null/absent", () => {
+  expect(callExtract("extract_parent_id_field", `{"issue":{"id":"x","project":"","parent_id":null}}`)).toBe("");
+});
