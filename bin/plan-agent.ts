@@ -283,6 +283,7 @@ export function listExistingPrdIds(project: string): string[] {
 
 // Refuse to mint an issue whose project has no repo checkout — mirrors worker-shell.sh's
 // resolve_repo()/ARC_PROJECT_REPO_<UPPER> convention so a minted issue is always claimable.
+// Precedence: env override > shared project-repo-map.json entry > implicit ~/repos/<project>.
 export function resolveProjectRepo(project: string): string | null {
   const override = process.env[`ARC_PROJECT_REPO_${project.toUpperCase().replace(/-/g, "_")}`];
   if (override) return override;

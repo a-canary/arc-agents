@@ -93,6 +93,13 @@ test("resolve_repo shared map: env override still wins for mapped projects", () 
   expect(r.out).toBe("/override/expert-horde");
 });
 
+test("resolve_repo (via shared map): local-models is parked with no repo → empty", () => {
+  // local-models has no "repo" key in the map — unroutable by design.
+  const r = callResolveRepo("local-models");
+  expect(r.rc).toBe(0);
+  expect(r.out).toBe("");
+});
+
 // ---- Env override: ARC_PROJECT_REPO_<UPPER> -------------------------------
 
 test("ARC_PROJECT_REPO_CLI_PROXY env override beats the ~/repos default", () => {
@@ -381,4 +388,49 @@ test("extract_parent_id_field reads the parent_id value out of a ledger show blo
 
 test("extract_parent_id_field returns empty when parent_id is null/absent", () => {
   expect(callExtract("extract_parent_id_field", `{"issue":{"id":"x","project":"","parent_id":null}}`)).toBe("");
+});
+
+// ---- Parked-lane spend gate: is_parked_project / refuse_gpu_without_spend_gate
+
+function callParked(fn: "is_parked_project", project: string): { rc: number } {
+  const r = spawnSync(
+    "bash",
+    ["-c", `source "$0" && ${fn} "$1"`, SCRIPT, project],
+    { encoding: "utf8", env: { ...process.env, ARC_WORKER_SHELL_SOURCE_ONLY: "1" } },
+  );
+  return { rc: r.status ?? 1 };
+}
+
+function callRefuseGpu(project: string, rowJson: string): { rc: number; err: string } {
+  const r = spawnSync(
+    "bash",
+    ["-c", `source "$0" && refuse_gpu_without_spend_gate "$1" "$2"`, SCRIPT, project, rowJson],
+    { encoding: "utf8", env: { ...process.env, ARC_WORKER_SHELL_SOURCE_ONLY: "1" } },
+  );
+  return { rc: r.status ?? 1, err: r.stderr ?? "" };
+}
+
+test("is_parked_project: true for starlight-slm and local-models", () => {
+  expect(callParked("is_parked_project", "starlight-slm").rc).toBe(0);
+  expect(callParked("is_parked_project", "local-models").rc).toBe(0);
+});
+
+test("is_parked_project: false for a non-parked project", () => {
+  expect(callParked("is_parked_project", "cli-proxy").rc).not.toBe(0);
+});
+
+test("refuse_gpu_without_spend_gate: refuses a parked project without hitl=1", () => {
+  const r = callRefuseGpu("starlight-slm", `{"issue":{"id":"x","hitl":0}}`);
+  expect(r.rc).not.toBe(0);
+  expect(r.err).toContain("refusing GPU/vast-spend tool");
+});
+
+test("refuse_gpu_without_spend_gate: allows a parked project carrying hitl=1", () => {
+  const r = callRefuseGpu("starlight-slm", `{"issue":{"id":"x","hitl":1}}`);
+  expect(r.rc).toBe(0);
+});
+
+test("refuse_gpu_without_spend_gate: no-ops (always allows) for a non-parked project", () => {
+  const r = callRefuseGpu("cli-proxy", `{"issue":{"id":"x","hitl":0}}`);
+  expect(r.rc).toBe(0);
 });

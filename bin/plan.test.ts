@@ -204,3 +204,25 @@ describe("plan.ts — pairwise PRD relationships (parent PRD #18, migration 028)
     expect(r.err.toLowerCase()).toMatch(/prd_relationships/);
   });
 });
+
+describe("plan.ts — parked-lane spend gate (starlight-slm / local-models)", () => {
+  it("tracers for a parked project carry hitl=1 (stays out of the AFK worker pool)", () => {
+    const { tracerIds } = JSON.parse(
+      run(PLAN, [
+        "--project", "starlight-slm", "--title", "Train run", "--body", "b",
+        "--tracer", "s1",
+      ]).out.trim(),
+    );
+    expect(show(tracerIds[0]).hitl).toBe(1);
+  });
+
+  it("tracers for a non-parked project default to hitl=0", () => {
+    const { tracerIds } = JSON.parse(
+      run(PLAN, [
+        "--project", "arc-webui", "--title", "Normal slice", "--body", "b",
+        "--tracer", "s1",
+      ]).out.trim(),
+    );
+    expect(show(tracerIds[0]).hitl).toBe(0);
+  });
+});

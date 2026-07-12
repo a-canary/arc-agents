@@ -9,3 +9,12 @@ export const PROJECT_REPO_MAP: Record<string, string> = {
   starlight: "expert-horde",
   "starlight-slm": "starlight-slm",
 };
+
+// Projects on a GPU/vast-spend lane — tasks minted for these must never
+// auto-authorize spend. Consumed by plan-agent (forces hitl=1 on mint) and
+// worker-shell.sh (refuses GPU tool invocation without the hitl=1 marker).
+export const PARKED_PROJECTS = new Set<string>(["starlight-slm", "local-models"]);
+
+export function isParkedProject(project: string): boolean {
+  return PARKED_PROJECTS.has(project);
+}

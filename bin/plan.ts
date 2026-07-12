@@ -20,6 +20,7 @@
 import { spawnSync } from "node:child_process";
 import { Database } from "bun:sqlite";
 import { LEDGER_BIN, dbFlag } from "../src/ledger/cli-invoke";
+import { isParkedProject } from "../src/project-repo-map";
 
 const DB_FLAG = dbFlag();
 const args = process.argv.slice(2);
@@ -97,14 +98,20 @@ ledger("update", [prdId, "--state", "review"]);
 
 // 2. one tracer-bullet task per slice, each blocked on the PRD so it stays out
 //    of the worker pool until the human approves at the gate.
-const tracerIds = tracers.map((t) =>
-  ledger("create", [
+// Parked projects (GPU/vast spend, e.g. starlight-slm) never get an auto-claimable
+// task: force hitl=1 so src/ledger/claim.ts's `WHERE hitl=0` filter keeps it out of
+// the AFK worker pool until a human clears it — the spend gate.
+const parked = isParkedProject(project);
+const tracerIds = tracers.map((t) => {
+  const id = ledger("create", [
     "--kind", "task", "--type", "mvp", "--project", project,
     "--title", t, "--blocked-by", JSON.stringify([prdId]),
     "--agent", "developer", "--tier", "mvp", "--pool", "build",
     "--source-module", "plan",
-  ]).id as string,
-);
+  ]).id as string;
+  if (parked) ledger("update", [id, "--hitl", "1"]);
+  return id;
+});
 
 // 3. pairwise relationships — insert transactionally. We open the same DB the
 //    ledger CLI wrote to (ARC_LEDGER_DB env override, or ~/vault/ledger.db)

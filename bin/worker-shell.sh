@@ -139,8 +139,17 @@ resolve_repo() {
     return
   fi
 
+  # A parked project (GPU/vast-spend lane) with no explicit map entry has no
+  # known repo checkout — refuse to guess a default rather than route it.
+  if is_parked_project "$project"; then
+    return
+  fi
+
   echo "${HOME}/repos/${project}"
 }
+
+# is_parked_project / refuse_gpu_without_spend_gate are defined in the
+# sourced src/project-repo-map.sh.
 
 # Extract the `project` field from a `ledger show` JSON blob (stdin/$1).
 # Pure string helper so the parent-walk loop below is unit-testable without
@@ -345,6 +354,19 @@ for _ in 1 2 3 4 5; do
   [ -n "$PROJECT" ] && break
   LOOKUP_ID="$(extract_parent_id_field "$SHOW_JSON")"
 done
+
+# Spend gate: a parked project (GPU/vast-spend lane) whose claimed row lacks
+# the hitl=1 marker must never boot an interactive agent that could invoke
+# GPU/vast-spend tools. Belt-and-suspenders -- claim.ts's WHERE hitl=0 filter
+# already keeps parked+hitl=1 rows out of auto-claim -- this only fires if
+# hitl was cleared after claim.
+if ! refuse_gpu_without_spend_gate "$PROJECT" "$SHOW_JSON"; then
+  bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state blocked \
+    --evidence "worker-shell: refused to boot -- project '$PROJECT' is parked and claimed row lacks spend-gate (hitl=1) marker." \
+    >/dev/null 2>&1 || true
+  exit 1
+fi
+
 WT_REPO="$(resolve_repo "$PROJECT")"
 
 # Isolate into a per-task worktree BEFORE the agent boots, so every worker
