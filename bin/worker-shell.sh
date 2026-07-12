@@ -363,6 +363,12 @@ if [ ! -d "$WT_REPO" ]; then
   _ov_var="ARC_PROJECT_REPO_$(echo "${PROJECT:-}" | tr '[:lower:]-' '[:upper:]_')"
   echo "worker-shell: project repo not found: '$WT_REPO'" >&2
   echo "  clone it there, or set ${_ov_var}=/path/to/repo to point at an existing checkout." >&2
+  # Never exit holding the claim — block the row and clear claimed_by so it doesn't
+  # thrash the ready queue on every factory respawn. Bootstrap write, same
+  # pre-agent exception as the claim above.
+  bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state blocked \
+    --evidence "worker-shell: project '$PROJECT' has no repo mapping ('$WT_REPO' not found). Set ${_ov_var}=/path/to/repo or retag the project." \
+    >/dev/null 2>&1 || true
   exit 1
 fi
 REPO_NAME="$(basename "$WT_REPO")"
