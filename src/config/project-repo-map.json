@@ -1,0 +1,7 @@
+{
+  "cli-proxy": { "repo": "~/repos/cli-proxy" },
+  "expert-horde": { "repo": "~/repos/expert-horde" },
+  "starlight": { "repo": "~/repos/expert-horde" },
+  "starlight-slm": { "repo": "~/repos/starlight-slm", "parked": true },
+  "local-models": { "parked": true }
+}
