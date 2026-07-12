@@ -27,6 +27,8 @@ Plan the next increment. Decompose into N capability/cell children via `ledger d
 | **agent** | Code work → `developer`. Human gate → `chat`. Ops/infra → `admin`. |
 | **tier** | Child inherits sprint's tier by default. Escalate only if new risk class surfaces (e.g. security finding during a build → `trust`). |
 
+Every `--child` spec MUST carry a non-empty `body_md`: the slice's own description paragraph (what this increment does) plus the parent PRD's Acceptance / Testing Decisions section for that slice, concatenated. Do not decompose with a bare title or an empty body — the child must be executable by a worker who has never seen this thread. If you cannot produce a non-empty body for some child (the parent PRD lacks a matching slice/acceptance section), do not call `decompose` at all: ask bookie to emit a `note` event on the sprint naming which child is missing its body, then stop this cycle without decomposing (write the Step 5 handoff and tear down — do not flip to `blocked` with no children).
+
 Set the sprint's `blocked_by` to the child ids. Ask bookie to flip sprint to `blocked`.
 
 **Step 5 — Write re-entry handoff.**
