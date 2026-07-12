@@ -62,30 +62,30 @@ test("resolve_repo works for project=arc-agents (no regression for the script's 
   expect(r.out).toBe("/home/test/repos/arc-agents");
 });
 
-// ---- Hardcoded project → repo mappings (task brief) -----------------------
+// ---- Shared project -> repo-dir-name map (src/project-repo-map.sh) --------
 
-test("resolve_repo hardcoded: cli-proxy → ~/repos/cli-proxy", () => {
+test("resolve_repo default: cli-proxy → ~/repos/cli-proxy (not in shared map)", () => {
   const r = callResolveRepo("cli-proxy");
   expect(r.rc).toBe(0);
   expect(r.out).toBe("/home/test/repos/cli-proxy");
 });
 
-test("resolve_repo hardcoded: expert-horde → ~/repos/expert-horde", () => {
+test("resolve_repo default: expert-horde → ~/repos/expert-horde (not in shared map)", () => {
   const r = callResolveRepo("expert-horde");
   expect(r.rc).toBe(0);
   expect(r.out).toBe("/home/test/repos/expert-horde");
 });
 
-test("resolve_repo hardcoded: starlight → ~/repos/expert-horde", () => {
+test("resolve_repo shared map: starlight → ~/repos/expert-horde", () => {
   // starlight and expert-horde share the same checkout.
   const r = callResolveRepo("starlight");
   expect(r.rc).toBe(0);
   expect(r.out).toBe("/home/test/repos/expert-horde");
 });
 
-test("resolve_repo hardcoded: env override still wins for hardcoded projects", () => {
-  // Even a project with a hardcoded mapping must honour the env override
-  // so the factory can redirect without editing this script.
+test("resolve_repo shared map: env override still wins for mapped projects", () => {
+  // Even a project with a shared-map entry must honour the env override
+  // so the factory can redirect without editing the map.
   const r = callResolveRepo("expert-horde", {
     ARC_PROJECT_REPO_EXPERT_HORDE: "/override/expert-horde",
   });
