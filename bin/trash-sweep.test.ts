@@ -46,13 +46,20 @@ sweep_after: 20260501
 reason: dead
 `;
 
+// ponytail: sweep_after must stay ahead of wall-clock or this fixture rots.
+const FUTURE_SWEEP_AFTER = (() => {
+  const d = new Date();
+  d.setUTCFullYear(d.getUTCFullYear() + 5);
+  return `${d.getUTCFullYear()}${String(d.getUTCMonth() + 1).padStart(2, "0")}${String(d.getUTCDate()).padStart(2, "0")}`;
+})();
+
 const TTL_FUTURE = `retired_at: 2026-06-01T00:00:00Z
 retired_by: a-canary
 origin_path: baz/qux.ts
 origin_repo: arc-agents
 origin_sha: def5678
 ledger_row: hygiene-baz
-sweep_after: 20260701
+sweep_after: ${FUTURE_SWEEP_AFTER}
 reason: wip
 `;
 
