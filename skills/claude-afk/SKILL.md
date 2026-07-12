@@ -23,9 +23,10 @@ claude-afk <prompt>                              # positional, required
   [--out <path>]                                 # default: mktemp
   [--timeout <seconds>]                          # default: 1800
   [--session-prefix <str>]                       # default: "afk"
+  [--model <name>]                               # passed through to claude -p
 ```
 
-Behavior: mints a tmux session, writes a hermetic settings file with a Stop hook that emits JSON, spawns `tmux new-session -d` running `claude --settings <hermetic>` with the prompt, blocks until JSON appears or timeout fires, kills the tmux session, prints JSON to stdout. Exits 0 on success, nonzero on timeout / hook failure.
+Behavior: mints a tmux session, writes a hermetic settings file spawns `tmux new-session -d` running `claude -p` with the prompt (output teed into the JSON envelope), blocks until JSON appears or timeout fires, kills the tmux session, prints JSON to stdout. Exits 0 on success, nonzero on timeout / hook failure.
 
 Output JSON (matches `claude -p --output-format json` for drop-in):
 ```json
@@ -41,66 +42,60 @@ Pass a unique `--out` if invoking concurrently. The default `mktemp` already doe
 
 ## Mechanism
 
-Stop hooks receive JSON on stdin: `session_id`, `transcript_path`, `cwd`, `hook_event_name`, `stop_hook_active`. There is **no `last_assistant_message`** on Stop (that's SubagentStop) — extract from the transcript JSONL.
+`claude -p` (headless print mode) runs inside the tmux pane and writes its final
+text to a raw file; a trailing `jq` wraps it into the JSON envelope atomically
+(`.tmp` then `mv`) so the wrapper's poll never sees a partial file.
 
-### Stop hook (hermetic, written per invocation)
-
-```bash
-#!/usr/bin/env bash
-set -euo pipefail
-INPUT=$(cat)
-SESSION_ID=$(jq -r '.session_id' <<<"$INPUT")
-TRANSCRIPT=$(jq -r '.transcript_path' <<<"$INPUT")
-LAST=$(jq -s '[.[] | select(.message.role=="assistant")] | last
-              | .message.content
-              | map(select(.type=="text") | .text) | join("\n")' "$TRANSCRIPT")
-jq -n --argjson r "$LAST" --arg s "$SESSION_ID" \
-  '{result:$r, session_id:$s, exit_reason:"stop"}' \
-  > "$CLAUDE_AFK_OUT.tmp"
-mv "$CLAUDE_AFK_OUT.tmp" "$CLAUDE_AFK_OUT"
-```
-
-Atomic write (`.tmp` then `mv`) so the wrapper's poll never sees a partial file.
+History (2026-07-12 rewrite): the original design ran *interactive* `claude`
+with a hermetic Stop hook. Three faults killed it in production: (1) the
+SESSION random suffix used `tr </dev/urandom | head`, which takes SIGPIPE and
+returns rc=141 under `set -euo pipefail`; (2) interactive mode blocks forever
+on the trust-folder dialog inside a fresh tmux pane; (3) `--settings` does not
+suppress inherited hooks, and the transcript-parsing jq broke on non-array
+message content. Headless `-p` removes all three failure surfaces.
 
 ### Wrapper
 
 ```bash
 #!/usr/bin/env bash
+# claude-afk — observable headless claude via tmux (attach to watch: tmux attach -t afk-*).
+# 2026-07-12 rewrite: run `claude -p` instead of interactive+stop-hook. Fixes three
+# faults: (1) SESSION rand pipeline SIGPIPE rc=141 under pipefail, (2) interactive
+# mode blocks forever on the trust-folder dialog inside tmux, (3) stop-hook jq
+# transcript parse was fragile and --settings did not suppress inherited hooks.
 set -euo pipefail
 PROMPT=""; OUT=""; TIMEOUT=1800; SYS=""; PREFIX="afk"
 while [ $# -gt 0 ]; do
   case "$1" in
-    --out) OUT="$2"; shift 2 ;;
-    --timeout) TIMEOUT="$2"; shift 2 ;;
-    --system-prompt) SYS="$2"; shift 2 ;;
+    --out)        OUT="$2";       shift 2 ;;
+    --timeout)    TIMEOUT="$2";  shift 2 ;;
+    --system-prompt) SYS="$2";   shift 2 ;;
     --session-prefix) PREFIX="$2"; shift 2 ;;
-    *) PROMPT="$1"; shift ;;
+    --model)      MODEL="$2";    shift 2 ;;
+    -p|--thinking) [ "$1" = "--thinking" ] && shift; shift ;; # tolerated no-ops (alias compat)
+    *)            PROMPT="$1";    shift ;;
   esac
 done
-[ -z "$PROMPT" ] && { echo "usage: claude-afk <prompt> [flags]" >&2; exit 2; }
+[ -z "$PROMPT" ] && { echo "usage: claude-afk <prompt> [--model M] [--out F] [--timeout S] [--system-prompt S] [--session-prefix P]" >&2; exit 2; }
 
 OUT="${OUT:-$(mktemp -t claude-afk.XXXXXX.json)}"
-SETTINGS="$(mktemp -t claude-afk-settings.XXXXXX.json)"
-HOOK="$(mktemp -t claude-afk-hook.XXXXXX.sh)"
-SESSION="${PREFIX}-$(tr -dc a-z0-9 </dev/urandom | head -c8)"
+RAW="$(mktemp -t claude-afk-raw.XXXXXX.txt)"
+SESSION="${PREFIX}-$$-${RANDOM}"
 
-cp /path/to/claude-afk-stop-hook.sh "$HOOK"   # or inline as in skill
-chmod +x "$HOOK"
-
-jq -n --arg cmd "$HOOK" \
-  '{hooks:{Stop:[{matcher:"",hooks:[{type:"command",command:$cmd}]}]}}' \
-  > "$SETTINGS"
+tmux new-session -d -s "$SESSION" \
+  "claude -p ${MODEL:+--model $(printf '%q' "$MODEL")} \
+   ${SYS:+--append-system-prompt $(printf '%q' "$SYS")} \
+   $(printf '%q' "$PROMPT") > $(printf '%q' "$RAW") 2>&1; \
+   jq -n --rawfile r $(printf '%q' "$RAW") --arg rc \$? \
+     '{result:(\$r|rtrimstr(\"\n\")), session_id:\"\", exit_reason:(if \$rc==\"0\" then \"stop\" else \"error\" end)}' \
+     > $(printf '%q' "$OUT.tmp") && mv $(printf '%q' "$OUT.tmp") $(printf '%q' "$OUT")"
 
 START=$(date +%s%3N)
-tmux new-session -d -s "$SESSION" \
-  -e "CLAUDE_AFK_OUT=$OUT" \
-  "claude --settings '$SETTINGS' ${SYS:+--append-system-prompt \"$SYS\"} $(printf '%q' "$PROMPT")"
-
 DEADLINE=$(( $(date +%s) + TIMEOUT ))
 while [ ! -s "$OUT" ]; do
   if [ "$(date +%s)" -ge "$DEADLINE" ]; then
     tmux kill-session -t "$SESSION" 2>/dev/null || true
-    rm -f "$SETTINGS" "$HOOK"
+    rm -f "$RAW"
     jq -n --argjson d "$(( $(date +%s%3N) - START ))" \
       '{result:"", session_id:"", exit_reason:"timeout", duration_ms:$d}'
     exit 124
@@ -110,7 +105,7 @@ done
 
 tmux kill-session -t "$SESSION" 2>/dev/null || true
 jq --argjson d "$(( $(date +%s%3N) - START ))" '. + {duration_ms:$d}' "$OUT"
-rm -f "$SETTINGS" "$HOOK" "$OUT"
+rm -f "$RAW" "$OUT"
 ```
 
 Save as `~/.local/bin/claude-afk`, `chmod +x`. Replace `claude -p --output-format json` calls with `claude-afk`.
