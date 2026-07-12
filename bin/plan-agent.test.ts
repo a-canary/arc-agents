@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, buildFallbackPlan, ARCH_CONTEXT, groundingFor } from "./plan-agent";
+import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, buildFallbackPlan, ARCH_CONTEXT, groundingFor, resolveProjectRepo } from "./plan-agent";
 
 test("buildPlanningPrompt embeds request + context, asks for the json shape, avoids the hang trigger", () => {
   const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: arc-webui is server-rendered.");
@@ -92,6 +92,23 @@ test("groundingFor gives a neutral reversible-first context for an unknown proje
   const g = groundingFor("nonesuch-xyz-123");
   expect(g).toContain("nonesuch-xyz-123");
   expect(g.toLowerCase()).toContain("reversible");
+});
+
+test("resolveProjectRepo refuses an unroutable project like 'allmissions' (no sibling repo, no override)", () => {
+  delete process.env.ARC_PROJECT_REPO_ALLMISSIONS;
+  expect(resolveProjectRepo("allmissions")).toBeNull();
+});
+
+test("resolveProjectRepo maps a project whose repo dir exists via override", () => {
+  process.env.ARC_PROJECT_REPO_EXPERT_HORDE = import.meta.dir;
+  expect(resolveProjectRepo("expert-horde")).toBe(import.meta.dir);
+  delete process.env.ARC_PROJECT_REPO_EXPERT_HORDE;
+});
+
+test("resolveProjectRepo honors an ARC_PROJECT_REPO_<PROJECT> override for an unmapped project", () => {
+  process.env.ARC_PROJECT_REPO_ALLMISSIONS = "/tmp/some-repo";
+  expect(resolveProjectRepo("allmissions")).toBe("/tmp/some-repo");
+  delete process.env.ARC_PROJECT_REPO_ALLMISSIONS;
 });
 
 // --- slice B: planner-writes-inferred ---

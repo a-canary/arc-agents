@@ -280,12 +280,28 @@ export function listExistingPrdIds(project: string): string[] {
   }
 }
 
+// Refuse to mint an issue whose project has no repo checkout — mirrors worker-shell.sh's
+// resolve_repo()/ARC_PROJECT_REPO_<UPPER> convention so a minted issue is always claimable.
+export function resolveProjectRepo(project: string): string | null {
+  const override = process.env[`ARC_PROJECT_REPO_${project.toUpperCase().replace(/-/g, "_")}`];
+  if (override) return override;
+  const repo = join(import.meta.dir, "..", "..", project);
+  return existsSync(repo) ? repo : null;
+}
+
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);
   const request = (getFlag(argv, "request") ?? "").trim();
   if (!request) { process.stderr.write("plan-agent: --request is required\n"); process.exit(2); }
   const thread = getFlag(argv, "thread") ?? "t-" + Math.random().toString(36).slice(2, 10);
   const project = getFlag(argv, "project") ?? "arc-webui";
+  if (!resolveProjectRepo(project)) {
+    process.stderr.write(
+      `plan-agent: project '${project}' has no repo mapping — refusing to mint an unroutable issue. ` +
+        `Set ARC_PROJECT_REPO_${project.toUpperCase().replace(/-/g, "_")}=/path/to/repo or route feedback to a concrete project.\n`,
+    );
+    process.exit(1);
+  }
 
   // Existing PRD slugs — read once and fed to the prompt so the planner knows what
   // to classify against (pairwise relationships).
