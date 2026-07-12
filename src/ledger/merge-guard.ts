@@ -28,6 +28,11 @@ export const PROJECT_GH_REPO: Readonly<Record<string, string>> = {
   // Without this entry, the merge guard short-circuits (unknown project = skip),
   // letting wrong-repo PRs slip through. Verified 2026-06-30 from PR #19.
   conjecture: "a-canary/Conjecture",
+  // Local dir is `trading` (lowercase); github repo is `Trading` (capital T).
+  // Without this entry, the merge guard short-circuits (unknown project = skip),
+  // letting wrong-repo PRs slip through. Verified 2026-07-11 from PR #166
+  // (a-canary/Trading).
+  trading: "a-canary/Trading",
 };
 
 // Parses a pr_url into "owner/repo", accepting the github.com form

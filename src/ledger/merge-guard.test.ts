@@ -72,6 +72,19 @@ test("checkMergeGuard: refuses project=starlight-slm with pr_url pointing at a-c
   expect(refusal).toContain("a-canary/starlight-slm"); // actual (lowercase)
 });
 
+// local dir is `trading` (lowercase); github repo is `Trading` (capital T).
+// Verified 2026-07-11 from PR #166.
+test("checkMergeGuard: accepts project=trading with pr_url at a-canary/Trading (capital T)", () => {
+  expect(checkMergeGuard("trading", "https://github.com/a-canary/Trading/pull/166")).toBeNull();
+});
+
+test("checkMergeGuard: refuses project=trading with pr_url pointing at a-canary/trading (lowercase, the bug)", () => {
+  const refusal = checkMergeGuard("trading", "https://github.com/a-canary/trading/pull/166");
+  expect(refusal).not.toBeNull();
+  expect(refusal).toContain("a-canary/Trading"); // expected (capital)
+  expect(refusal).toContain("a-canary/trading"); // actual (lowercase)
+});
+
 test("checkMergeGuard: accepts all known project→repo mappings", () => {
   for (const [project, repo] of Object.entries(PROJECT_GH_REPO)) {
     const n = Math.floor(Math.random() * 1000) + 1;
