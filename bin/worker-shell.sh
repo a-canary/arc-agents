@@ -140,6 +140,18 @@ resolve_repo() {
   echo "${HOME}/repos/${project}"
 }
 
+# Extract the `project` field from a `ledger show` JSON blob (stdin/$1).
+# Pure string helper so the parent-walk loop below is unit-testable without
+# a live ledger.
+extract_project_field() {
+  echo "$1" | grep -oE '"project":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true
+}
+
+# Extract the `parent_id` field from a `ledger show` JSON blob ($1).
+extract_parent_id_field() {
+  echo "$1" | grep -oE '"parent_id":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true
+}
+
 # Prepend the dir holding a globally-installed `pi` to PATH if `pi` isn't
 # already resolvable. Used to survive the stripped PATH that systemd --user
 # services inherit (no ~/.npm-global/bin). Probes, in priority order:
@@ -317,10 +329,20 @@ fi
 # ARC_PROJECT_REPO_<UPPER> override). $REPO above stays pointed at
 # ~/repos/arc-agents/ — we still need the local bin/ledger.ts — so the
 # worktree parent is a NEW variable, WT_REPO, used only by the git worktree
-# commands and the user prompt. Empty/unset project falls back to $REPO
-# (the script's own location) for legacy rows.
-PROJECT="$(bun "$LEDGER_BIN" show "$CLAIM_ID" "${DB_FLAG[@]}" 2>/dev/null \
-  | grep -oE '"project":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+# commands and the user prompt. An empty project on the claimed row itself
+# walks up parent_id (hygiene rows are frequently filed against a PRD/parent
+# that DOES carry the project) before falling back to $REPO — a row with an
+# empty project and no ancestor with one is legacy and still routes to the
+# script's own location.
+PROJECT=""
+LOOKUP_ID="$CLAIM_ID"
+for _ in 1 2 3 4 5; do
+  [ -z "$LOOKUP_ID" ] && break
+  SHOW_JSON="$(bun "$LEDGER_BIN" show "$LOOKUP_ID" "${DB_FLAG[@]}" 2>/dev/null || true)"
+  PROJECT="$(extract_project_field "$SHOW_JSON")"
+  [ -n "$PROJECT" ] && break
+  LOOKUP_ID="$(extract_parent_id_field "$SHOW_JSON")"
+done
 WT_REPO="$(resolve_repo "$PROJECT")"
 
 # Isolate into a per-task worktree BEFORE the agent boots, so every worker
