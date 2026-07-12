@@ -365,6 +365,11 @@ if [ ! -d "$WT_DIR" ]; then
   fi
 fi
 cd "$WT_DIR"
+# Baseline HEAD at claim time — reused worktrees from a prior claim may sit
+# commits ahead of main already; reconcile must count only THIS run's
+# commits, not everything since main (else a stale reused worktree with 0 new
+# commits masks an empty/failed engine run as reviewable work).
+BASELINE_SHA="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo main)"
 # Record branch + worktree on the row so reapWorktrees() prunes both after the
 # task merges. Bootstrap write (pre-agent), same exception as the claim above;
 # all in-session writes still route through the bookie.
@@ -498,7 +503,7 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   # a non-zero exit (a crash after committing real work is salvageable) and stop
   # the failover chain. reconcile_decision (the unit-tested helper) returns
   # "review" iff there are commits; "failed" (no commits) means fall over.
-  COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count main..HEAD 2>/dev/null || echo 0)"
+  COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count "${BASELINE_SHA}..HEAD" 2>/dev/null || echo 0)"
   if [[ "$(reconcile_decision "$AGENT_RC" "$COMMITS_AHEAD")" == "review" ]]; then
     HEAD_SHA="$(git -C "$WT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
     EVIDENCE="headless reconcile: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
