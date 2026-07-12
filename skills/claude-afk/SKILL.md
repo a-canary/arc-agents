@@ -32,7 +32,7 @@ Output JSON (matches `claude -p --output-format json` for drop-in):
 ```json
 {
   "result": "<final assistant message>",
-  "session_id": "<claude session uuid>",
+  "session_id": "",   // always empty: claude -p exposes no session handle
   "exit_reason": "stop" | "timeout" | "error",
   "duration_ms": 12345
 }
