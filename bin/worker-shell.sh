@@ -546,9 +546,13 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   echo "worker-shell: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) produced no work (rc=${AGENT_RC}); trying next" >&2
 done
 
-# Every candidate exhausted with no commits and no self-report → failed. The row
-# leaves `claimed` with evidence and is NOT recycled.
-EVIDENCE="headless reconcile: all ${#CMD_CANDIDATES[@]} candidate engine(s) for alias '${ALIAS}' produced no work (last rc=${LAST_RC}); marked failed."
-bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state failed --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+# Every candidate exhausted with no commits and no self-report → this is an
+# engine-infrastructure outage, not a task defect (e.g. MiniMax billing lapse
+# starving every candidate for this alias). Mark `blocked` with a
+# machine-readable reason so the auto-recovery sweep can flip it back to
+# `ready` once the alias produces work again — `failed` stays reserved for
+# task-attributable errors.
+EVIDENCE="headless reconcile: all ${#CMD_CANDIDATES[@]} candidate engine(s) for alias '${ALIAS}' produced no work (last rc=${LAST_RC}); engine-alias-no-work:${ALIAS}"
+bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state blocked --evidence "$EVIDENCE" >/dev/null 2>&1 || true
 capture_scrollback_to_log "$WORKER" "$LOG_FILE"
 exit "$LAST_RC"
