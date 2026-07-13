@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
+import { routeProjectFromBody } from "../src/ledger/hygiene-project-route";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { parseDiffReviewPayload, checkReviewerIndependence } from "../src/ledger/diff-review";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
@@ -738,13 +739,23 @@ switch (cmd) {
     if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    // Resolve project: explicit --project wins; otherwise inherit the
-    // observed-in-task row's project (single source of truth — the worker
-    // is filing a followup for that specific task); otherwise default to
-    // 'arc-agents'. The cron caller (bin/hygiene-tick.ts) does not go
-    // through hygiene-emit (it inserts directly with the repo name), so
-    // this change only affects worker-emitted followups.
+    // Resolve project, in precedence order:
+    //   1. explicit --project (worker knows best)
+    //   2. file-path routing — if --body names a shared-source file
+    //      (bin/ledger.ts, src/ledger/*, …) it can only live in that file's
+    //      home repo, regardless of which task observed it. Beats observed-
+    //      task inheritance because the fix physically must land there
+    //      (improve-architecture-route-hygiene-emit-: arc-skills task, fix in
+    //      arc-agents src → row must be project=arc-agents or bookie's merge
+    //      guard refuses the PR as a repo mismatch).
+    //   3. inherit --observed-in-task row's project (the worker is filing a
+    //      followup for that specific task).
+    //   4. default 'arc-agents'.
+    // The cron caller (bin/hygiene-tick.ts) does not go through hygiene-emit
+    // (it inserts directly with the repo name), so this only affects
+    // worker-emitted followups.
     let project = explicitProject;
+    if (!project) project = routeProjectFromBody(body) ?? undefined;
     if (!project && observed) {
       const observedRow = db
         .query<{ project: string }, [string]>(`SELECT project FROM issues WHERE id=?`)
