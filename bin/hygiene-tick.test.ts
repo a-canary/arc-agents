@@ -67,6 +67,59 @@ test("first tick creates one cron task for the first repo in the list", async ()
   expect(rows[0]!.title).toContain("improve-codebase-architecture");
 });
 
+test("tick flips engine-alias-no-work rows before hygiene rotation", async () => {
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, evidence_md)
+     VALUES ('recover-me', 'arc-agents', 'recover', '', 'mvp', 'blocked', 'task', 'mvp', 'build', 'engine-alias-no-work:minimax-build')`,
+  );
+  db.close();
+
+  const r = await $`bun ${cli}`
+    .env({
+      ...process.env,
+      ARC_LEDGER_DB: dbPath,
+      ARC_HYGIENE_CONFIG: cfgPath,
+      ARC_RECOVERY_PROBE_RC: "0",
+      ARC_RECOVERY_PROBE_OUTPUT: "ok",
+    })
+    .quiet()
+    .nothrow();
+
+  expect(r.exitCode).toBe(0);
+  const checked = new Database(dbPath);
+  expect(checked.query<{ state: string }, []>("SELECT state FROM issues WHERE id='recover-me'").get()?.state).toBe("ready");
+  checked.close();
+});
+
+test("recovery failure does not stop hygiene rotation", async () => {
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, evidence_md)
+     VALUES ('starved', 'arc-agents', 'recover', '', 'mvp', 'blocked', 'task', 'mvp', 'build', 'engine-alias-no-work:minimax-build')`,
+  );
+  db.close();
+
+  // Probe returns rc=1 (starved). Sweep must not flip the row, hygiene must
+  // still rotate forward.
+  const r = await $`bun ${cli}`
+    .env({
+      ...process.env,
+      ARC_LEDGER_DB: dbPath,
+      ARC_HYGIENE_CONFIG: cfgPath,
+      ARC_RECOVERY_PROBE_RC: "1",
+      ARC_RECOVERY_PROBE_OUTPUT: "down",
+    })
+    .quiet()
+    .nothrow();
+  expect(r.exitCode).toBe(0);
+  const checked = new Database(dbPath);
+  expect(checked.query<{ state: string }, []>("SELECT state FROM issues WHERE id='starved'").get()?.state).toBe("blocked");
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("ke");
+  checked.close();
+});
+
 test("successive ticks rotate through the repo list", async () => {
   await tick();
   await tick();
