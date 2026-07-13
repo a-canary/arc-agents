@@ -92,12 +92,36 @@ test("checkMergeGuard: accepts all known project→repo mappings", () => {
   }
 });
 
-test("checkMergeGuard: short-circuits for unknown project, null project, unparseable pr_url", () => {
+test("checkMergeGuard: short-circuits for null/undefined project (legacy rows) and null pr_url (non-PR-route merge)", () => {
+  // Legacy rows written before `project` was populated — no canonical
+  // mapping to check against, so the guard cannot fire.
   expect(checkMergeGuard(null, "https://github.com/a-canary/arc-agents/pull/1")).toBeNull();
   expect(checkMergeGuard(undefined, "https://github.com/a-canary/arc-agents/pull/1")).toBeNull();
-  expect(checkMergeGuard("brand-new-project", "https://github.com/a-canary/brand-new-project/pull/1")).toBeNull();
+  // No pr_url at all → this is not a PR-route merge (in-place / local-sha
+  // routes carry their own verification); the guard has nothing to check.
   expect(checkMergeGuard("cli-proxy", null)).toBeNull();
-  expect(checkMergeGuard("cli-proxy", "not a url")).toBeNull();
+  expect(checkMergeGuard("cli-proxy", undefined)).toBeNull();
+});
+
+// Fail-closed slice (pr-and-local-sha-routes-verify-changed-f):
+// unknown project mapping is no longer an escape hatch. A non-null project
+// with no PROJECT_GH_REPO entry, merging via the PR route, refuses with
+// instructions to extend the map.
+test("checkMergeGuard: refuses unknown project on the PR route (was a short-circuit)", () => {
+  const refusal = checkMergeGuard("brand-new-project", "https://github.com/a-canary/brand-new-project/pull/1");
+  expect(refusal).not.toBeNull();
+  expect(refusal).toContain("brand-new-project"); // names the project
+  expect(refusal).toContain("PROJECT_GH_REPO"); // names the map to extend
+  expect(refusal).toContain("--in-place"); // valid escape for genuine cases
+});
+
+// Fail-closed slice: a present-but-unparseable pr_url on a known project
+// refuses rather than silently allowing the merge.
+test("checkMergeGuard: refuses present-but-unparseable pr_url on a known project (was a short-circuit)", () => {
+  const refusal = checkMergeGuard("cli-proxy", "not a url");
+  expect(refusal).not.toBeNull();
+  expect(refusal).toContain("not a url"); // echoes the bad value
+  expect(refusal).toContain("unparseable");
 });
 
 test("checkInPlaceGuard: refuses --in-place for non-owned project (conjecture)", () => {

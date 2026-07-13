@@ -7,11 +7,13 @@
 // a-canary/cli-proxy is missing all 7 deliverables).
 //
 // The mapping is explicit and small — extend PROJECT_GH_REPO when a
-// new project is onboarded. Unknown projects are not rejected here:
-// the row's project field is the source of truth and we have no
-// canonical mapping for it, so the guard short-circuits and the
-// merge proceeds (a missing entry is a documentation gap, not a
-// safety check failure).
+// new project is onboarded. On the PR merge route the guard now fails
+// CLOSED: an unknown project (non-null, no map entry) or a present-but-
+// unparseable pr_url refuses the merge rather than short-circuiting.
+// The only remaining short-circuits are structural: a null/undefined
+// project (legacy rows written before `project` was populated) and a
+// null pr_url (not a PR-route merge at all — in-place / local-sha
+// routes carry their own verification).
 
 export const PROJECT_GH_REPO: Readonly<Record<string, string>> = {
   "arc-agents": "a-canary/arc-agents",
@@ -62,18 +64,36 @@ export function parsePrRepo(prUrl: string | null | undefined): string | null {
 }
 
 // Returns null when the merge is allowed, or a human-readable refusal
-// string naming both the expected and actual repos when the guard
-// fires. project=null/undefined short-circuits (legacy rows from
-// before project was populated).
+// string when the guard fires. Fail-closed on the PR route:
+//   - project=null/undefined → short-circuit (legacy rows, no mapping)
+//   - pr_url=null/undefined  → short-circuit (not a PR-route merge)
+//   - unknown project + PR url → refuse (extend PROJECT_GH_REPO)
+//   - present-but-unparseable pr_url → refuse
+//   - repo mismatch → refuse (names expected + actual)
 export function checkMergeGuard(
   project: string | null | undefined,
   prUrl: string | null | undefined,
 ): string | null {
   if (!project) return null;
+  // No pr_url this invocation → not a PR-route merge; nothing to guard.
+  if (!prUrl) return null;
   const expected = PROJECT_GH_REPO[project];
-  if (!expected) return null; // unknown project — skip guard
+  if (!expected) {
+    return (
+      `refuse merged: row project='${project}' has no PROJECT_GH_REPO mapping, ` +
+      `so the PR route cannot verify pr_url='${prUrl}' targets the right repo. ` +
+      `Add '${project}' to PROJECT_GH_REPO in src/ledger/merge-guard.ts, ` +
+      `or use --in-place with --evidence if this is a genuine cross-project convention.`
+    );
+  }
   const actual = parsePrRepo(prUrl);
-  if (actual === null) return null; // unparseable pr_url — skip guard
+  if (actual === null) {
+    return (
+      `refuse merged: pr_url='${prUrl}' is unparseable (expected .../pull/<n>), ` +
+      `so the PR route cannot verify it targets ${expected}. ` +
+      `Fix pr_url to a full GitHub PR URL, or use --in-place with --evidence.`
+    );
+  }
   if (actual === expected) return null;
   return (
     `refuse merged: row project='${project}' expects PR at ${expected}, ` +

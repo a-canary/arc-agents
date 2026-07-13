@@ -1950,7 +1950,10 @@ test("update --state merged refused when --pr looks like a branch, not a URL/num
     }));
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--pr", "feat/foo", "--evidence", "x");
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr.toString()).toContain("does not look like a PR URL");
+    // merge-guard fails closed on an unparseable pr_url for a known project
+    // (arc-agents) before verifyMergeTruth runs — either refusal is a valid
+    // rejection of the branch-shaped --pr.
+    expect(r.stderr.toString()).toMatch(/does not look like a PR URL|unparseable/);
   } finally {
     cleanup();
   }
@@ -1969,6 +1972,36 @@ test("update --state merged refused for non-hex --local-merged-sha (strict)", as
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--local-merged-sha", "not-a-sha", "--evidence", "x");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toContain("not a hex sha");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged local-sha route uses row.branch as scope signal (strict)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const wtCwd = new URL("..", import.meta.url).pathname;
+    const sha = (await $`git rev-parse HEAD`.cwd(wtCwd).quiet()).stdout.toString().trim();
+    const branch = (await $`git rev-parse --abbrev-ref HEAD`.cwd(wtCwd).quiet()).stdout.toString().trim();
+    // Row branch == the worktree's current branch → HEAD sha is reachable
+    // from it, so the scoped local-sha route passes (branch-reachable arm).
+    // Exercises bin/ledger.ts threading cur.branch into verifyMergeTruth,
+    // not just the unit function (pr-and-local-sha-routes-verify-changed-f).
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x", "--branch", branch)) as { id: string };
+    await run(db, "event", c.id, "diff_review", JSON.stringify({
+      reviewer_identity: "stub-reviewer",
+      reviewed_sha: "abcdef1234567890",
+      verdict: "pass",
+    }));
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--local-merged-sha", sha, "--evidence", "branch-scoped landing");
+    if (r.exitCode !== 0) {
+      // Worktree may lack origin/main; skip rather than fail noisily.
+      if (r.stderr.toString().includes("origin/main")) return;
+      throw new Error(`unexpected: ${r.stderr.toString()}`);
+    }
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string } };
+    expect(shown.issue.state).toBe("merged");
   } finally {
     cleanup();
   }

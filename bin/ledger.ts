@@ -487,8 +487,8 @@ switch (cmd) {
     }
 
     if (state) {
-      const cur = db.query<{ state: string; pr_url: string | null }, [string]>(
-        "SELECT state, pr_url FROM issues WHERE id=?",
+      const cur = db.query<{ state: string; pr_url: string | null; branch: string | null }, [string]>(
+        "SELECT state, pr_url, branch FROM issues WHERE id=?",
       ).get(id);
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
@@ -554,7 +554,18 @@ switch (cmd) {
         // the merge-guard from a directory that isn't a git repo, git
         // exits 128, and the operator sees an empty trailing-colon
         // refusal message (analysis-1783937189 Pattern 1).
-        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, inPlace, run: defaultRunner(project) });
+        //
+        // Scope signal for changed-file overlap: no declared_paths column
+        // exists yet, so fall back to the row's branch (PR head branch must
+        // match, or local sha must be reachable from it). Legacy rows with a
+        // null branch keep state/ancestor-only verification.
+        const verdict = await verifyMergeTruth({
+          prUrl: effectivePr,
+          localSha,
+          inPlace,
+          branch: cur.branch,
+          run: defaultRunner(project),
+        });
         if (!verdict.ok) {
           db.run(
             `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,

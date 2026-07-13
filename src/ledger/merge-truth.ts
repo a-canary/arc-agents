@@ -30,6 +30,30 @@ export type Sleep = (ms: number) => Promise<void>;
 export const PR_RETRY_BACKOFF_MS: readonly number[] = [5000, 15000, 30000];
 const DEFAULT_SLEEP: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
+// A row's scope signal for changed-file overlap checks. declaredPaths is the
+// preferred signal (path prefixes/globs the task owns); branch is the
+// fallback (PR head branch == row branch, or sha reachable from row branch).
+// When neither is set, the route keeps legacy behaviour (state/ancestor only).
+export type ScopeSignal = { declaredPaths?: string[] | null; branch?: string | null };
+
+function hasScope(s: ScopeSignal): boolean {
+  return !!(s.declaredPaths && s.declaredPaths.length) || !!(s.branch && s.branch.trim());
+}
+
+// One changed file overlaps a declared path when the file starts with any
+// declared prefix (a trailing '/' means directory; a bare path matches the
+// file itself or as a prefix). Simple, deterministic, no glob engine.
+// ponytail: prefix match, upgrade to minimatch if declaredPaths ever carry globs.
+export function pathsOverlap(changed: string[], declared: string[]): boolean {
+  return changed.some((f) =>
+    declared.some((d) => {
+      const p = d.trim();
+      if (!p) return false;
+      return f === p || f.startsWith(p.endsWith("/") ? p : p + "/") || f.startsWith(p);
+    }),
+  );
+}
+
 const PR_NUMBER_RE = /(?:\/pull\/|^#?)(\d+)$/;
 // pattern: improve-architecture-verifyprmerged-runs
 
@@ -46,6 +70,7 @@ export function extractPrNumber(prUrlOrNum: string | null | undefined): number |
 export async function verifyPrMerged(
   prUrlOrNum: string | null | undefined,
   run: Runner,
+  scope: ScopeSignal = {},
   sleep: Sleep = DEFAULT_SLEEP,
 ): Promise<MergeTruthResult> {
   const num = extractPrNumber(prUrlOrNum);
@@ -60,9 +85,16 @@ export async function verifyPrMerged(
   // analysis-1780502957 Pattern 4). Bare #N or numeric input falls through
   // to cwd resolution; if your pr_url is bare, fix that upstream.
   const parsed = prUrlOrNum ? parsePrUrl(prUrlOrNum) : null;
+  const scoped = hasScope(scope);
+  // When the row has a scope signal we need head branch + changed files too,
+  // so query them in one gh call. Legacy (no-scope) rows keep the cheap
+  // state-only query for backward compat.
+  const jsonFields = scoped ? "state,headRefName,files" : "state";
+  const baseArgs = ["pr", "view", String(num)];
+  const tailArgs = scoped ? ["--json", jsonFields] : ["--json", "state", "-q", ".state"];
   const ghArgs = parsed
-    ? ["pr", "view", String(num), "--repo", `${parsed.owner}/${parsed.repo}`, "--json", "state", "-q", ".state"]
-    : ["pr", "view", String(num), "--json", "state", "-q", ".state"];
+    ? [...baseArgs, "--repo", `${parsed.owner}/${parsed.repo}`, ...tailArgs]
+    : [...baseArgs, ...tailArgs];
 
   // Bounded retry: gh can report stale CLOSED for ~30-90s after the actual
   // merge event while the API/GraphQL node catches up. We retry CLOSED
@@ -70,18 +102,31 @@ export async function verifyPrMerged(
   // OPEN or any other non-MERGED state refuses immediately (it's a real
   // non-merge signal, not a stale-cache symptom).
   let attempts = 0;
+  let headRefName = "";
+  let changedFiles: string[] = [];
   for (;;) {
     attempts++;
     const r = await run("gh", ghArgs);
     if (r.exitCode !== 0) {
       return { ok: false, reason: `gh pr view ${num} exited ${r.exitCode}: ${r.stdout.trim()}` };
     }
-    const state = r.stdout.trim();
-    if (state === "MERGED") {
-      return parsed
-        ? { ok: true, route: "pr", detail: `PR ${parsed.owner}/${parsed.repo}#${num} MERGED` }
-        : { ok: true, route: "pr", detail: `PR #${num} MERGED (cwd-resolved, no full URL supplied)` };
+
+    let state: string;
+    if (scoped) {
+      let doc: { state?: string; headRefName?: string; files?: Array<{ path: string }> };
+      try {
+        doc = JSON.parse(r.stdout.trim());
+      } catch {
+        return { ok: false, reason: `gh pr view ${num} returned unparseable JSON: ${r.stdout.trim().slice(0, 200)}` };
+      }
+      state = (doc.state ?? "").trim();
+      headRefName = (doc.headRefName ?? "").trim();
+      changedFiles = (doc.files ?? []).map((f) => f.path);
+    } else {
+      state = r.stdout.trim();
     }
+
+    if (state === "MERGED") break;
     // Only CLOSED is treated as transient; OPEN/anything else refuses
     // immediately. The retry budget is consumed only on CLOSED reads.
     if (state !== "CLOSED") {
@@ -102,31 +147,99 @@ export async function verifyPrMerged(
     }
     await sleep(backoff);
   }
+
+  const label = parsed ? `PR ${parsed.owner}/${parsed.repo}#${num} MERGED` : `PR #${num} MERGED (cwd-resolved, no full URL supplied)`;
+
+  if (scoped) {
+    const declared = scope.declaredPaths ?? [];
+    const branch = (scope.branch ?? "").trim();
+    const branchMatch = !!branch && headRefName === branch;
+    const fileOverlap = declared.length > 0 && pathsOverlap(changedFiles, declared);
+    if (!branchMatch && !fileOverlap) {
+      return {
+        ok: false,
+        reason:
+          `PR #${num} is MERGED but its changed files do not overlap the task's scope ` +
+          `(declaredPaths=${JSON.stringify(declared)}, branch='${branch}'; ` +
+          `PR head='${headRefName}', changed=${JSON.stringify(changedFiles.slice(0, 10))}). ` +
+          `Citing an unrelated merged PR fails closed — target a PR whose head branch matches the row's branch ` +
+          `or that touches the declared paths.`,
+      };
+    }
+    return { ok: true, route: "pr", detail: `${label} (${branchMatch ? "branch match" : "file overlap"})` };
+  }
+
+  return { ok: true, route: "pr", detail: label };
 }
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
 
-export async function verifyLocalMerged(sha: string, run: Runner): Promise<MergeTruthResult> {
+export async function verifyLocalMerged(
+  sha: string,
+  run: Runner,
+  scope: ScopeSignal = {},
+): Promise<MergeTruthResult> {
   if (!SHA_RE.test(sha)) {
     return { ok: false, reason: `--local-merged-sha '${sha}' is not a hex sha (7-40 chars).` };
   }
   const r = await run("git", ["merge-base", "--is-ancestor", sha, "origin/main"]);
-  if (r.exitCode === 0) return { ok: true, route: "local", detail: `sha ${sha} is on origin/main` };
   if (r.exitCode === 1) {
     return { ok: false, reason: `sha ${sha} is not an ancestor of origin/main. Push the commit (or merge it) before marking merged.` };
   }
-  return { ok: false, reason: `git merge-base exited ${r.exitCode}: ${r.stdout.trim()}` };
+  if (r.exitCode !== 0) {
+    return { ok: false, reason: `git merge-base exited ${r.exitCode}: ${r.stdout.trim()}` };
+  }
+
+  if (!hasScope(scope)) {
+    return { ok: true, route: "local", detail: `sha ${sha} is on origin/main` };
+  }
+
+  // Scope signal present: the sha must actually touch the task's paths, OR
+  // be reachable from the row's branch (branch merge-base). Quoting
+  // origin/main HEAD (which touches nothing task-specific) fails closed.
+  const declared = scope.declaredPaths ?? [];
+  const branch = (scope.branch ?? "").trim();
+
+  let fileOverlap = false;
+  if (declared.length > 0) {
+    const log = await run("git", ["log", "--format=", "-n1", "--name-only", sha]);
+    if (log.exitCode === 0) {
+      const changed = log.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+      fileOverlap = pathsOverlap(changed, declared);
+    }
+  }
+
+  let branchMatch = false;
+  if (!fileOverlap && branch) {
+    const b = await run("git", ["merge-base", "--is-ancestor", sha, branch]);
+    branchMatch = b.exitCode === 0;
+  }
+
+  if (!fileOverlap && !branchMatch) {
+    return {
+      ok: false,
+      reason:
+        `sha ${sha} is on origin/main but does not touch the task's scope ` +
+        `(declaredPaths=${JSON.stringify(declared)}, branch='${branch}'). ` +
+        `Quoting an origin/main-ancestor sha that changes nothing task-specific fails closed — ` +
+        `cite the sha that actually modifies (overlaps) the declared paths, or that is reachable from the row's branch.`,
+    };
+  }
+  return { ok: true, route: "local", detail: `sha ${sha} on origin/main (${fileOverlap ? "file overlap" : "branch reachable"})` };
 }
 
 export async function verifyMergeTruth(args: {
   prUrl: string | null | undefined;
   localSha: string | null | undefined;
   inPlace?: boolean;
+  declaredPaths?: string[] | null;
+  branch?: string | null;
   run: Runner;
   sleep?: Sleep;
 }): Promise<MergeTruthResult> {
-  if (args.localSha) return verifyLocalMerged(args.localSha, args.run);
-  if (args.prUrl) return verifyPrMerged(args.prUrl, args.run, args.sleep);
+  const scope: ScopeSignal = { declaredPaths: args.declaredPaths, branch: args.branch };
+  if (args.localSha) return verifyLocalMerged(args.localSha, args.run, scope);
+  if (args.prUrl) return verifyPrMerged(args.prUrl, args.run, scope, args.sleep);
   // Third route: explicit in-place acknowledgement. The CLI enforces a mutex
   // between --in-place and --pr (bin/ledger.ts `update` verb), so by the time
   // we reach this branch prUrl is guaranteed null. localSha and inPlace are

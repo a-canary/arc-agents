@@ -425,3 +425,119 @@ test("defaultRunner timeout kills hung process and returns exit 124", async () =
   expect(typeof r.exitCode).toBe("number");
   expect(typeof r.stdout).toBe("string");
 });
+
+// changed-file / branch overlap ---------------------------------------------
+//
+// pr-and-local-sha-routes-verify-changed-f: citing an unrelated merged PR or
+// an origin/main-ancestor sha must fail closed. When the row supplies a
+// scope signal (declaredPaths or branch), the merge route must prove the
+// PR/sha actually touches that scope. Rows with no scope signal keep the
+// legacy behaviour (backward compat for pre-branch rows).
+
+// A runner that answers different gh/git subcommands from a script keyed on
+// the first meaningful arg. Lets one test stub both the state query and the
+// changed-files query.
+function scriptedRunner(script: {
+  prState?: string;
+  prBranch?: string;
+  prFiles?: string[];
+  shaFiles?: string[];
+  ancestor?: boolean; // git merge-base --is-ancestor exit 0/1
+  branchAncestor?: boolean; // sha reachable from row branch
+}): Runner {
+  return async (cmd, args) => {
+    if (cmd === "gh") {
+      // pr view ... --json state,headRefName,files
+      const json = JSON.stringify({
+        state: script.prState ?? "MERGED",
+        headRefName: script.prBranch ?? "",
+        files: (script.prFiles ?? []).map((path) => ({ path })),
+      });
+      return { stdout: json, exitCode: 0 };
+    }
+    if (cmd === "git" && args[0] === "merge-base") {
+      // args: merge-base --is-ancestor <a> <b>
+      const target = args[args.length - 1];
+      const ok = target === "origin/main" ? script.ancestor !== false : script.branchAncestor !== false;
+      return { stdout: "", exitCode: ok ? 0 : 1 };
+    }
+    if (cmd === "git" && args[0] === "log") {
+      return { stdout: (script.shaFiles ?? []).join("\n"), exitCode: 0 };
+    }
+    return { stdout: "", exitCode: 0 };
+  };
+}
+
+test("PR route: accepts when changed files overlap declaredPaths", async () => {
+  const r = await verifyMergeTruth({
+    prUrl: "https://github.com/x/y/pull/5",
+    localSha: null,
+    declaredPaths: ["src/ledger/"],
+    run: scriptedRunner({ prFiles: ["src/ledger/merge-truth.ts", "README.md"] }),
+  });
+  expect(r.ok).toBe(true);
+});
+
+test("PR route: refuses when changed files do not overlap declaredPaths or branch", async () => {
+  const r = await verifyMergeTruth({
+    prUrl: "https://github.com/x/y/pull/5",
+    localSha: null,
+    declaredPaths: ["src/ledger/"],
+    branch: "worker/my-task",
+    run: scriptedRunner({ prFiles: ["docs/unrelated.md"], prBranch: "worker/other-task" }),
+  });
+  expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.reason).toContain("overlap");
+});
+
+test("PR route: accepts on branch-name match even with no file overlap", async () => {
+  const r = await verifyMergeTruth({
+    prUrl: "https://github.com/x/y/pull/5",
+    localSha: null,
+    declaredPaths: ["src/ledger/"],
+    branch: "worker/my-task",
+    run: scriptedRunner({ prFiles: ["docs/unrelated.md"], prBranch: "worker/my-task" }),
+  });
+  expect(r.ok).toBe(true);
+});
+
+test("PR route: no scope signal keeps legacy behaviour (accepts MERGED, no overlap check)", async () => {
+  // No scope → cheap state-only query, plain "MERGED" stdout (not JSON).
+  const r = await verifyMergeTruth({
+    prUrl: "https://github.com/x/y/pull/5",
+    localSha: null,
+    run: okRunner("MERGED"),
+  });
+  expect(r.ok).toBe(true);
+});
+
+test("local-sha route: accepts when sha's changed files overlap declaredPaths", async () => {
+  const r = await verifyMergeTruth({
+    prUrl: null,
+    localSha: "239838c",
+    declaredPaths: ["src/ledger/"],
+    run: scriptedRunner({ shaFiles: ["src/ledger/merge-guard.ts"] }),
+  });
+  expect(r.ok).toBe(true);
+});
+
+test("local-sha route: refuses when sha's changed files do not overlap declaredPaths", async () => {
+  const r = await verifyMergeTruth({
+    prUrl: null,
+    localSha: "239838c",
+    declaredPaths: ["src/ledger/"],
+    run: scriptedRunner({ shaFiles: ["docs/other.md"], branchAncestor: false }),
+  });
+  expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.reason).toContain("overlap");
+});
+
+test("local-sha route: no scope signal keeps legacy ancestor-only behaviour", async () => {
+  const r = await verifyMergeTruth({
+    prUrl: null,
+    localSha: "239838c",
+    run: scriptedRunner({}),
+  });
+  expect(r.ok).toBe(true);
+  if (r.ok) expect(r.route).toBe("local");
+});
