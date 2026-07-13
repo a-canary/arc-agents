@@ -2090,6 +2090,60 @@ test("hygiene-emit with --observed-in-task pointing at missing row falls back to
   }
 });
 
+// ── file-path routing beats observed-task inheritance (improve-architecture-route-hygiene-emit-) ──
+// A shared-source file (src/ledger/*, bin/ledger.ts) only lives in arc-agents.
+// When --body names one, project routes to arc-agents even if the observed
+// task is a different project — otherwise bookie's merge guard refuses the PR.
+
+test("hygiene-emit routes to arc-agents when body names a shared-source file, beating observed-task", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp",
+      "--title", "arc-skills parent", "--project", "arc-skills")) as { id: string };
+    const r = (await run(db, "hygiene-emit", "--skill", "improve-architecture",
+      "--title", "fix merge-truth",
+      "--body", "the fix lives in src/ledger/merge-truth.ts",
+      "--observed-in-task", parent.id)) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("arc-agents");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit explicit --project still beats file-path routing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "hygiene-emit", "--skill", "improve-architecture",
+      "--title", "explicit over route",
+      "--body", "touches src/ledger/claim.ts",
+      "--project", "arc-skills")) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("arc-skills");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit body with no shared-source path still inherits observed-task project", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp",
+      "--title", "expert-horde parent 2", "--project", "expert-horde")) as { id: string };
+    const r = (await run(db, "hygiene-emit", "--skill", "clarify-docs",
+      "--title", "doc drift",
+      "--body", "the README wording is stale",
+      "--observed-in-task", parent.id)) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("expert-horde");
+  } finally {
+    cleanup();
+  }
+});
+
 
 // --in-place guard (bin-ledger-ts-restrict-in-place-to-requi) ------------------
 // Ghost merges happen when --in-place is used without evidence. The fix:
