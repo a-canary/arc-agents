@@ -18,6 +18,14 @@ export type RecoverySweepOptions = {
   now?: number;
   probe: Probe;
   commandFor: (alias: string) => string;
+  inspectSalvage?: (handoff: SalvageHandoff) => SalvageInspection;
+};
+
+export type SalvageInspection = {
+  branchExists: boolean;
+  headMatches: boolean;
+  commitsMatch: boolean;
+  prState: "OPEN" | "MERGED" | "CLOSED" | null;
 };
 
 export type ProbeSummary = {
@@ -33,6 +41,20 @@ export type RecoverySweepResult = {
   kept: string[];           // ids that stayed blocked (probe failed / empty)
   skipped: string[];        // ids that didn't match the filter at all
   probes: ProbeSummary[];   // one per distinct alias probed
+  salvage: SalvageHandoff[]; // review rows carrying valid structured salvage
+};
+
+export type SalvageHandoff = {
+  issueId: string;
+  worktreePath: string | null;
+  base: string;
+  head: string;
+  commits: number;
+  branch: string;
+  exitCode: number;
+  prUrl: string | null;
+  inspection?: SalvageInspection;
+  readyForTerminalUpdate?: boolean;
 };
 
 // Defensive guard: aliases are [A-Za-z0-9_-]+. If a row's evidence has
@@ -44,6 +66,48 @@ function extractAlias(evidence: string | null): string | null {
   MARKER_RE.lastIndex = 0;
   const m = MARKER_RE.exec(evidence);
   return m ? m[1]! : null;
+}
+
+function salvageHandoffs(db: Database): SalvageHandoff[] {
+  const events = db
+    .query<{ issue_id: string; worktree_path: string | null; payload_md: string }, []>(
+      `SELECT e.issue_id, i.worktree_path, e.payload_md
+       FROM issue_events e
+       JOIN issues i ON i.id=e.issue_id
+       WHERE i.state='review' AND e.kind='note'
+       ORDER BY e.seq`,
+    )
+    .all();
+  const handoffs: SalvageHandoff[] = [];
+  for (const event of events) {
+    try {
+      const p: unknown = JSON.parse(event.payload_md);
+      if (!p || typeof p !== "object") continue;
+      const v = p as Record<string, unknown>;
+      if (
+        v.kind !== "salvage" ||
+        typeof v.base !== "string" ||
+        typeof v.head !== "string" ||
+        typeof v.commits !== "number" ||
+        typeof v.branch !== "string" ||
+        typeof v.exit_code !== "number" ||
+        (v.pr_url !== null && typeof v.pr_url !== "string")
+      ) continue;
+      handoffs.push({
+        issueId: event.issue_id,
+        worktreePath: event.worktree_path,
+        base: v.base,
+        head: v.head,
+        commits: v.commits,
+        branch: v.branch,
+        exitCode: v.exit_code,
+        prUrl: v.pr_url,
+      });
+    } catch {
+      // Prose notes and malformed payloads are not salvage handoffs.
+    }
+  }
+  return handoffs;
 }
 
 export function sweepRecovery(
@@ -128,5 +192,25 @@ export function sweepRecovery(
     flipped.push(...affected);
   }
 
-  return { flipped, kept, skipped, probes };
+  const salvage = salvageHandoffs(db);
+  if (opts.inspectSalvage) {
+    for (const handoff of salvage) {
+      const inspection = opts.inspectSalvage(handoff);
+      handoff.inspection = inspection;
+      handoff.readyForTerminalUpdate =
+        inspection.branchExists &&
+        inspection.headMatches &&
+        inspection.commitsMatch &&
+        inspection.prState === "MERGED";
+      const payload = JSON.stringify({ kind: "salvage_inspection", ...inspection, ready_for_terminal_update: handoff.readyForTerminalUpdate });
+      const prior = db.query<{ payload_md: string }, [string]>(
+        `SELECT payload_md FROM issue_events WHERE issue_id=? AND kind='note' AND agent='recovery-sweep' ORDER BY seq DESC LIMIT 1`,
+      ).get(handoff.issueId);
+      if (prior?.payload_md !== payload) db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'recovery-sweep', ?)`,
+        [handoff.issueId, payload],
+      );
+    }
+  }
+  return { flipped, kept, skipped, probes, salvage };
 }

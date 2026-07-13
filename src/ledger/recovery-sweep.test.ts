@@ -55,6 +55,59 @@ function cmdFor(alias: string, marker: string = "echo"): string {
   return `${marker} alias=${alias}`;
 }
 
+test("returns structured salvage handoffs only for review rows", () => {
+  const db = setup();
+  ins(db, "review-valid", "review", null);
+  ins(db, "review-malformed", "review", null);
+  ins(db, "merged-valid", "merged", null);
+  const valid = JSON.stringify({
+    kind: "salvage",
+    base: "abc123",
+    head: "def456",
+    commits: 2,
+    branch: "worker/fix",
+    exit_code: 124,
+    pr_url: "https://github.com/a-canary/arc-agents/pull/9",
+    reason: "commits present, no terminal self-report",
+  });
+  db.run("INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worker-shell', ?)", ["review-valid", valid]);
+  db.run("INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worker-shell', ?)", ["review-malformed", '{"kind":"salvage","commits":"2"}']);
+  db.run("INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worker-shell', ?)", ["merged-valid", valid]);
+
+  const r = sweepRecovery(db, {
+    probe: stubProbe({}),
+    commandFor: cmdFor,
+    inspectSalvage: () => ({ branchExists: true, headMatches: true, commitsMatch: true, prState: "MERGED" }),
+  });
+
+  expect(r.salvage).toEqual([{
+    issueId: "review-valid",
+    worktreePath: null,
+    base: "abc123",
+    head: "def456",
+    commits: 2,
+    branch: "worker/fix",
+    exitCode: 124,
+    prUrl: "https://github.com/a-canary/arc-agents/pull/9",
+    inspection: { branchExists: true, headMatches: true, commitsMatch: true, prState: "MERGED" },
+    readyForTerminalUpdate: true,
+  }]);
+  expect(JSON.parse(eventsFor(db, "review-valid", "note").at(-1)!.payload_md)).toEqual({
+    kind: "salvage_inspection",
+    branchExists: true,
+    headMatches: true,
+    commitsMatch: true,
+    prState: "MERGED",
+    ready_for_terminal_update: true,
+  });
+  sweepRecovery(db, {
+    probe: stubProbe({}), commandFor: cmdFor,
+    inspectSalvage: () => ({ branchExists: true, headMatches: true, commitsMatch: true, prState: "MERGED" }),
+  });
+  expect(eventsFor(db, "review-valid", "note").filter((e) => e.agent === "recovery-sweep")).toHaveLength(1);
+});
+
+
 test("flips only rows whose evidence carries the marker, per-alias", () => {
   const db = setup();
   ins(db, "b1", "blocked", "headless reconcile: ...; engine-alias-no-work:fast");

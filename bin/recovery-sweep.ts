@@ -5,7 +5,8 @@
 
 import { Database } from "bun:sqlite";
 import { spawnSync } from "bun";
-import { sweepRecovery, type Probe } from "../src/ledger/recovery-sweep";
+import { existsSync } from "node:fs";
+import { sweepRecovery, type Probe, type SalvageHandoff, type SalvageInspection } from "../src/ledger/recovery-sweep";
 
 const DB = process.argv[2] ?? `${process.env.HOME}/vault/ledger.db`;
 const REPO = new URL("..", import.meta.url).pathname;
@@ -23,6 +24,23 @@ const probe: Probe = (cmd) => {
   return { rc: r.exitCode ?? 1, stdout: new TextDecoder().decode(r.stdout) };
 };
 
+function inspectSalvage(h: SalvageHandoff): SalvageInspection {
+  const worktree = h.worktreePath;
+  if (!worktree || !existsSync(worktree)) return { branchExists: false, headMatches: false, commitsMatch: false, prState: null };
+  const git = (...args: string[]) => spawnSync(["git", "-C", worktree, ...args]);
+  const head = new TextDecoder().decode(git("rev-parse", "HEAD").stdout).trim();
+  const commits = Number(new TextDecoder().decode(git("rev-list", "--count", `${h.base}..${h.head}`).stdout).trim());
+  let prState: SalvageInspection["prState"] = null;
+  if (h.prUrl) {
+    const pr = spawnSync(["gh", "pr", "view", h.prUrl, "--json", "state", "--jq", ".state"]);
+    if (pr.exitCode === 0) {
+      const state = new TextDecoder().decode(pr.stdout).trim();
+      if (state === "OPEN" || state === "MERGED" || state === "CLOSED") prState = state;
+    }
+  }
+  return { branchExists: true, headMatches: head === h.head, commitsMatch: commits === h.commits, prState };
+}
+
 const db = new Database(DB);
-const res = sweepRecovery(db, { probe, commandFor });
-console.log(JSON.stringify({ ts: new Date().toISOString(), db: DB, probes: res.probes, flipped: res.flipped.length, kept: res.kept.length, skipped: res.skipped.length }));
+const res = sweepRecovery(db, { probe, commandFor, inspectSalvage });
+console.log(JSON.stringify({ ts: new Date().toISOString(), db: DB, probes: res.probes, flipped: res.flipped.length, kept: res.kept.length, skipped: res.skipped.length, salvage: res.salvage }));
