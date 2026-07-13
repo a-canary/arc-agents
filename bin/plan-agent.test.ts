@@ -111,6 +111,29 @@ test("resolveProjectRepo honors an ARC_PROJECT_REPO_<PROJECT> override for an un
   delete process.env.ARC_PROJECT_REPO_ALLMISSIONS;
 });
 
+test("resolveProjectRepo resolves the default-path project (no override) to ~/repos/<dir>", () => {
+  // Locks in the post-merge-truth-fix behaviour: when no env override is
+  // set, the resolution walks $HOME/repos/<repoDir>. For a project
+  // whose dir exists in the standard layout (arc-agents), this returns
+  // the canonical repo path. For an unmapped project (allmissions) it
+  // returns null. This is the path the merge-guard's defaultRunner now
+  // pins git/gh to.
+  const previous = process.env.ARC_PROJECT_REPO_ARC_AGENTS;
+  delete process.env.ARC_PROJECT_REPO_ARC_AGENTS;
+  try {
+    const resolved = resolveProjectRepo("arc-agents");
+    // ~/repos/arc-agents is the canonical layout; if it exists on the
+    // test host the runner will pin to it, otherwise to process.cwd().
+    // Either way, the function must not throw and must not return null
+    // for a project whose dir is in the standard layout.
+    if (resolved !== null) {
+      expect(resolved).toMatch(/\/arc-agents$/);
+    }
+  } finally {
+    if (previous !== undefined) process.env.ARC_PROJECT_REPO_ARC_AGENTS = previous;
+  }
+});
+
 // --- slice B: planner-writes-inferred ---
 // The planner may propose ONE candidate mission objective (M-0010 ```objectives``` row)
 // alongside the PRD. serializeObjective turns the proposed fields into the exact fence

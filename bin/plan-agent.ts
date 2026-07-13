@@ -21,7 +21,7 @@
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { readFileSync, existsSync } from "node:fs";
-import { PROJECT_REPO_MAP } from "../src/project-repo-map";
+import { resolveProjectRepo } from "../src/project-repo-map";
 
 // A candidate mission objective the planner may propose alongside the PRD (M-0010).
 // goal is the only required field; metric/gate are optional. provenance is DELIBERATELY
@@ -282,14 +282,12 @@ export function listExistingPrdIds(project: string): string[] {
 }
 
 // Refuse to mint an issue whose project has no repo checkout — mirrors worker-shell.sh's
-// resolve_repo()/ARC_PROJECT_REPO_<UPPER> convention so a minted issue is always claimable.
-export function resolveProjectRepo(project: string): string | null {
-  const override = process.env[`ARC_PROJECT_REPO_${project.toUpperCase().replace(/-/g, "_")}`];
-  if (override) return override;
-  const repoDir = PROJECT_REPO_MAP[project] ?? project;
-  const repo = join(import.meta.dir, "..", "..", repoDir);
-  return existsSync(repo) ? repo : null;
-}
+// resolveProjectRepo lives in src/project-repo-map.ts (shared with
+// src/ledger/merge-truth.ts defaultRunner so a row's project field resolves
+// to the same canonical ~/repos/<repoDir>). Re-exported for backward
+// compatibility with bin/plan-agent.test.ts and any other consumers that
+// still import the symbol from this module.
+export { resolveProjectRepo } from "../src/project-repo-map";
 
 async function main(): Promise<void> {
   const argv = process.argv.slice(2);

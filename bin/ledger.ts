@@ -401,6 +401,13 @@ switch (cmd) {
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+      // Fetch the row's project once when we're headed toward state=merged
+      // — used by both the merge-guard (checkMergeGuard) and the runner
+      // factory (defaultRunner). Hoisting it here avoids a second SQL
+      // round-trip and makes the project-pinning to defaultRunner obvious.
+      const project = state === "merged"
+        ? db.query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?").get(id)?.project
+        : undefined;
       if (state === "merged") {
         // diff_review payload contract: require the LATEST diff_review event
         // to parse as JSON {reviewer_identity, reviewed_sha, verdict}, and
@@ -431,9 +438,6 @@ switch (cmd) {
         // analysis-1780502957 Pattern 1 Part A: enforce pr_url's repo matches
         // the row's project field. The guard runs at the bookie layer so
         // a worker cannot mark a row merged against the wrong github repo.
-        const project = db
-          .query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?")
-          .get(id)?.project;
         const guardMsg = checkMergeGuard(project, pr);
         if (guardMsg) die(guardMsg);
       }
@@ -443,7 +447,13 @@ switch (cmd) {
         // the row's stored pr_url; the row's pr_url is the fallback when no
         // --pr is supplied this invocation.
         const effectivePr = inPlace ? null : (pr ?? cur.pr_url ?? null);
-        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, inPlace, run: defaultRunner });
+        // Pass the row's project through so defaultRunner pins the git/gh
+        // child to ~/repos/<repoDir>. Without this, a worker/cron running
+        // from a non-repo cwd (e.g. ~/trash/<ts>/, a reaped worktree) fires
+        // the merge-guard from a directory that isn't a git repo, git
+        // exits 128, and the operator sees an empty trailing-colon
+        // refusal message (analysis-1783937189 Pattern 1).
+        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, inPlace, run: defaultRunner(project) });
         if (!verdict.ok) {
           db.run(
             `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
