@@ -8,6 +8,10 @@
 //   repos:  [ke, arc-agents, arc-framework, ...]
 //   cadence (optional): { <repo>: { <skill>: <days>, ... }, ... } — skip the
 //     (repo, skill) combo if its last cron task fired within `days` of now.
+//   staleDraftDays (optional): age threshold for the stale-draft-sweep skill
+//     to auto-close a dead draft PR. Default 14, see
+//     src/ledger/stale-pr-close.ts readStaleDraftDays(). Per-project
+//     override: staleDraftDays: { <repo>: <days> }.
 //
 // Exit codes: 0 ok (incl. skipped:true), 2 config error
 
