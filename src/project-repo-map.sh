@@ -4,5 +4,6 @@ project_repo_map_lookup() {
   case "$1" in
     starlight) echo "expert-horde" ;;
     starlight-slm) echo "starlight-slm" ;;
+    onenation) echo "OneNation" ;;
   esac
 }
