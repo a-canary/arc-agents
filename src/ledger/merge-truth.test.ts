@@ -1,7 +1,17 @@
 import { test, expect } from "bun:test";
-import { extractPrNumber, verifyMergeTruth, type Runner } from "./merge-truth";
+import { extractPrNumber, parsePrUrl, verifyMergeTruth, type Runner } from "./merge-truth";
 
 const okRunner = (stdout: string, exitCode = 0): Runner => async () => ({ stdout, exitCode });
+// Captures the args gh was called with so we can assert --repo is passed
+// when the input was a full PR URL (cross-repo PR# collision guard).
+const captureRunner = (stdout: string, exitCode = 0): { runner: Runner; calls: Array<{ cmd: string; args: string[] }> } => {
+  const calls: Array<{ cmd: string; args: string[] }> = [];
+  const runner: Runner = async (cmd, args) => {
+    calls.push({ cmd, args });
+    return { stdout, exitCode };
+  };
+  return { runner, calls };
+};
 
 test("extractPrNumber parses URLs and #N", () => {
   expect(extractPrNumber("https://github.com/foo/bar/pull/42")).toBe(42);
@@ -10,6 +20,14 @@ test("extractPrNumber parses URLs and #N", () => {
   expect(extractPrNumber("feat/foo")).toBeNull();
   expect(extractPrNumber("")).toBeNull();
   expect(extractPrNumber(null)).toBeNull();
+});
+
+test("parsePrUrl extracts owner/repo/number from full URL", () => {
+  expect(parsePrUrl("https://github.com/foo/bar/pull/42")).toEqual({ owner: "foo", repo: "bar", number: 42 });
+  expect(parsePrUrl("https://github.com/a-canary/arc-skills/pull/63/")).toEqual({ owner: "a-canary", repo: "arc-skills", number: 63 });
+  expect(parsePrUrl("#7")).toBeNull();
+  expect(parsePrUrl("7")).toBeNull();
+  expect(parsePrUrl("feat/foo")).toBeNull();
 });
 
 test("verifyMergeTruth refuses when neither pr nor sha given", async () => {
@@ -45,16 +63,44 @@ test("verifyMergeTruth refuses when gh reports CLOSED", async () => {
 });
 
 test("verifyMergeTruth accepts MERGED via PR url", async () => {
+  // Full URL → gh must be called with --repo owner/repo so the PR number
+  // resolves against the right repo (cross-repo PR# collision guard —
+  // analysis-1780502957 Pattern 4).
+  const { runner, calls } = captureRunner("MERGED");
   const r = await verifyMergeTruth({
     prUrl: "https://github.com/x/y/pull/88",
     localSha: null,
-    run: okRunner("MERGED"),
+    run: runner,
   });
   expect(r.ok).toBe(true);
   if (r.ok) {
     expect(r.route).toBe("pr");
-    expect(r.detail).toContain("PR #88");
+    expect(r.detail).toContain("x/y#88");
   }
+  expect(calls).toHaveLength(1);
+  const args = calls[0]!.args;
+  expect(args).toContain("--repo");
+  expect(args[args.indexOf("--repo") + 1]).toBe("x/y");
+});
+
+test("verifyMergeTruth skips --repo when prUrl is a bare #N (cwd fallback)", async () => {
+  // Bare #N has no owner/repo to pass; --repo can't be supplied from the
+  // input alone. We fall through to cwd resolution (existing behaviour)
+  // and surface this in the detail string so failure modes are diagnostic.
+  const { runner, calls } = captureRunner("MERGED");
+  const r = await verifyMergeTruth({ prUrl: "#92", localSha: null, run: runner });
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    expect(r.route).toBe("pr");
+    expect(r.detail).toContain("cwd-resolved");
+  }
+  expect(calls[0]!.args).not.toContain("--repo");
+});
+
+test("verifyMergeTruth skips --repo when prUrl is numeric", async () => {
+  const { runner, calls } = captureRunner("MERGED");
+  await verifyMergeTruth({ prUrl: "92", localSha: null, run: runner });
+  expect(calls[0]!.args).not.toContain("--repo");
 });
 
 test("verifyMergeTruth refuses non-hex local sha", async () => {

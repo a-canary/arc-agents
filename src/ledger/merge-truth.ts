@@ -8,6 +8,12 @@
 // these returns ok. Pure-ish: side effects routed through injected runners so
 // tests can stub.
 
+import { parsePrUrl } from "./deploy-preview";
+// Re-export so downstream callers (and tests) can keep importing from
+// merge-truth without knowing the canonical lives in deploy-preview.ts.
+export { parsePrUrl };
+export type ParsedPrUrl = { owner: string; repo: string; number: number };
+
 export type MergeTruthOk = { ok: true; route: "pr" | "local" | "in-place"; detail: string };
 export type MergeTruthFail = { ok: false; reason: string };
 export type MergeTruthResult = MergeTruthOk | MergeTruthFail;
@@ -15,6 +21,7 @@ export type MergeTruthResult = MergeTruthOk | MergeTruthFail;
 export type Runner = (cmd: string, args: string[]) => Promise<{ stdout: string; exitCode: number }>;
 
 const PR_NUMBER_RE = /(?:\/pull\/|^#?)(\d+)$/;
+// pattern: improve-architecture-verifyprmerged-runs
 
 export function extractPrNumber(prUrlOrNum: string | null | undefined): number | null {
   if (!prUrlOrNum) return null;
@@ -37,7 +44,15 @@ export async function verifyPrMerged(
       reason: `pr_url '${prUrlOrNum ?? ""}' does not look like a PR URL or #number. Set --pr to a GitHub PR URL (https://github.com/owner/repo/pull/N) before marking merged.`,
     };
   }
-  const r = await run("gh", ["pr", "view", String(num), "--json", "state", "-q", ".state"]);
+  // Pass --repo when the input was a full URL so `gh` doesn't resolve the
+  // number against cwd repo's remote (cross-repo PR# collision — see
+  // analysis-1780502957 Pattern 4). Bare #N or numeric input falls through
+  // to cwd resolution; if your pr_url is bare, fix that upstream.
+  const parsed = prUrlOrNum ? parsePrUrl(prUrlOrNum) : null;
+  const ghArgs = parsed
+    ? ["pr", "view", String(num), "--repo", `${parsed.owner}/${parsed.repo}`, "--json", "state", "-q", ".state"]
+    : ["pr", "view", String(num), "--json", "state", "-q", ".state"];
+  const r = await run("gh", ghArgs);
   if (r.exitCode !== 0) {
     return { ok: false, reason: `gh pr view ${num} exited ${r.exitCode}: ${r.stdout.trim()}` };
   }
@@ -45,7 +60,9 @@ export async function verifyPrMerged(
   if (state !== "MERGED") {
     return { ok: false, reason: `PR #${num} state is '${state}', expected 'MERGED'. Wait for the PR to actually land on main before closing the row.` };
   }
-  return { ok: true, route: "pr", detail: `PR #${num} MERGED` };
+  return parsed
+    ? { ok: true, route: "pr", detail: `PR ${parsed.owner}/${parsed.repo}#${num} MERGED` }
+    : { ok: true, route: "pr", detail: `PR #${num} MERGED (cwd-resolved, no full URL supplied)` };
 }
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
