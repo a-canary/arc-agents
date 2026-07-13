@@ -137,6 +137,43 @@ function hasUncommittedChanges(worktreePath: string): boolean {
   return r.out.trim() !== "";
 }
 
+// Resolve the GitHub "owner/repo" slug from a local repo's origin remote.
+// Returns null when origin is missing or not a github URL — caller treats
+// null as "can't determine" and falls back to the conservative keep path.
+// SECURITY: spawnSync with array argv only; the URL string is never a shell.
+function parseGithubSlug(parentRepo: string): string | null {
+  const r = git(parentRepo, ["remote", "get-url", "origin"]);
+  if (!r.ok || !r.out) return null;
+  const m = r.out.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
+  return m && m[1] ? m[1] : null;
+}
+
+// Runner seam for `gh pr list` — production calls the real `gh` CLI; tests
+// inject a stub. Sync to match the rest of this module's git helpers.
+export type GhRunner = (args: string[]) => { ok: boolean; out: string };
+export const defaultGhRunner: GhRunner = (args) => {
+  const r = spawnSync("gh", args, { encoding: "utf8" });
+  return { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() };
+};
+
+// True when `branch` has a merged PR on `slug` (owner/repo). Returns null
+// when we can't determine (gh missing, no auth, no origin remote) — the
+// reaper then falls through to the conservative kept-has-commits outcome.
+// Squash-merged branches show commitsAheadOfMain==1 but are dead; the PR
+// state on origin is the authoritative answer that branch ancestry can't give.
+function ghPrMerged(branch: string, slug: string | null, runner: GhRunner): boolean | null {
+  if (!slug) return null;
+  const r = runner(["pr", "list", "--repo", slug, "--head", branch, "--state", "merged", "--json", "state"]);
+  if (!r.ok) return null;
+  try {
+    const arr = JSON.parse(r.out) as Array<{ state?: string }>;
+    if (arr.length === 0) return false;
+    return arr[0]!.state === "MERGED";
+  } catch {
+    return null;
+  }
+}
+
 export function reapWorktrees(db: Db): ReapedWorktree[] {
   // (a) merged + (b) failed/cancelled. blocked stays excluded (decomposition
   // parents). ready/wip/claimed/review are live — never reaped here.
@@ -290,6 +327,8 @@ export type BackstopOpts = {
   parentRepo: string;
   maxAgeSec: number;
   now?: number; // unix seconds; defaults to wall clock (overridable for tests)
+  // Injected for tests. Defaults to spawning the real `gh` CLI.
+  ghRunner?: GhRunner;
 };
 
 export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResult[] {
@@ -343,22 +382,33 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
       continue;
     }
 
-    // Unmerged commits → never auto-remove (preserve for salvage).
-    if (commitsAheadOfMain(dir) > 0) {
-      results.push({ worktree_path: dir, outcome: "kept-has-commits" });
-      continue;
+    // Unmerged commits → never auto-remove (preserve for salvage) UNLESS the
+    // branch has a merged PR on origin: squash-merge rewrites history so the
+    // branch tip is NOT an ancestor of post-squash origin/main, but the work
+    // IS in main. The PR state on origin is the only authoritative answer
+    // branch ancestry can't give. ghPrMerged=null means we can't tell → keep.
+    // `integrated` is also set true when behindMain > 0 (regular merge).
+    const ahead = commitsAheadOfMain(dir);
+    const behind = behindMain(dir);
+    let integrated = behind > 0;
+    if (ahead > 0 && !integrated) {
+      const branch = git(dir, ["branch", "--show-current"]).out;
+      const mergedPr =
+        branch && ghPrMerged(branch, parseGithubSlug(dirParent), opts.ghRunner ?? defaultGhRunner);
+      if (mergedPr === true) integrated = true;
+      else {
+        results.push({ worktree_path: dir, outcome: "kept-has-commits" });
+        continue;
+      }
     }
 
-    // 0 commits ahead is ambiguous, so consult how far main is AHEAD of this
-    // worktree's HEAD (`HEAD..main`):
-    //   - >0 : main advanced past HEAD → the work was integrated (or the branch
-    //          was superseded). Scratch — removable regardless of age.
-    //   - ==0: HEAD == main (a pristine fork point that never diverged). Apply
-    //          the age gate — only remove once it's older than maxAgeSec, so we
-    //          don't yank a worktree a worker just created.
-    const behind = behindMain(dir);
+    // Integrated (merged or squash-merged) OR aged out: scratch — removable.
+    // - integrated: the work is in main; branch tip is irrelevant.
+    // - not integrated: pristine fork point that never diverged; only reap
+    //   once older than maxAgeSec, so we don't yank a worktree a worker
+    //   just created.
     const ageSec = now - Math.floor(st.mtimeMs / 1000);
-    if (behind === 0 && ageSec < maxAgeSec) {
+    if (!integrated && ageSec < maxAgeSec) {
       results.push({ worktree_path: dir, outcome: "kept-too-young" });
       continue;
     }

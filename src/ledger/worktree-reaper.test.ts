@@ -531,3 +531,87 @@ test("(c) backstop PRESERVES an aged, no-row orphan that has only uncommitted ch
   expect(mine?.outcome).toBe("kept-has-commits");
   expect(existsSync(dir)).toBe(true);
 });
+
+// --- Squash-merge stranded worktrees (Pattern 1 from
+// analysis-1783742673-pipeliner-analyse-recent-sessions.md):
+// squash-merge produces a NEW main SHA that is NOT an ancestor of the branch
+// tip, so commitsAheadOfMain == 1 but the work is genuinely in main. The reaper
+// must consult `gh pr list --head <branch> --state merged` to distinguish
+// "squash-merged (dead)" from "really ahead of main (preserve)".
+test("(c) backstop REAPS a squash-merged orphan when gh reports MERGED PR", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  // Give repoDir an origin so parseGithubSlug returns a slug for the stub.
+  git(repoDir, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
+  const dir = addWorktreeUnder(root, "squashed", "sq-br");
+  // One commit on the branch tip → ahead == 1 (the squash-merge signature).
+  commitInWorktree(dir, "feature.txt", "shipped-via-squash\n");
+
+  // Stub gh: only one PR for this branch and it's MERGED.
+  const ghRunner = (args: string[]) => {
+    if (args.includes("--state") && args.includes("merged")) {
+      return { ok: true, out: JSON.stringify([{ state: "MERGED", number: 42 }]) };
+    }
+    return { ok: true, out: "[]" };
+  };
+
+  // now == real now → young, but squash-merged → removable anyway.
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000),
+    ghRunner,
+  });
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("removed");
+  expect(existsSync(dir)).toBe(false);
+});
+
+test("(c) backstop PRESERVES an ahead-of-main orphan when gh reports NO merged PR", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  git(repoDir, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
+  const dir = addWorktreeUnder(root, "unmerged", "unmerged-br");
+  commitInWorktree(dir, "wip.txt", "still-in-progress\n");
+
+  // gh says: no merged PR for this branch. The reaper must NOT touch it.
+  const ghRunner = () => ({ ok: true, out: "[]" });
+
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+    ghRunner,
+  });
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("kept-has-commits");
+  expect(existsSync(dir)).toBe(true);
+});
+
+test("(c) backstop PRESERVES an ahead-of-main orphan when gh is unavailable (null → conservative)", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  git(repoDir, ["remote", "add", "origin", "https://github.com/owner/repo.git"]);
+  const dir = addWorktreeUnder(root, "gh-down", "gh-down-br");
+  commitInWorktree(dir, "wip.txt", "ambiguous state\n");
+
+  // gh exits non-zero (missing binary, no auth, network error) → runner returns
+  // ok=false → ghPrMerged returns null → reaper falls through to keep.
+  const ghRunner = () => ({ ok: false, out: "gh: not authenticated" });
+
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 30 * 86400,
+    ghRunner,
+  });
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("kept-has-commits");
+  expect(existsSync(dir)).toBe(true);
+});
