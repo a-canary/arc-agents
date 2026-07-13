@@ -91,7 +91,9 @@ export function sweepRecovery(
       // see what happened.
       result = { rc: 127, stdout: e instanceof Error ? e.message : String(e) };
     }
-    const recovered = result.rc === 0;
+    // rc=0 with empty stdout IS the no-work symptom — require both (contract:
+    // "probe success = rc + nonempty output").
+    const recovered = result.rc === 0 && result.stdout.trim().length > 0;
     const affected = recovered ? ids : [];
     if (!recovered) kept.push(...ids);
 

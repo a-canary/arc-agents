@@ -156,19 +156,6 @@ test("starved alias: rows stay blocked, no flip events, probe event recorded", (
   expect(summaries[0]!.payload_md).toMatch(/flipped=0/);
 });
 
-test("probe stdout-empty + rc=0 still counts as recovered (rc=0 is sufficient)", () => {
-  const db = setup();
-  ins(db, "b1", "blocked", "engine-alias-no-work:fast");
-
-  const probe = stubProbe({ fast: { rc: 0, stdout: "" } });
-  const r = sweepRecovery(db, { now: 1_000_000_000, probe, commandFor: cmdFor });
-
-  // PRD says "rc=0 AND non-empty stdout" — but a clean rc=0 with empty
-  // stdout is still "no error", so accept it as recovered. Real-world
-  // probes (e.g. `pi -p "ok"`) sometimes produce minimal output.
-  expect(r.flipped).toEqual(["b1"]);
-});
-
 test("no rows with marker → no probes fired, no events", () => {
   const db = setup();
   ins(db, "b1", "blocked", "manually parked");
@@ -271,4 +258,14 @@ test("rows from multiple projects are handled together (alias is project-agnosti
   const probe = stubProbe({ fast: { rc: 0, stdout: "ok" } });
   const r = sweepRecovery(db, { now: 1_000_000_000, probe, commandFor: cmdFor });
   expect(r.flipped.sort()).toEqual(["b1", "b2"]);
+});
+test("rc=0 with empty stdout is NOT recovery — that is the no-work symptom", () => {
+  const db = setup();
+  ins(db, "e1", "blocked", "engine-alias-no-work:fast");
+  const probe = stubProbe({ fast: { rc: 0, stdout: "  \n" } });
+  const r = sweepRecovery(db, { now: 1_000_000_000, probe, commandFor: cmdFor });
+  expect(r.flipped).toEqual([]);
+  expect(r.kept).toEqual(["e1"]);
+  expect(r.probes).toEqual([{ alias: "fast", rc: 0, recovered: false, flipped: 0, kept: 1 }]);
+  expect(db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='e1'").get()?.state).toBe("blocked");
 });
