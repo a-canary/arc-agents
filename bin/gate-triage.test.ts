@@ -55,6 +55,23 @@ test("selection: prds always, tasks only when review-stale >48h", () => {
   expect(ids).toEqual(["p1", "t-old", "t-parked-stale"]);
 });
 
+test("selection: stale ready PRDs (>48h) are picked up; fresh ready PRDs are not", () => {
+  const db = new Database(":memory:");
+  db.run("create table issues (id text, title text, body_md text, kind text, state text, updated_at integer, hitl integer default 0)");
+  const now = Math.floor(Date.now() / 1000);
+  const ins = db.query("insert into issues values (?,?,?,?,?,?,?)");
+  // stale ready PRD (3d) — must be selected
+  ins.run("p-ready-stale", "prd ready stale", "", "prd", "ready", now - 3 * 86400, 0);
+  // fresh ready PRD (1h) — must NOT be selected
+  ins.run("p-ready-fresh", "prd ready fresh", "", "prd", "ready", now - 3600, 0);
+  // ready PRD older than 48h but already stamped — must NOT be re-selected
+  ins.run("p-ready-stamped", "prd ready stamped", "<!-- gate-triage -->", "prd", "ready", now - 5 * 86400, 0);
+  // non-prd (task) in state=ready, hitl=0, stale — must NOT be selected (gate-triage does not consume non-hitl ready tasks)
+  ins.run("t-ready-stale", "task ready stale", "", "task", "ready", now - 5 * 86400, 0);
+  const ids = (db.query(SELECT_SQL).all("<!-- gate-triage -->") as Array<{ id: string }>).map((r) => r.id).sort();
+  expect(ids).toEqual(["p-ready-stale"]);
+});
+
 import { hasSalvageableCommits } from "./gate-triage";
 
 test("hasSalvageableCommits: true only when a progress event logged commits", () => {

@@ -34,7 +34,7 @@ export function hasSalvageableCommits(db: Database, issueId: string): boolean {
 }
 
 export const SELECT_SQL =
-  "select id, title, kind, state, coalesce(body_md,'') body from issues where ((state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800))) or (state='ready' and hitl=1 and kind='task' and updated_at < unixepoch('now')-7200)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
+  "select id, title, kind, state, coalesce(body_md,'') body from issues where ((state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800))) or (state='ready' and hitl=1 and kind='task' and updated_at < unixepoch('now')-7200) or (state='ready' and kind='prd' and updated_at < unixepoch('now')-172800)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
 
 const ESCALATION = `Risky moves (delete/overwrite beyond your worktree, force-push, prod deploy/restart, docker outside your own stack, spend, secrets, cron/systemd edits) — STOP and dispatch a Task subagent (model: opus) to adjudicate with the exact command and blast radius; proceed only on an explicit APPROVE, else park the task with the denial as evidence.`;
 
