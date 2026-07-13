@@ -79,6 +79,9 @@ A row in `hitl_prompts`. The vocabulary by which the interviewer (or a `class=ta
 ## HITL Class
 Either `taste` or `impact`. Taste prompts have a 60s timeout, a `recommended` answer, and let dependent work continue speculatively. Impact prompts hard-block dependent work until the user replies. Workers may emit taste prompts directly; impact prompts must come from the interviewer (workers decompose instead).
 
+## Authorize row
+An HITL [Decomposition](#decomposition) child whose title follows `Authorize <action>` (commit, push, deploy, force-push, …) and whose work IS that action — committing the staged files, pushing the branch, deploying the artifact. Distinct from a merge-gate: the parent's `diff_review` verdict drives the parent's `merge` transition and says nothing about whether the authorize action should happen. See bookie rule #8 and `skills/bookie/SKILL.md` for cancel conditions.
+
 ## Delivery
 A row in `hitl_deliveries`. One per (prompt, alive module) pair. Tracks render/retract state and the module-specific `external_ref` (e.g. Discord message id) used to scrub the surface when another module wins the reply.
 
