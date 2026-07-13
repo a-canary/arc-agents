@@ -9,3 +9,15 @@ export const PROJECT_REPO_MAP: Record<string, string> = {
   starlight: "expert-horde",
   "starlight-slm": "starlight-slm",
 };
+
+// Parked lanes: GPU-spend projects gated behind hitl/spend_gate. A task in a
+// parked project must carry the spend-gate marker before worker-shell will let
+// it invoke GPU tools. Keep this set in parity with is_parked_project below.
+export const PARKED_PROJECTS: ReadonlySet<string> = new Set([
+  "starlight-slm",
+  "local-models",
+]);
+
+export function isParkedProject(project: string): boolean {
+  return PARKED_PROJECTS.has(project);
+}
