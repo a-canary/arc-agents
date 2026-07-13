@@ -80,7 +80,23 @@ export function buildAggregateRequest(project: string, rows: FeedbackRow[]): str
 // the confirmation gate needs a binary trust tier. Operator channels are trusted —
 // the :8080 portal is Aaron-only over tailscale, so `direct` IS the operator; mission/
 // operator are explicit. Everyone else (public, github, ai-agent, anon) is untrusted.
+//
+// IMPORTANT (drain vs trust): being `direct`/trusted does NOT mean drain-eligible.
+// Machine log rows (auto-oversight, future watchdog) sit in the same channel table but
+// are excluded at SELECT by MACHINE_LOG_SOURCES below — exclusion happens BEFORE trust
+// is ever evaluated. Touching trust semantics? Touch MACHINE_LOG_SOURCES in the same
+// edit so the carve-out stays in sync.
 const TRUSTED_SOURCES = new Set(["direct", "mission", "operator"]);
+
+// Machine-log sources are NEVER drained as user feedback — they are display-only audit
+// logs (the allmissions oversight pane, future watchdog reports). Excluded at SELECT
+// (not at trust evaluation), so an oversight-only backlog is invisible to both the
+// row-fetch and the project-sweep: the */5 tick's --all-projects drain won't even
+// queue it, the trigger gate can't fire, and rows stay OPEN indefinitely. Adding a
+// future machine log writer is a one-line append. See PR #318 (sibling slice, same
+// exclusion applied to the Lane-2 drain).
+export const MACHINE_LOG_SOURCES = new Set(["auto-oversight"]);
+
 // Trust keys on the EXPLICIT author_trust column first (closing the source='direct'
 // degeneracy: arc-webui stamps every row 'direct', so a single product user looked like
 // the operator and minted a PRD). 'operator' ⇒ trusted; 'product' ⇒ NOT trusted even on
@@ -208,10 +224,20 @@ function getFlag(argv: string[], name: string): string | undefined {
  *  a Proposal). The marker is the truth: a row is skipped regardless of its state
  *  column. PR #285's Validator (resolution='superseded') achieves the same
  *  observable effect via state='resolved'. */
+// Build the machine-log exclusion predicate for SQL. Currently a single source, but
+// the set keeps the door open for future machine writers (a watchdog cron, a sync job)
+// without a schema change. The empty-set case is collapsed to "1=1" so the predicate
+// stays a no-op if the set ever drains.
+function machineLogNotInSql(): string {
+  if (MACHINE_LOG_SOURCES.size === 0) return "1=1";
+  const quoted = Array.from(MACHINE_LOG_SOURCES).map((s) => `'${s.replace(/'/g, "''")}'`).join(",");
+  return `source NOT IN (${quoted})`;
+}
+
 export function selectNewFeedback(db: DB, project: string, limit: number): FeedbackRow[] {
   return db
     .query<FeedbackRow, [string, number]>(
-      "SELECT id, body_md, source, submitter, author_trust FROM feedback WHERE state IN ('new','OPEN') AND declined_at IS NULL AND source != 'auto-oversight' AND project=? ORDER BY created_at ASC LIMIT ?",
+      `SELECT id, body_md, source, submitter, author_trust FROM feedback WHERE state IN ('new','OPEN') AND declined_at IS NULL AND ${machineLogNotInSql()} AND project=? ORDER BY created_at ASC LIMIT ?`,
     )
     .all(project, limit);
 }
@@ -227,11 +253,14 @@ export function triggerGate(rows: FeedbackRow[]): { fire: boolean; trusted: numb
   return { fire: trusted >= 1 || untrusted > 5, trusted, untrusted };
 }
 
-/** Every project with at least one unaggregated feedback row (drives --all-projects). */
+/** Every project with at least one unaggregated feedback row (drives --all-projects).
+ *  Machine-log sources are excluded: a project whose backlog is ONLY machine logs
+ *  doesn't appear here, so the drain never queues it and the trigger gate never
+ *  fires — a no-op tick, not a wasted planner call. */
 export function projectsWithOpenFeedback(db: DB): string[] {
   return db
     .query<{ project: string }, []>(
-      "SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN') AND source != 'auto-oversight' ORDER BY project",
+      `SELECT DISTINCT project FROM feedback WHERE state IN ('new','OPEN') AND ${machineLogNotInSql()} ORDER BY project`,
     )
     .all()
     .map((r) => r.project);

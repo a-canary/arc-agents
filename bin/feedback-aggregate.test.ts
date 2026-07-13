@@ -17,6 +17,7 @@ import {
   recordCollection,
   flagStaleFeedback,
   validateStaleCandidates,
+  MACHINE_LOG_SOURCES,
   type FeedbackRow,
   hasFlag,
 } from "./feedback-aggregate";
@@ -75,6 +76,90 @@ test("selectNewFeedback skips auto-oversight log rows — display-only, never dr
     ]);
     const rows = selectNewFeedback(db, "allmissions", 20);
     expect(rows.map((r) => r.id)).toEqual(["fb-a"]);
+  } finally {
+    cleanup();
+  }
+});
+
+// --- Slice: lift the machine-log exclusion into a denylist beside TRUSTED_SOURCES ---
+// PR #318 hard-coded `source != 'auto-oversight'` into the two queries. The sibling
+// slice (this row) lifts that into MACHINE_LOG_SOURCES so future machine writers
+// (watchdog, sync job) are a one-line append rather than a SQL edit, and locks the
+// carve-out behind tests that prove the trigger gate can't fire on an oversight-only
+// backlog and that the row stays OPEN after a full drain pass.
+test("MACHINE_LOG_SOURCES is exported and seeds with auto-oversight", () => {
+  expect(MACHINE_LOG_SOURCES).toBeInstanceOf(Set);
+  expect(MACHINE_LOG_SOURCES.has("auto-oversight")).toBe(true);
+});
+
+test("projectsWithOpenFeedback omits a project whose backlog is ONLY oversight rows", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", [
+      "ao-1", "allmissions", "auto-oversight", "oversight log 1", "OPEN",
+    ]);
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", [
+      "ao-2", "allmissions", "auto-oversight", "oversight log 2", "OPEN",
+    ]);
+    // sanity: allmissions has 2 oversight rows, nothing else
+    expect(projectsWithOpenFeedback(db)).toEqual([]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("projectsWithOpenFeedback INCLUDES a project when a human row coexists with oversight rows", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insert(db, "fb-human", "allmissions", "OPEN", "a real user report");
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", [
+      "ao-1", "allmissions", "auto-oversight", "oversight log", "OPEN",
+    ]);
+    expect(projectsWithOpenFeedback(db)).toEqual(["allmissions"]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("triggerGate: an oversight-only backlog cannot fire (rows never reach triggerGate in production)", () => {
+  // Production wiring: aggregateProject calls selectNewFeedback (which filters), then
+  // triggerGate. So an oversight-only backlog produces rows=[] and gate.fire=false.
+  // Lock that contract by asserting both halves.
+  const { db, cleanup } = freshDb();
+  try {
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", [
+      "ao-1", "allmissions", "auto-oversight", "log", "OPEN",
+    ]);
+    const rows = selectNewFeedback(db, "allmissions", 20);
+    expect(rows).toEqual([]);
+    expect(triggerGate(rows).fire).toBe(false);
+  } finally {
+    cleanup();
+  }
+});
+
+test("oversight row's state stays OPEN after a full aggregation pass over the project", () => {
+  // The headline test for this slice. Drive the full drain contract — flag stale,
+  // validate, select, gate — and assert the oversight row is untouched. (We can't
+  // call aggregateProject directly without spawning plan-agent; the four primitives
+  // it runs are what matter for the row-stays-OPEN invariant.)
+  const { db, cleanup } = freshDb();
+  try {
+    db.run("INSERT INTO feedback (id, project, source, body_md, state) VALUES (?,?,?,?,?)", [
+      "ao-1", "allmissions", "auto-oversight", "log line", "OPEN",
+    ]);
+    expect(flagStaleFeedback(db, "allmissions")).toBe(0);
+    expect(validateStaleCandidates(db, "allmissions")).toEqual({ accepted: 0, rejected: 0 });
+    expect(selectNewFeedback(db, "allmissions", 20)).toEqual([]);
+    expect(projectsWithOpenFeedback(db)).toEqual([]); // sweep never queues allmissions
+    // Row still OPEN, theme_id still null, declined_at still null — no planner
+    // was ever called, no write touched the row.
+    const r = db.query<{ state: string; theme_id: string | null; declined_at: number | null }, [string]>(
+      "SELECT state, theme_id, declined_at FROM feedback WHERE id=?",
+    ).get("ao-1")!;
+    expect(r.state).toBe("OPEN");
+    expect(r.theme_id).toBeNull();
+    expect(r.declined_at).toBeNull();
   } finally {
     cleanup();
   }
