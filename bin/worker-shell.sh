@@ -210,35 +210,81 @@ ensure_claude_afk_on_path() {
   return 0
 }
 
-# Fast-forward the given repo's local `main` to `origin/main`. Closes the
-# "local main N behind origin" pattern documented in
-# analysis-1782813826.md §"Pattern 4 follow-up" — the same follow-up was
-# recommended in 000103 (analysis-1782187417.md Pattern 3) but never filed
-# until now. Worker-shell.sh is the structural fix: any worker that claims
-# against the repo observes a current `main` BEFORE its worktree is added,
-# which keeps `merge-guard`'s `--local-merged-sha` truth-check and the
-# `git worktree add -B <branch> ... main` base accurate. Pure: $1 = repo path
-# → 0 on ff/no-op, non-zero on missing-repo or no-remote (caller treats
-# non-zero as "skip ff, continue"; not fatal). No-op when origin/main is
-# already reachable from main.
+# Discover the repo's default branch (e.g. `main`, `master`, `develop`). The
+# factory previously hardcoded `main` in three sites (fast_forward_main,
+# worktree add base, BASELINE_SHA fallback) — arc-webui's GitHub default is
+# `master` (analysis-1783678328.md Pattern 2, 1 confirmed ghost merge
+# `000101-hygiene-arc-webui-improve-architecture`), so workers branching off
+# `main` produced merges invisible on `master`. Mirror the resolve_repo
+# convention: probe three sources in priority order, fall back to `main` so
+# the script's own repo (and the 12 other `default=main` repos in the estate)
+# don't regress. Pure: $1 = repo path → branch name on stdout. Empty stdout
+# signals "could not determine" — callers must default to `main` themselves.
+default_branch_for_repo() {
+  local repo="$1"
+  [ -d "${repo}/.git" ] || { return 0; }
+  # (1) Fastest path: Git tracks the remote's HEAD via refs/remotes/origin/HEAD,
+  # populated by `git remote set-head origin --auto` (or any `git clone`). This
+  # is a symbolic ref, so read with `git symbolic-ref`.
+  local sym
+  sym="$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
+  if [ -n "$sym" ]; then
+    echo "${sym##*/}"
+    return 0
+  fi
+  # (2) Slow path: query GitHub's API. Same answer as (1) when (1) is set,
+  # but covers repos where nobody has run `remote set-head` (rare in
+  # production, common in fresh test fixtures). `gh` is in the factory's PATH.
+  local gh_default
+  gh_default="$(gh repo view "$repo" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
+  if [ -n "$gh_default" ]; then
+    echo "$gh_default"
+    return 0
+  fi
+  # (3) Last-ditch probe: whichever branch `HEAD` tracks when local is on the
+  # default. The script's own repo + every other `default=main` repo hits
+  # this path. We still emit nothing here so the caller's `${VAR:-main}`
+  # fallback wins.
+  return 0
+}
+
+# Fast-forward the given repo's default branch (e.g. local `main` or
+# `master`) to `origin/<default>`. Closes the "local main N behind origin"
+# pattern documented in analysis-1782813826.md §"Pattern 4 follow-up" — the
+# same follow-up was recommended in 000103 (analysis-1782187417.md Pattern 3)
+# but never filed until now. Worker-shell.sh is the structural fix: any
+# worker that claims against the repo observes a current default branch
+# BEFORE its worktree is added, which keeps `merge-guard`'s
+# `--local-merged-sha` truth-check and the `git worktree add -B <branch>
+# ... <default>` base accurate. analysis-1783678328.md Pattern 2 widened the
+# fix: the literal `main` here used to mismatch arc-webui's actual default
+# (`master`), so workers branched off the wrong base and their merges were
+# invisible on production. Pure: $1 = repo path → 0 on ff/no-op, non-zero on
+# missing-repo or no-remote (caller treats non-zero as "skip ff, continue";
+# not fatal). No-op when origin/<default> is already reachable from the local
+# default branch.
 #
 # ponytail: cheap `fetch + merge --ff-only`; a real merge conflict is
-# impossible here because local main was at-or-behind origin/main by
+# impossible here because local default was at-or-behind origin/default by
 # construction (we're racing only the cron-pushed merges). If conflict ever
 # appears, the helper returns non-zero and the worker boots on the stale-but-
-# known main — same as today, just with one fewer race window.
+# known default — same as today, just with one fewer race window.
 fast_forward_main() {
   local repo="$1"
   [ -d "${repo}/.git" ] || return 1
+  local default_branch
+  default_branch="$(default_branch_for_repo "$repo")"
+  default_branch="${default_branch:-main}"
   # Bail when there's no `origin` remote to fetch — common for fresh local
   # clones without a remote, or hygiene rows against a worktree-only repo.
   git -C "$repo" remote get-url origin >/dev/null 2>&1 || return 1
-  # Fast-forward only when there's actually something to ff: local main must
-  # be an ancestor of origin/main (i.e., origin has commits we don't). If
-  # they're equal or local is ahead, `merge --ff-only` would refuse — skip.
-  git -C "$repo" fetch -q origin main 2>/dev/null || return 1
-  if git -C "$repo" merge-base --is-ancestor main origin/main 2>/dev/null; then
-    git -C "$repo" merge --ff-only origin/main 2>/dev/null || return 1
+  # Fast-forward only when there's actually something to ff: local default
+  # must be an ancestor of origin/<default> (i.e., origin has commits we
+  # don't). If they're equal or local is ahead, `merge --ff-only` would
+  # refuse — skip.
+  git -C "$repo" fetch -q origin "$default_branch" 2>/dev/null || return 1
+  if git -C "$repo" merge-base --is-ancestor "$default_branch" "origin/$default_branch" 2>/dev/null; then
+    git -C "$repo" merge --ff-only "origin/$default_branch" 2>/dev/null || return 1
   fi
   return 0
 }
@@ -385,21 +431,30 @@ WT_BRANCH="worker/${CLAIM_ID}"
 # runs BEFORE `worktree add` so even the FIRST claim after a merge observes
 # current main. See fast_forward_main() above for the helper contract.
 fast_forward_main "$WT_REPO" || true
+# Discover the repo's default branch ONCE and reuse at the worktree-add +
+# BASELINE_SHA fallback sites. Same helper fast_forward_main uses — keeps
+# the three references in lockstep (analysis-1783678328.md Pattern 2 root
+# cause: the original three references drifted from each other silently).
+WT_DEFAULT="$(default_branch_for_repo "$WT_REPO")"
+WT_DEFAULT="${WT_DEFAULT:-main}"
 if [ ! -d "$WT_DIR" ]; then
-  # -B resets the branch to main's tip if a stale branch lingers from a prior
-  # reaped attempt; --force overrides a leftover claude-agent worktree lock.
-  if ! git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" main 2>/dev/null; then
+  # -B resets the branch to the default's tip if a stale branch lingers from
+  # a prior reaped attempt; --force overrides a leftover claude-agent
+  # worktree lock.
+  if ! git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" "$WT_DEFAULT" 2>/dev/null; then
     # Branch may be checked out elsewhere; fall back to a detached worktree so
     # the worker still isolates rather than silently running in prod root.
-    git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" main
+    git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" "$WT_DEFAULT"
   fi
 fi
 cd "$WT_DIR"
 # Baseline HEAD at claim time — reused worktrees from a prior claim may sit
-# commits ahead of main already; reconcile must count only THIS run's
-# commits, not everything since main (else a stale reused worktree with 0 new
-# commits masks an empty/failed engine run as reviewable work).
-BASELINE_SHA="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo main)"
+# commits ahead of the default already; reconcile must count only THIS run's
+# commits, not everything since the default (else a stale reused worktree
+# with 0 new commits masks an empty/failed engine run as reviewable work).
+# Fall back to the default branch name when rev-parse fails (empty repo, no
+# commits yet) — same `WT_DEFAULT` variable, so the two sites can't drift.
+BASELINE_SHA="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo "$WT_DEFAULT")"
 # Record branch + worktree on the row so reapWorktrees() prunes both after the
 # task merges. Bootstrap write (pre-agent), same exception as the claim above;
 # all in-session writes still route through the bookie.
