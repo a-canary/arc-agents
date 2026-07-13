@@ -34,7 +34,7 @@ export function hasSalvageableCommits(db: Database, issueId: string): boolean {
 }
 
 export const SELECT_SQL =
-  "select id, title, kind, coalesce(body_md,'') body from issues where state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
+  "select id, title, kind, state, coalesce(body_md,'') body from issues where ((state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800))) or (state='ready' and hitl=1 and kind='task' and updated_at < unixepoch('now')-7200)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
 
 const ESCALATION = `Risky moves (delete/overwrite beyond your worktree, force-push, prod deploy/restart, docker outside your own stack, spend, secrets, cron/systemd edits) — STOP and dispatch a Task subagent (model: opus) to adjudicate with the exact command and blast radius; proceed only on an explicit APPROVE, else park the task with the denial as evidence.`;
 
@@ -80,13 +80,19 @@ Reply with ONLY JSON: {"gate":"human"|"auto","reason":"<one sentence>","allowed_
 
 if (import.meta.main) {
   const db = new Database(DB);
-  const rows = db.query(SELECT_SQL).all(STAMP) as Array<{ id: string; title: string; kind: string; body: string }>;
+  const rows = db.query(SELECT_SQL).all(STAMP) as Array<{ id: string; title: string; kind: string; state: string; body: string }>;
   let human = 0, auto = 0, skipped = 0;
   for (const r of rows) {
     const v = judge(r.title, r.body);
     if (!v) { skipped++; console.log(`skip (no verdict): ${r.id}`); continue; }
     db.query("update issues set body_md = body_md || ? where id = ?").run(stamp(v), r.id);
     if (v.gate === "human") { human++; console.log(`HUMAN GATE: ${r.id} — ${v.reason}`); continue; }
+    if (r.state === "ready") {
+      // hitl park on a ready task (e.g. auto-oversight parked it): auto verdict lifts the park.
+      db.query("update issues set hitl=0 where id = ? and state='ready'").run(r.id);
+      auto++; console.log(`auto-unparked: ${r.id} — ${v.reason}`);
+      continue;
+    }
     if (r.kind === "task") {
       // Orphaned task that already produced commits (worker branch salvageable): re-running a
       // worker just bounces it back to review — it needs a MERGE REVIEW, not re-execution.
