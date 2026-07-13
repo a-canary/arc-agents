@@ -56,9 +56,12 @@ export function sweepRecovery(
   // 1. Pull all blocked rows. We filter in JS, not SQL, because we need
   //    the alias extracted from evidence — a regex on TEXT is fine but
   //    keeping it here lets the stub-tests reuse the same logic.
+  //    Skip rows with a non-empty blocked_by: those are waiting on HITL
+  //    children to merge and must be unblocked by cascade-on-merge, not
+  //    by the recovery sweep. See recovery-sweep-should-not-unblock-rows-w.
   const blockedRows = db
     .query<{ id: string; evidence_md: string | null }, []>(
-      `SELECT id, evidence_md FROM issues WHERE state='blocked'`,
+      `SELECT id, evidence_md FROM issues WHERE state='blocked' AND blocked_by IS NULL`,
     )
     .all();
 

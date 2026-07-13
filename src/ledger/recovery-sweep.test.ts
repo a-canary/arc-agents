@@ -22,11 +22,12 @@ function ins(
   state: string,
   evidence: string | null,
   project: string = "p",
+  blocked_by: string | null = null,
 ): void {
   db.run(
-    `INSERT INTO issues (id, project, title, body_md, evidence_md, type, state, kind)
-     VALUES (?, ?, 't', '', ?, 'mvp', ?, 'task')`,
-    [id, project, evidence, state],
+    `INSERT INTO issues (id, project, title, body_md, evidence_md, type, state, kind, blocked_by)
+     VALUES (?, ?, 't', '', ?, 'mvp', ?, 'task', ?)`,
+    [id, project, evidence, state, blocked_by],
   );
 }
 
@@ -259,6 +260,38 @@ test("rows from multiple projects are handled together (alias is project-agnosti
   const r = sweepRecovery(db, { now: 1_000_000_000, probe, commandFor: cmdFor });
   expect(r.flipped.sort()).toEqual(["b1", "b2"]);
 });
+test("rows with non-empty blocked_by are skipped even when the alias recovers", () => {
+  // Symptom from recovery-sweep-should-not-unblock-rows-w: a row whose
+  // engine alias recovered (probe rc=0) was flipped blocked→ready while
+  // it still had an unresolved HITL child in blocked_by. Cascade-on-merge
+  // is the only legitimate unblock path for a row with pending deps.
+  const db = setup();
+  ins(db, "b1", "blocked", "engine-alias-no-work:fast", "p", '["hitl-pending"]');
+  ins(db, "b2", "blocked", "engine-alias-no-work:fast", "p", null); // normalized '[]' → NULL post-migration
+  ins(db, "b3", "blocked", "engine-alias-no-work:fast", "p", '["child-a","child-b"]');
+
+  // Insert the children so the constraint check doesn't fire later.
+  ins(db, "hitl-pending", "ready", null, "p", null);
+  ins(db, "child-a", "blocked", null, "p", null);
+  ins(db, "child-b", "ready", null, "p", null);
+
+  const probe = stubProbe({ fast: { rc: 0, stdout: "ok" } });
+  const r = sweepRecovery(db, { now: 1_000_000_000, probe, commandFor: cmdFor });
+
+  // b1, b3 must stay blocked (real deps pending); b2 flips (NULL blocked_by
+  // = post-migration normalize of '[]' or no-deps case). b1/b3 are excluded
+  // by the SQL WHERE (blocked_by IS NULL) entirely, so they never reach
+  // `skipped` — only child-a (blocked, no marker, NULL blocked_by) does.
+  expect(r.flipped).toEqual(["b2"]);
+  expect(r.skipped.sort()).toEqual(["child-a"]);
+  expect(db.query<{ state: string }, []>(`SELECT state FROM issues WHERE id='b1'`).get()?.state).toBe("blocked");
+  expect(db.query<{ state: string }, []>(`SELECT state FROM issues WHERE id='b3'`).get()?.state).toBe("blocked");
+  expect(db.query<{ state: string }, []>(`SELECT state FROM issues WHERE id='b2'`).get()?.state).toBe("ready");
+  // No probe fired for an alias whose only candidates were skipped
+  // (fast in this test had candidates that flipped, so the probe does fire
+  // — this test only asserts the per-row outcome).
+});
+
 test("rc=0 with empty stdout is NOT recovery — that is the no-work symptom", () => {
   const db = setup();
   ins(db, "e1", "blocked", "engine-alias-no-work:fast");
