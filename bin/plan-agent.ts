@@ -296,7 +296,11 @@ async function main(): Promise<void> {
   const request = (getFlag(argv, "request") ?? "").trim();
   if (!request) { process.stderr.write("plan-agent: --request is required\n"); process.exit(2); }
   const thread = getFlag(argv, "thread") ?? "t-" + Math.random().toString(36).slice(2, 10);
-  const project = getFlag(argv, "project") ?? "arc-webui";
+  // Empty/whitespace --project (e.g. /chat/draft call before chat_meta.project
+  // is set) must NOT propagate empty to the minted PRD (see
+  // analysis-1783934070.md Pattern 3 — 6 webui→arc-agents misroutes on
+  // 2026-07-13 from kind=prd rows filed with project='').
+  const project = getFlag(argv, "project")?.trim() || "arc-webui";
   if (!resolveProjectRepo(project)) {
     process.stderr.write(
       `plan-agent: project '${project}' has no repo mapping — refusing to mint an unroutable issue. ` +

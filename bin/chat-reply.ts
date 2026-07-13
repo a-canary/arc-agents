@@ -46,7 +46,10 @@ function die(msg: string, code = 1): never {
 function cli() {
   const blogId = getFlag("blog-id") ?? die("--blog-id required");
   const body = getFlag("body") ?? die("--body required");
-  const project = getFlag("project") ?? "arc-agents";
+  // Empty/whitespace --project must NOT propagate empty to the issues row —
+// the factory falls back to arc-agents for empty projects, silently
+// misrouting non-arc-agents work (see analysis-1783934070.md Pattern 3).
+  const project = getFlag("project")?.trim() || "arc-agents";
 
   const result = handleReply({ blog_id: blogId, body, project });
   process.stdout.write(JSON.stringify(result) + "\n");
