@@ -145,7 +145,7 @@ function parseGithubSlug(parentRepo: string): string | null {
   const r = git(parentRepo, ["remote", "get-url", "origin"]);
   if (!r.ok || !r.out) return null;
   const m = r.out.match(/[:/]([^/:]+\/[^/:]+?)(?:\.git)?$/);
-  return m ? m[1] : null;
+  return m && m[1] ? m[1] : null;
 }
 
 // Runner seam for `gh pr list` — production calls the real `gh` CLI; tests
