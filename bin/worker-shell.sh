@@ -31,6 +31,22 @@ reconcile_decision() {
   fi
 }
 
+# Structured salvage payload (pure: args → JSON on stdout). Emitted as a
+# `salvage` ledger event alongside the prose evidence when a headless worker
+# leaves commits but no terminal self-report, so a recovery worker/gate reads
+# machine-readable base/head/commits/branch/exit_code/pr_url instead of parsing
+# English. Empty pr_url → JSON null (PR not discovered). Logged under the `note`
+# event kind (the schema CHECK-constrained kind set); consumers match the inner
+# `"kind":"salvage"` marker in the payload.
+#   $1=base $2=head $3=commits $4=branch $5=exit_code $6=pr_url
+salvage_payload_json() {
+  local pr="$6"
+  local pr_json="null"
+  [[ -n "$pr" ]] && pr_json="\"$pr\""
+  printf '{"kind":"salvage","base":"%s","head":"%s","commits":%d,"branch":"%s","exit_code":%d,"pr_url":%s,"reason":"commits present, no terminal self-report"}' \
+    "$1" "$2" "$3" "$4" "$5" "$pr_json"
+}
+
 # Per-worker logfile for the headless child's stdout/stderr (Gap 1: M-0002
 # observability — a stalled headless worker otherwise leaves no trail, since it
 # inherits only the tmux pane TTY). Pure: $1=worker name → path on stdout.
@@ -536,8 +552,19 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count "${BASELINE_SHA}..HEAD" 2>/dev/null || echo 0)"
   if [[ "$(reconcile_decision "$AGENT_RC" "$COMMITS_AHEAD")" == "review" ]]; then
     HEAD_SHA="$(git -C "$WT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    HEAD_FULL="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    # A crashed headless worker may have already filed a PR before exiting.
+    # Discover it (best-effort) so recovery doesn't re-file. `gh` absent/
+    # unauthed/no-PR all collapse to empty → pr_url null in the payload.
+    DISCOVERED_PR="$(gh pr view "$WT_BRANCH" --json url -q .url 2>/dev/null || true)"
     EVIDENCE="headless reconcile: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
     bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state review --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+    # Structured handoff for the recovery worker/gate (Pattern 1, analysis-1783935600).
+    # ponytail: base/head/branch/pr_url interpolated raw — all are git SHAs/refnames
+    # or a github URL (no `"`/`\`), so JSON stays valid; add jq-escaping only if a
+    # value ever carries those chars. base+head both full SHAs so recovery joins cleanly.
+    SALVAGE_JSON="$(salvage_payload_json "$BASELINE_SHA" "$HEAD_FULL" "$COMMITS_AHEAD" "$WT_BRANCH" "$AGENT_RC" "$DISCOVERED_PR")"
+    bun "$LEDGER_BIN" event "$CLAIM_ID" note "$SALVAGE_JSON" "${DB_FLAG[@]}" --agent "$WORKER" >/dev/null 2>&1 || true
     capture_scrollback_to_log "$WORKER" "$LOG_FILE"
     exit "$AGENT_RC"
   fi
