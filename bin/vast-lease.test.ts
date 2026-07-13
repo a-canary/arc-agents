@@ -1,6 +1,6 @@
 import { describe, expect, it, beforeEach, afterEach } from "bun:test";
 import { spawnSync, type SpawnSyncReturns } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, mkdirSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -158,5 +158,31 @@ describe("vast-lease dead-PID reclaim (regression: grllm-59-specialization-witho
     expect(r.status).toBe(0);
     const parsed = JSON.parse(r.stdout);
     expect(parsed.expired).toBe(true);
+  });
+
+  // ponytail: --dph on acquire is the labelled-estimate handoff to vast-billing.
+  // We don't deep-test vast-billing here (its own test file does); we only assert
+  // that the spend.json file is created and contains a sensible record.
+  it("acquire --dph records a labelled spend estimate via vast-billing", () => {
+    const r = run(
+      ["acquire", "--instance", instance, "--holder", "billing-test", "--ttl", "60", "--dph", "0.178"],
+      { VAULT_DIR: vault },
+    );
+    expect(r.status).toBe(0);
+    const spendPath = join(vault, "vast", instance, "spend.json");
+    expect(existsSync(spendPath)).toBe(true);
+    const s = JSON.parse(readFileSync(spendPath, "utf8"));
+    expect(s.rateEstimateDph).toBeCloseTo(0.178);
+    expect(s.source).toBe("estimate");
+    expect(s.lastReconciledAt).toBeNull();
+  });
+
+  it("acquire without --dph does NOT write spend.json (back-compat path)", () => {
+    const r = run(
+      ["acquire", "--instance", instance, "--holder", "no-billing", "--ttl", "60"],
+      { VAULT_DIR: vault },
+    );
+    expect(r.status).toBe(0);
+    expect(existsSync(join(vault, "vast", instance, "spend.json"))).toBe(false);
   });
 });
