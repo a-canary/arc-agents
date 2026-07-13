@@ -58,6 +58,24 @@ async function stubDiffReview(db: string, id: string): Promise<void> {
   );
 }
 
+// in_place_review is the structurally separate gate for the --in-place
+// merge route (slice failed-classifier-keys-off-structured-ev, from PRD
+// enforce-merge-truth-code-verified-eviden). Same reviewer identity helper
+// uses a non-worker stub so the independence check passes; justification
+// stays under the 280-char ceiling.
+async function stubInPlaceReview(db: string, id: string): Promise<void> {
+  await run(
+    db,
+    "event",
+    id,
+    "in_place_review",
+    JSON.stringify({
+      reviewer_identity: "stub-in-place-reviewer",
+      justification: "stub for tests; row is hygiene-only and the worktree is preserved",
+    }),
+  );
+}
+
 test("init + create + list + claim", async () => {
   const { db, cleanup } = freshDb();
   try {
@@ -2265,7 +2283,7 @@ test("update --in-place refused when --evidence missing (ghost-merge guard)", as
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await stubDiffReview(db, c.id);
+    await stubInPlaceReview(db, c.id);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toMatch(/--evidence.*required|--in-place requires --evidence/);
@@ -2279,7 +2297,7 @@ test("update --in-place refused when --evidence exceeds 280 chars", async () => 
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await stubDiffReview(db, c.id);
+    await stubInPlaceReview(db, c.id);
     const long = "x".repeat(281);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", long);
     expect(r.exitCode).not.toBe(0);
@@ -2289,17 +2307,18 @@ test("update --in-place refused when --evidence exceeds 280 chars", async () => 
   }
 });
 
-test("update --in-place with valid --evidence (≤280) and diff_review succeeds", async () => {
+test("update --in-place with valid --evidence (≤280) and in_place_review succeeds", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await stubDiffReview(db, c.id);
+    await stubInPlaceReview(db, c.id);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "hygiene task, no code change");
     if (r.exitCode !== 0) {
       const stderr = r.stderr.toString();
       if (stderr.includes("gh ") || stderr.includes("merge truth")) {
         expect(stderr).not.toMatch(/--evidence.*required/);
+        expect(stderr).not.toMatch(/in_place_review/);
         return;
       }
       throw new Error(stderr);
@@ -2352,7 +2371,7 @@ test("update --in-place refused when --pr also supplied (mutex existing guard)",
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await stubDiffReview(db, c.id);
+    await stubInPlaceReview(db, c.id);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--pr", "#99", "--evidence", "x");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toMatch(/mutually exclusive/);
@@ -2368,7 +2387,7 @@ test("update --in-place refused when row's worktree_path no longer exists on dis
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
     const nonexistent = "/tmp/this-worktree-does-not-exist-" + Date.now();
     await runStrict(db, "update", c.id, "--worktree", nonexistent);
-    await stubDiffReview(db, c.id);
+    await stubInPlaceReview(db, c.id);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "hygiene only");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toMatch(/no longer exists on disk/);
@@ -2383,13 +2402,14 @@ test("update --in-place succeeds when worktree_path exists on disk", async () =>
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
     await runStrict(db, "update", c.id, "--worktree", process.cwd());
-    await stubDiffReview(db, c.id);
+    await stubInPlaceReview(db, c.id);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "hygiene task");
     if (r.exitCode !== 0) {
       const stderr = r.stderr.toString();
       if (stderr.includes("gh ") || stderr.includes("merge truth")) {
         expect(stderr).not.toMatch(/--evidence.*required/);
         expect(stderr).not.toMatch(/no longer exists on disk/);
+        expect(stderr).not.toMatch(/in_place_review/);
         return;
       }
       throw new Error(stderr);
@@ -2406,13 +2426,107 @@ test("update --in-place with no worktree_path set (rows from non-worktree source
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
-    await stubDiffReview(db, c.id);
+    await stubInPlaceReview(db, c.id);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "CLI task, no worktree");
     if (r.exitCode !== 0) {
       const stderr = r.stderr.toString();
       if (stderr.includes("gh ") || stderr.includes("merge truth")) {
         expect(stderr).not.toMatch(/--evidence.*required/);
         expect(stderr).not.toMatch(/no longer exists on disk/);
+        expect(stderr).not.toMatch(/in_place_review/);
+        return;
+      }
+      throw new Error(stderr);
+    }
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string } };
+    expect(shown.issue.state).toBe("merged");
+  } finally {
+    cleanup();
+  }
+});
+
+// --in-place gate (bin-ledger-ts-inplace-requires-in-place-review-event) ----
+// The --in-place route requires an `in_place_review` event authored by a
+// non-worker identity. PRD enforce-merge-truth-code-verified-eviden §"In-
+// place route": "Keep the flag but require an `in_place_review` event
+// authored by a non-worker identity before the transition succeeds... The
+// 280-char `--evidence` note is retained as an operator hint but is no
+// longer the sole gate."
+
+test("update --in-place refused when no in_place_review event exists", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "ghost merge attempt");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/no in_place_review event/);
+    expect(r.stderr.toString()).toMatch(/refuse merged/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place refused when only a diff_review event exists (wrong gate kind)", async () => {
+  // Structural separation: a worker's diff_review cannot wave through an
+  // in-place ghost merge. diff_review and in_place_review are different
+  // event kinds; the --in-place path looks ONLY for in_place_review.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await stubDiffReview(db, c.id);
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "ghost via diff_review only");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/no in_place_review event/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place refused when in_place_review payload is malformed JSON", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await run(db, "event", c.id, "in_place_review", "not json at all");
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "ghost attempt");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/in_place_review payload is not valid JSON/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place refused when in_place_review justification exceeds 280 chars", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    const long = "x".repeat(281);
+    await run(db, "event", c.id, "in_place_review", JSON.stringify({ reviewer_identity: "reviewer-x", justification: long }));
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "x");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/280/);
+    expect(r.stderr.toString()).toMatch(/ghost-merge/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --in-place uses the LATEST in_place_review event (not a stale one)", async () => {
+  // First event is malformed; second is good. Latest wins.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    await run(db, "event", c.id, "in_place_review", "not json");
+    await run(db, "event", c.id, "in_place_review", JSON.stringify({ reviewer_identity: "real-reviewer", justification: "ok, hygiene-only" }));
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--in-place", "--evidence", "hygiene only");
+    if (r.exitCode !== 0) {
+      const stderr = r.stderr.toString();
+      if (stderr.includes("gh ") || stderr.includes("merge truth")) {
+        expect(stderr).not.toMatch(/in_place_review payload is not valid/);
         return;
       }
       throw new Error(stderr);
