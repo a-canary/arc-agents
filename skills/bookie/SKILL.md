@@ -94,3 +94,7 @@ Notes:
 - CHECK violation → return error with offending column.
 - Unique id collision after 5 retries → escalate (should never happen with 4-char suffix on slug).
 - Schema migration not applied → run `bun ~/repos/arc-agents/src/ledger/migrate.ts` first.
+
+## Authorize row (HITL action-gate, not merge-gate)
+
+An HITL [Decomposition](#decomposition) child titled `Authorize <action>` (commit, push, deploy, force-push, …) is a **gate on the named action**, not on the parent merge. The child row's work is the action itself — committing the staged files, pushing the branch, deploying the artifact. The parent's `diff_review` verdict drives the parent's `merge` transition; it says nothing about whether the authorize row's action should happen. Cancel the authorize row only when (a) the worker asks with explicit evidence the action was never needed, or (b) the human says so. Auto-cancelling on `verdict=comment` because "no work to merge" is the bug pattern at `authorize-commit-for-auto-close-path-com` (bookie, ts=1783902543) — the parent merged via `--in-place` shortly after, but the cancelled child orphaned the unblock cascade. Bookie rule #8 (in `.claude/agents/bookie.md`) hard-codes this; mirrors in CONTEXT.md as `Authorize row`.
