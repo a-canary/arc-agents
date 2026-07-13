@@ -1968,6 +1968,25 @@ test("create --project accepts lower-case", async () => {
   }
 });
 
+// Regression: empty/whitespace --project must NOT propagate empty to the row.
+// ?? only substitutes on null/undefined; trim-then-fall-back defends at the
+// bookie layer so callers can't accidentally mint project='' rows that the
+// factory then misroutes into the arc-agents default worktree
+// (analysis-1783934070.md Pattern 3, 2026-07-13).
+test("create --project='' / whitespace normalises to arc-agents default", async () => {
+  for (const p of ["", "   ", "\t"]) {
+    const { db, cleanup } = freshDb();
+    try {
+      await run(db, "init");
+      const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", `t-${p.length}`, "--project", p)) as { id: string };
+      const r = (await run(db, "show", c.id)) as { issue: { project: string } };
+      expect(r.issue.project).toBe("arc-agents");
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 test("update --project rejects mixed-case", async () => {
   const { db, cleanup } = freshDb();
   try {

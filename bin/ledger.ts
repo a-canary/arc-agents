@@ -129,7 +129,11 @@ switch (cmd) {
     if (errs.length > 0) {
       die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
     }
-    const project = input.project ?? "arc-agents";
+    // Empty/whitespace --project must NOT propagate empty to the row — the factory
+  // falls back to arc-agents for empty projects, silently misrouting non-arc-agents
+  // work (see analysis-1783934070.md Pattern 3). ?? only substitutes on null/
+  // undefined; trim-then-fall-back defends at the bookie layer.
+  const project = input.project?.trim() || "arc-agents";
     const kind = input.kind!;
     const type = input.type!;
     const title = input.title!;
@@ -822,7 +826,9 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const observed = getFlag("observed-in-task");
     const agent = getFlag("agent") ?? "bookie";
-    const project = getFlag("project") ?? "arc-agents";
+    // Empty/whitespace --project must NOT propagate empty to the followup rows
+    // (same trap as create + plan + chat-reply — analysis-1783934070.md Pattern 3).
+    const project = getFlag("project")?.trim() || "arc-agents";
     const projectErrs = validateProjectLowerCase(project);
     if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
     const created: { id: string; title: string; type: string }[] = [];

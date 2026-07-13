@@ -76,7 +76,12 @@ function parseRelationships(raw: readonly string[]): Relationship[] {
   return out;
 }
 
-const project = getFlag("project") ?? "arc-webui";
+// Empty/whitespace --project (e.g. /chat/draft call before chat_meta.project is
+// set) must NOT propagate empty to the PRD + tracer tasks — empty project
+// silently dispatches into the arc-agents default worktree (see
+// analysis-1783934070.md Pattern 3, 2026-07-13: 6 webui→arc-agents misroutes).
+// ?? only substitutes on null/undefined, so guard with trim() here.
+const project = getFlag("project")?.trim() || "arc-webui";
 const title = getFlag("title");
 const body = getFlag("body") ?? "";
 const thread = getFlag("thread");
