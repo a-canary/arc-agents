@@ -9,6 +9,7 @@
 // tests can stub.
 
 import { parsePrUrl } from "./deploy-preview";
+import { resolveProjectRepo } from "../project-repo-map";
 // Re-export so downstream callers (and tests) can keep importing from
 // merge-truth without knowing the canonical lives in deploy-preview.ts.
 export { parsePrUrl };
@@ -144,10 +145,68 @@ export async function verifyMergeTruth(args: {
   };
 }
 
-// Default runner used by the CLI. Tests inject a fake runner instead.
-export const defaultRunner: Runner = async (cmd, args) => {
-  const proc = Bun.spawn([cmd, ...args], { stdout: "pipe", stderr: "pipe" });
-  const stdout = await new Response(proc.stdout).text();
-  const exitCode = await proc.exited;
-  return { stdout, exitCode };
-};
+// Default runner factory used by the CLI. Accepts the row's `project` so we
+// can pin the spawned `git` / `gh` process to the project repo's cwd — when
+// the caller is in `~/`, a worktree dir, or `~/trash/<ts>/`, the inherited
+// CWD is not a git repo and the merge-guard fires `git merge-base` from
+// nowhere, exiting 128 with "fatal: not a git repository" on stderr. The
+// pre-fix runner only captured stdout, so the operator-facing refusal
+// surfaced as `refused state=merged: git merge-base exited 128: ` — a
+// trailing colon and nothing after it (analysis-1783937189 Pattern 1, 32
+// churn events across 10 projects in 23d).
+//
+// Three fixes:
+//   1. cwd = resolveProjectRepo(project) ?? process.cwd() (worktree reaped,
+//      operator in a worktree, the cron firing from `~/` — all still find
+//      the repo via the row's project field).
+//   2. stderr is appended to stdout in the result, so the operator-facing
+//      refusal message includes the actual reason.
+//   3. 30s timeout — git merge-base is in-memory and should finish in <1s;
+//      a corrupt .git could otherwise hang the validator forever.
+//
+// Tests inject a fake runner instead — they don't go through this factory.
+export const DEFAULT_RUNNER_TIMEOUT_MS = 30_000;
+
+export function defaultRunner(project: string | null | undefined): Runner {
+  return async (cmd, args) => {
+    const cwd = resolveProjectRepo(project) ?? process.cwd();
+    const proc = Bun.spawn([cmd, ...args], {
+      cwd,
+      stdout: "pipe",
+      stderr: "pipe",
+    });
+    // Race the process against a wall-clock timer. If the timer wins, kill
+    // the child and surface exit 124 (timeout convention) with a descriptive
+    // stdout so the validator can refuse the merge with a real reason.
+    // ponytail: kill on timeout; without this a corrupt .git could hang
+    // the validator forever. merge-base is in-memory; >30s = something is
+    // wrong. Bump if you ever point this at a remote refspec.
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    const timeout = new Promise<"timeout">((resolve) => {
+      timer = setTimeout(() => resolve("timeout"), DEFAULT_RUNNER_TIMEOUT_MS);
+    });
+    const winner = await Promise.race([proc.exited, timeout]);
+    if (timer !== null) clearTimeout(timer);
+    if (winner === "timeout") {
+      proc.kill();
+      // Drain whatever the child wrote so the message is grounded in real
+      // output, not a generic "timed out" string.
+      const [stdout, stderr] = await Promise.all([
+        new Response(proc.stdout).text().catch(() => ""),
+        new Response(proc.stderr).text().catch(() => ""),
+      ]);
+      return {
+        stdout: `${stdout}${stderr}\ntimeout after ${DEFAULT_RUNNER_TIMEOUT_MS}ms`,
+        exitCode: 124,
+      };
+    }
+    const [stdout, stderr] = await Promise.all([
+      new Response(proc.stdout).text(),
+      new Response(proc.stderr).text(),
+    ]);
+    // Merge stderr into stdout so refusal messages carry the actual reason
+    // (e.g. "fatal: not a git repository") instead of a trailing colon.
+    const merged = stderr ? `${stdout}${stdout.endsWith("\n") ? "" : "\n"}${stderr}` : stdout;
+    return { stdout: merged, exitCode: winner };
+  };
+}
