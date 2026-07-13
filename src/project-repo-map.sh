@@ -7,3 +7,12 @@ project_repo_map_lookup() {
     onenation) echo "OneNation" ;;
   esac
 }
+
+# Parked lanes: mirror of PARKED_PROJECTS in project-repo-map.ts. Returns 0
+# (true) if the project is a GPU-spend parked lane, 1 otherwise. Keep in parity.
+is_parked_project() {
+  case "$1" in
+    starlight-slm|local-models) return 0 ;;
+    *) return 1 ;;
+  esac
+}
