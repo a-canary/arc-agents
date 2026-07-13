@@ -23,6 +23,7 @@ case "${PROJECT}" in
   webui-specs)  EXPECTED_REPO="a-canary/webui-specs" ;;
   conjecture)   EXPECTED_REPO="a-canary/Conjecture" ;;
   starlight-slm) EXPECTED_REPO="a-canary/Starlight-SLM" ;;
+  trading)      EXPECTED_REPO="a-canary/Trading" ;;
   *)            EXPECTED_REPO="a-canary/${PROJECT}" ;;
 esac
 ACTUAL_REPO="$(echo "$PR_URL" | sed -E 's|.*github.com/([^/]+/[^/]+)/pull/.*|\1|')"
@@ -54,6 +55,7 @@ for defense in depth.
 | `discord-bridge` | `a-canary/discord-bridge` | 7 PRs |
 | `conjecture` | `a-canary/Conjecture` | 1 PR (#19, capital C) |
 | `starlight-slm` | `a-canary/Starlight-SLM` | 2 PRs (#8, #19, capital S-L-M) |
+| `trading` | `a-canary/Trading` | 1 PR (#166, capital T — verified 2026-07-11) |
 
 When adding a new project whose local directory name differs from its
 GitHub repo slug, extend the `case` block above in this same order and
