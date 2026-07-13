@@ -52,14 +52,101 @@ test("verifyMergeTruth refuses when gh reports OPEN", async () => {
   if (!r.ok) expect(r.reason).toContain("expected 'MERGED'");
 });
 
-test("verifyMergeTruth refuses when gh reports CLOSED", async () => {
+test("verifyMergeTruth refuses when gh reports CLOSED and stays CLOSED across retries", async () => {
+  // gh can report stale CLOSED for ~30-90s after a real merge (see
+  // analysis-1783934669.md Pattern 1). verifyMergeTruth retries CLOSED with
+  // bounded backoff. Here we exhaust all 4 attempts (1 initial + 3 retries)
+  // and CLOSED never becomes MERGED → final refusal. No sleep injected, so
+  // the test runs instantly.
+  const { runner, calls } = captureRunner("CLOSED");
   const r = await verifyMergeTruth({
     prUrl: "#92",
     localSha: null,
-    run: okRunner("CLOSED"),
+    run: runner,
+    sleep: () => Promise.resolve(),
   });
   expect(r.ok).toBe(false);
   if (!r.ok) expect(r.reason).toContain("'CLOSED'");
+  // 1 initial attempt + 3 retries = 4 total gh calls before final refusal.
+  expect(calls).toHaveLength(4);
+});
+
+test("verifyMergeTruth accepts MERGED after transient CLOSED (bounded retry)", async () => {
+  // Simulates the race window: first three gh reads return CLOSED (stale
+  // cache), fourth returns MERGED. With bounded retry + zero sleep, the
+  // function succeeds and gh was called 4 times.
+  const schedule = ["CLOSED", "CLOSED", "CLOSED", "MERGED"];
+  const { runner, calls } = captureRunner(""); // default unused; overridden below
+  let i = 0;
+  const seqRunner: Runner = async (cmd, args) => {
+    calls.push({ cmd, args });
+    return { stdout: schedule[i++] ?? "MERGED", exitCode: 0 };
+  };
+  const r = await verifyMergeTruth({
+    prUrl: "https://github.com/x/y/pull/88",
+    localSha: null,
+    run: seqRunner,
+    sleep: () => Promise.resolve(),
+  });
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    expect(r.route).toBe("pr");
+    expect(r.detail).toContain("x/y#88");
+  }
+  expect(calls).toHaveLength(4);
+});
+
+test("verifyMergeTruth OPEN state is NOT retried (real non-merge)", async () => {
+  // OPEN is not a stale-cache symptom — it's a real "PR is still open"
+  // signal. We refuse on the first read; no retry, no sleep.
+  const { runner, calls } = captureRunner("OPEN");
+  const r = await verifyMergeTruth({
+    prUrl: "#9",
+    localSha: null,
+    run: runner,
+    sleep: () => Promise.resolve(),
+  });
+  expect(r.ok).toBe(false);
+  if (!r.ok) expect(r.reason).toContain("'OPEN'");
+  expect(calls).toHaveLength(1);
+});
+
+test("verifyMergeTruth CLOSED-retry detail mentions bounded attempts", async () => {
+  // The refusal message after exhausting retries should make it clear the
+  // guard waited through the bounded retry window before giving up, so
+  // workers know it wasn't a single-shot flake.
+  const { runner, calls } = captureRunner("CLOSED");
+  const r = await verifyMergeTruth({
+    prUrl: "#92",
+    localSha: null,
+    run: runner,
+    sleep: () => Promise.resolve(),
+  });
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.reason).toContain("'CLOSED'");
+    expect(r.reason).toMatch(/retry|attempt/i);
+  }
+  expect(calls).toHaveLength(4);
+});
+
+test("verifyMergeTruth uses injected sleep (default is real setTimeout)", async () => {
+  // Sleep call counter — verify the default sleep path is the real
+  // setTimeout-shaped promise. We can't intercept setTimeout, but we can
+  // verify the optional sleep parameter is honored when supplied (zero
+  // calls to sleep when gh returns MERGED on first try).
+  let sleepCalls = 0;
+  const r = await verifyMergeTruth({
+    prUrl: "#1",
+    localSha: null,
+    run: okRunner("MERGED"),
+    sleep: () => {
+      sleepCalls++;
+      return Promise.resolve();
+    },
+  });
+  expect(r.ok).toBe(true);
+  expect(sleepCalls).toBe(0); // no retry needed
 });
 
 test("verifyMergeTruth accepts MERGED via PR url", async () => {

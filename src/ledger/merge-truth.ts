@@ -19,6 +19,15 @@ export type MergeTruthFail = { ok: false; reason: string };
 export type MergeTruthResult = MergeTruthOk | MergeTruthFail;
 
 export type Runner = (cmd: string, args: string[]) => Promise<{ stdout: string; exitCode: number }>;
+export type Sleep = (ms: number) => Promise<void>;
+
+// Bounded retry schedule for transient CLOSED state (gh can report stale
+// CLOSED for ~30-90s after a real merge while the API/GraphQL cache
+// catches up — see analysis-1783934669.md Pattern 1). Total wall time
+// before final refusal: 5s + 15s + 30s = 50s. OPEN is NOT retried — it's a
+// real non-merge signal, not a stale-cache symptom.
+export const PR_RETRY_BACKOFF_MS: readonly number[] = [5000, 15000, 30000];
+const DEFAULT_SLEEP: Sleep = (ms) => new Promise((r) => setTimeout(r, ms));
 
 const PR_NUMBER_RE = /(?:\/pull\/|^#?)(\d+)$/;
 // pattern: improve-architecture-verifyprmerged-runs
@@ -36,6 +45,7 @@ export function extractPrNumber(prUrlOrNum: string | null | undefined): number |
 export async function verifyPrMerged(
   prUrlOrNum: string | null | undefined,
   run: Runner,
+  sleep: Sleep = DEFAULT_SLEEP,
 ): Promise<MergeTruthResult> {
   const num = extractPrNumber(prUrlOrNum);
   if (num === null) {
@@ -52,17 +62,45 @@ export async function verifyPrMerged(
   const ghArgs = parsed
     ? ["pr", "view", String(num), "--repo", `${parsed.owner}/${parsed.repo}`, "--json", "state", "-q", ".state"]
     : ["pr", "view", String(num), "--json", "state", "-q", ".state"];
-  const r = await run("gh", ghArgs);
-  if (r.exitCode !== 0) {
-    return { ok: false, reason: `gh pr view ${num} exited ${r.exitCode}: ${r.stdout.trim()}` };
+
+  // Bounded retry: gh can report stale CLOSED for ~30-90s after the actual
+  // merge event while the API/GraphQL node catches up. We retry CLOSED
+  // up to PR_RETRY_BACKOFF_MS.length times with the configured backoff;
+  // OPEN or any other non-MERGED state refuses immediately (it's a real
+  // non-merge signal, not a stale-cache symptom).
+  let attempts = 0;
+  for (;;) {
+    attempts++;
+    const r = await run("gh", ghArgs);
+    if (r.exitCode !== 0) {
+      return { ok: false, reason: `gh pr view ${num} exited ${r.exitCode}: ${r.stdout.trim()}` };
+    }
+    const state = r.stdout.trim();
+    if (state === "MERGED") {
+      return parsed
+        ? { ok: true, route: "pr", detail: `PR ${parsed.owner}/${parsed.repo}#${num} MERGED` }
+        : { ok: true, route: "pr", detail: `PR #${num} MERGED (cwd-resolved, no full URL supplied)` };
+    }
+    // Only CLOSED is treated as transient; OPEN/anything else refuses
+    // immediately. The retry budget is consumed only on CLOSED reads.
+    if (state !== "CLOSED") {
+      return {
+        ok: false,
+        reason: `PR #${num} state is '${state}', expected 'MERGED'. Wait for the PR to actually land on main before closing the row.`,
+      };
+    }
+    const backoff = PR_RETRY_BACKOFF_MS[attempts - 1];
+    if (backoff === undefined) {
+      // Out of retry budget; final refusal. Surface the attempt count so
+      // workers can tell the difference between a fresh flake and a guard
+      // that waited through the full bounded window.
+      return {
+        ok: false,
+        reason: `PR #${num} state is 'CLOSED' after ${attempts} attempts (bounded retry exhausted). Expected 'MERGED'. If the PR actually merged, the GitHub API/GraphQL cache may be lagging past ${PR_RETRY_BACKOFF_MS.reduce((a, b) => a + b, 0) / 1000}s.`,
+      };
+    }
+    await sleep(backoff);
   }
-  const state = r.stdout.trim();
-  if (state !== "MERGED") {
-    return { ok: false, reason: `PR #${num} state is '${state}', expected 'MERGED'. Wait for the PR to actually land on main before closing the row.` };
-  }
-  return parsed
-    ? { ok: true, route: "pr", detail: `PR ${parsed.owner}/${parsed.repo}#${num} MERGED` }
-    : { ok: true, route: "pr", detail: `PR #${num} MERGED (cwd-resolved, no full URL supplied)` };
 }
 
 const SHA_RE = /^[0-9a-f]{7,40}$/i;
@@ -84,9 +122,10 @@ export async function verifyMergeTruth(args: {
   localSha: string | null | undefined;
   inPlace?: boolean;
   run: Runner;
+  sleep?: Sleep;
 }): Promise<MergeTruthResult> {
   if (args.localSha) return verifyLocalMerged(args.localSha, args.run);
-  if (args.prUrl) return verifyPrMerged(args.prUrl, args.run);
+  if (args.prUrl) return verifyPrMerged(args.prUrl, args.run, args.sleep);
   // Third route: explicit in-place acknowledgement. The CLI enforces a mutex
   // between --in-place and --pr (bin/ledger.ts `update` verb), so by the time
   // we reach this branch prUrl is guaranteed null. localSha and inPlace are
