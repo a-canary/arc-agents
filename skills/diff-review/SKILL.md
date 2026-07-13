@@ -65,14 +65,20 @@ Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is
 1. Capture the diff: `git diff $(git merge-base HEAD origin/main)..HEAD` (or `--cached` if staged).
 2. Capture the brief: `bun bin/ledger.ts show <task-id>`, extract `body_md` + `acceptance_md`.
 3. Identify touched ADRs: any `docs/adr/*.md` in the diff, plus ADRs cited in the brief.
-4. Spawn an independent reviewer via `claude-afk` (observable headless claude in tmux — hermetic settings, no shared hooks). Prompt below. Example:
-   ```bash
-   claude-afk "$(cat <<'PROMPT'
-   <reviewer prompt template>
-   PROMPT
-   )" --timeout 600 --session-prefix diff-review > /tmp/diff-reviewer.json
-   ```
-   Then extract: `RESULT=$(jq -r '.result' /tmp/diff-reviewer.json)`.
+4. Spawn an independent reviewer. The canonical channel depends on the worker harness:
+
+   - **Headless claude workers (default):** spawn via `claude-afk` — observable headless claude in tmux, hermetic settings, no shared hooks. Example:
+     ```bash
+     claude-afk "$(cat <<'PROMPT'
+     <reviewer prompt template>
+     PROMPT
+     )" --timeout 600 --session-prefix diff-review > /tmp/diff-reviewer.json
+     ```
+     Then extract: `RESULT=$(jq -r '.result' /tmp/diff-reviewer.json)`.
+
+   - **pi-coding-agent workers:** `Agent` / `Task` is NOT a built-in tool — it ships as the opt-in subagent extension at `examples/extensions/subagent/` inside the `@earendil-works/pi-coding-agent` package. If your pi profile loads that extension, dispatch via `pi -p` (or its RPC mode) instead of `claude-afk`. The contract is the same: an isolated session that has never seen the worker's reasoning.
+
+   - **No spawn channel at all (rare, harness-limited):** if neither `claude-afk` nor a subagent extension is available, perform the review **in the worker process** but emit the contract under an `reviewer_identity` that **names the limitation honestly** (e.g. `arc-webui-direct-self-review-no-agent-tool`), include a `self_review_limitation` field in the payload body explaining what was missing, and keep the rest of the schema intact. The merge gate accepts this because `reviewer_identity` differs from `claimed_by`; the SPIRIT of independence is weakened but visible. Operator may re-review via a fresh claude/haiku session if desired. **Always prefer installing the subagent extension over relying on this fallback.**
 5. Validate the returned JSON parses against the schema. If malformed, re-prompt once; if still malformed, fail loud and decompose.
 6. Address every `surprises_vs_brief`, `gaps_vs_brief`, `adr_conflicts` entry by either editing the diff (then re-running) or including an explicit justification in `evidence_md` at merge time naming each unresolved item.
 7. Emit the report as a ledger event:
@@ -131,6 +137,16 @@ No editorializing. No output outside the JSON object.
 === DIFF ===
 <git diff output>
 ```
+
+## Harness-specific spawn channel (cheat sheet)
+
+| Worker harness | Spawn command | Independent? |
+| --- | --- | --- |
+| `claude -p` headless (arc-agents default) | `claude-afk ... --session-prefix diff-review` | Yes (fresh session, hermetic settings, no shared hooks) |
+| pi-coding-agent (with subagent extension loaded) | `pi -p` or RPC mode dispatched by an extension | Yes (fresh subagent with no shared reasoning) |
+| pi-coding-agent (no extension loaded) | direct self-review with honest `reviewer_identity` label | No (same reasoning trace); document via `self_review_limitation` field |
+
+If the table doesn't match your harness, fix the table — don't silently fall back.
 
 ## Enforcement
 
