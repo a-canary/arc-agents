@@ -6,12 +6,16 @@ import { slugify, shortId } from "./db";
 
 // ─── Types ────────────────────────────────────────────────────────────────────
 
+export type PrState = "open" | "merged" | "closed";
+
 export interface BlogPostInput {
   project: string;
   title: string;
   body_md: string;
   artifact_path?: string;
   origin_task_id?: string;
+  pr_url?: string;
+  pr_state?: PrState;
 }
 
 export interface BlogPost extends BlogPostInput {
@@ -41,8 +45,8 @@ function mintBlogId(db: Database, title: string): string {
 export function createBlogPost(db: Database, input: BlogPostInput): BlogPost {
   const id = mintBlogId(db, input.title);
   db.run(
-    `INSERT INTO blog (id, project, title, body_md, artifact_path, origin_task_id)
-     VALUES (?, ?, ?, ?, ?, ?)`,
+    `INSERT INTO blog (id, project, title, body_md, artifact_path, origin_task_id, pr_url, pr_state)
+     VALUES (?, ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       input.project,
@@ -50,6 +54,8 @@ export function createBlogPost(db: Database, input: BlogPostInput): BlogPost {
       input.body_md,
       input.artifact_path ?? null,
       input.origin_task_id ?? null,
+      input.pr_url ?? null,
+      input.pr_state ?? null,
     ],
   );
   return {
@@ -59,6 +65,8 @@ export function createBlogPost(db: Database, input: BlogPostInput): BlogPost {
     body_md: input.body_md,
     artifact_path: input.artifact_path,
     origin_task_id: input.origin_task_id,
+    pr_url: input.pr_url,
+    pr_state: input.pr_state,
     created_at: db
       .query<{ created_at: number }, [string]>("SELECT created_at FROM blog WHERE id=?")
       .get(id)!.created_at,
@@ -82,7 +90,7 @@ export function listBlogPosts(db: Database, opts: ListBlogPostsOptions = {}): Bl
     // Only rows whose origin is a cron-type issue pass through.
     let sql = `
       SELECT b.id, b.project, b.title, b.body_md, b.artifact_path,
-             b.origin_task_id, b.created_at
+             b.origin_task_id, b.pr_url, b.pr_state, b.created_at
       FROM blog b
       INNER JOIN issues i ON i.id = b.origin_task_id
       WHERE i.type = 'cron'
@@ -105,7 +113,7 @@ export function listBlogPosts(db: Database, opts: ListBlogPostsOptions = {}): Bl
 
   // Standard listing: project filter, full-text search, no join.
   let sql = `
-    SELECT id, project, title, body_md, artifact_path, origin_task_id, created_at
+    SELECT id, project, title, body_md, artifact_path, origin_task_id, pr_url, pr_state, created_at
     FROM blog
     WHERE 1=1
   `;
@@ -123,4 +131,17 @@ export function listBlogPosts(db: Database, opts: ListBlogPostsOptions = {}): Bl
   sql += ` ORDER BY created_at DESC`;
 
   return db.query<BlogPost, SQLQueryBindings[]>(sql).all(...params);
+}
+
+// ─── PR state chip ──────────────────────────────────────────────────────────
+
+function escapeHtml(s: string): string {
+  return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;");
+}
+
+/** Linked PR state chip for post meta. Returns "" when no pr_url (null → no chip). */
+export function renderPrChip(post: Pick<BlogPost, "pr_url" | "pr_state">): string {
+  if (!post.pr_url) return "";
+  const label = post.pr_state ?? "open";
+  return `<a class="pr-chip pr-chip--${label}" href="${escapeHtml(post.pr_url)}">${label}</a>`;
 }
