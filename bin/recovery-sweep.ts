@@ -11,7 +11,7 @@ import { sweepRecovery, type Probe, type SalvageHandoff, type SalvageInspection 
 const DB = process.argv[2] ?? `${process.env.HOME}/vault/ledger.db`;
 const REPO = new URL("..", import.meta.url).pathname;
 
-function commandFor(alias: string): string {
+export function commandFor(alias: string): string {
   const r = spawnSync(["bun", `${REPO}bin/ledger.ts`, "alias-cmd", alias]);
   const first = new TextDecoder().decode(r.stdout).split("\n").find((l) => l.trim());
   if (r.exitCode !== 0 || !first) throw new Error(`alias-cmd failed for '${alias}'`);
@@ -19,7 +19,7 @@ function commandFor(alias: string): string {
   return first.replace("{prompt}", "'reply with exactly: ok'");
 }
 
-const probe: Probe = (cmd) => {
+export const probe: Probe = (cmd) => {
   const r = spawnSync(["bash", "-c", cmd], { timeout: 120_000 });
   return { rc: r.exitCode ?? 1, stdout: new TextDecoder().decode(r.stdout) };
 };
@@ -41,6 +41,12 @@ function inspectSalvage(h: SalvageHandoff): SalvageInspection {
   return { branchExists: true, headMatches: head === h.head, commitsMatch: commits === h.commits, prState };
 }
 
-const db = new Database(DB);
-const res = sweepRecovery(db, { probe, commandFor, inspectSalvage });
-console.log(JSON.stringify({ ts: new Date().toISOString(), db: DB, probes: res.probes, flipped: res.flipped.length, kept: res.kept.length, skipped: res.skipped.length, salvage: res.salvage }));
+export function runRecoverySweep(db: Database, sweepProbe = probe) {
+  return sweepRecovery(db, { probe: sweepProbe, commandFor, inspectSalvage });
+}
+
+if (import.meta.main) {
+  const db = new Database(DB);
+  const res = runRecoverySweep(db);
+  console.log(JSON.stringify({ ts: new Date().toISOString(), db: DB, probes: res.probes, flipped: res.flipped.length, kept: res.kept.length, skipped: res.skipped.length, salvage: res.salvage }));
+}
