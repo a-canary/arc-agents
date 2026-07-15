@@ -264,6 +264,29 @@ default_branch_for_repo() {
   return 0
 }
 
+# `cli-agent` is the AXI router CLI for cli-proxy — post-2026-07-10 ruling,
+# arc-agents' exec_cli_alias points every alias at `cli-agent --pool <name>`.
+# Lives in the same install dirs as `pi` (both are npm/node-symlinks under
+# ~/node_modules/.bin or globally under ~/.local/bin). Mirror ensure_pi_on_path
+# — same probes, never fatal. Without this, systemd-stripped-PATH workers
+# can't resolve `cli-agent` and degenerate to zero candidates.
+ensure_cli_agent_on_path() {
+  command -v cli-agent >/dev/null 2>&1 && return 0
+  local d node_bin npm_prefix candidates
+  node_bin="$(command -v node 2>/dev/null || true)"
+  candidates=()
+  [ -n "$node_bin" ] && candidates+=( "$(dirname "$node_bin")/../lib/node_modules/node/bin" )
+  if command -v npm >/dev/null 2>&1; then
+    npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+    [ -n "$npm_prefix" ] && candidates+=( "${npm_prefix}/bin" )
+  fi
+  candidates+=( "${HOME}/.local/bin" "${HOME}/node_modules/.bin" )
+  for d in "${candidates[@]}"; do
+    if [ -x "${d}/cli-agent" ]; then export PATH="${d}:${PATH}"; return 0; fi
+  done
+  return 0
+}
+
 # Fast-forward the given repo's default branch (e.g. local `main` or
 # `master`) to `origin/<default>`. Closes the "local main N behind origin"
 # pattern documented in analysis-1782813826.md §"Pattern 4 follow-up" — the
@@ -319,8 +342,12 @@ command -v claude >/dev/null 2>&1 || export PATH="${HOME}/.local/bin:${PATH}"
 
 # Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
 # has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.
+# `cli-agent` is the post-2026-07-10 successor for alias→cmdline resolution —
+# every fast/smart/opus-max/minimax-build alias now routes through it, so the
+# stripped-PATH guard must extend to it too.
 ensure_pi_on_path
 ensure_claude_afk_on_path
+ensure_cli_agent_on_path
 
 WORKER="${1:?worker name required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -571,9 +598,15 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   fi
 
   HEADLESS=0
-  for _arg in "${CMD_PARTS[@]}"; do
-    if [[ "$_arg" == "-p" ]]; then HEADLESS=1; break; fi
-  done
+  # cli-agent is headless-by-name (single-shot route() call, never exec()s) —
+  # it carries no `-p` flag of its own, so name it explicitly here.
+  if [[ "${CMD_PARTS[0]:-}" == "cli-agent" ]]; then
+    HEADLESS=1
+  else
+    for _arg in "${CMD_PARTS[@]}"; do
+      if [[ "$_arg" == "-p" ]]; then HEADLESS=1; break; fi
+    done
+  fi
 
   if [[ "$HEADLESS" != "1" ]]; then
     # Interactive engine of last resort — exec hands over the TTY. The pane pipe

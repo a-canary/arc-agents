@@ -59,7 +59,8 @@ export const ConfigSchema = z
       // group is unreachable. Only the last candidate may be interactive.
       if (Array.isArray(raw) && raw.length > 1) {
         raw.forEach((cmd, i) => {
-          const isHeadless = cmd.split(/\s+/).includes("-p");
+          const parts = cmd.split(/\s+/);
+          const isHeadless = parts[0] === "cli-agent" || parts.includes("-p");
           if (!isHeadless && i < raw.length - 1) {
             ctx.addIssue({
               code: z.ZodIssueCode.custom,
