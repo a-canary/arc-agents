@@ -60,6 +60,22 @@ test("blocks with checklist when task is in non-terminal state", () => {
   expect(payload.reason).toMatch(/claimed/);
 });
 
+test("block reason mentions the hygiene phase + hygiene-emit command + 4 hygiene skills", () => {
+  // Slice D acceptance: the AFK shutdown checklist now suggests the worker
+  // emit hygiene followups through bookie, naming all four skills.
+  const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
+  ledger(["update", c.id, "--state", "claimed"]);
+  const r = runHook({ ARC_TASK_ID: c.id });
+  expect(r.status).toBe(0);
+  const payload = JSON.parse(r.stdout);
+  expect(payload.reason).toMatch(/HYGIENE PHASE/);
+  expect(payload.reason).toMatch(/hygiene-emit/);
+  expect(payload.reason).toMatch(/clarify-docs/);
+  expect(payload.reason).toMatch(/improve-architecture/);
+  expect(payload.reason).toMatch(/trash-retired-files/);
+  expect(payload.reason).toMatch(/analyse-recent-sessions/);
+});
+
 test("passes through when task is merged", () => {
   const c = JSON.parse(ledger(["create", "--kind", "task", "--type", "mvp", "--title", "t"]).stdout);
   ledger([

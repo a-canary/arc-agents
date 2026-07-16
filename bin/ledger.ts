@@ -26,6 +26,8 @@ import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/loa
 import { loadProfile } from "../src/profiles/load";
 import { encode as toonEncode } from "../src/ledger/toon-encode";
 import { brief as directorBrief, type GitLogEntry } from "../src/director/director-brief";
+import { dirname, join } from "node:path";
+import { realpathSync } from "node:fs";
 
 const KNOWN_HYGIENE_SKILLS = [
   "clarify-docs",
@@ -919,6 +921,29 @@ switch (cmd) {
     break;
   }
 
+  case "trash-sweep": {
+    // Delegate to bin/trash-sweep.ts. Forward --apply and --dir. Output is
+    // JSON; we surface it directly so cron can pipe the summary into logs.
+    // The script writes to stdout and the verb just relays.
+    const here = process.argv[1]!;
+    let scriptDir: string;
+    try {
+      scriptDir = dirname(realpathSync(here));
+    } catch {
+      scriptDir = dirname(here);
+    }
+    const scriptArgs: string[] = [join(scriptDir, "trash-sweep.ts")];
+    if (args.includes("--apply")) scriptArgs.push("--apply");
+    const dirFlag = getFlag("dir") ?? process.env.TRASH_DIR;
+    if (dirFlag) scriptArgs.push("--dir", dirFlag);
+    const env: Record<string, string> = { ...(process.env as Record<string, string>) };
+    if (dirFlag) env.TRASH_DIR = dirFlag;
+    const proc = Bun.spawnSync(["bun", ...scriptArgs], { env, stdout: "pipe", stderr: "pipe" });
+    if (proc.stdout.length > 0) process.stdout.write(proc.stdout);
+    if (proc.stderr.length > 0) process.stderr.write(proc.stderr);
+    process.exit(proc.exitCode);
+  }
+
   case "spawn-ready": {
     // --pool X: filter by pool column (preferred). --type X: deprecated alias.
     const pool = getFlag("pool") ?? getFlag("type");
@@ -1740,6 +1765,8 @@ switch (cmd) {
                                        --project defaults to the observed-in-task row's
                                        project (single source of truth); falls back to
                                        'arc-agents' when neither is set.
+  trash-sweep [--apply] [--dir PATH]    prune trash files past their .ttl sweep_after;
+                                        dry-run by default; --apply actually deletes
   list [--state --kind --type --created-by --limit --all]   (alias: ls)
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them
