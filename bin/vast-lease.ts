@@ -232,11 +232,29 @@ async function cmdAcquire() {
   const holder = flag("holder") || die("--holder required");
   const ttl = parseInt(flag("ttl") || "3600", 10);
   const reason = flag("reason");
+  const dph = flag("dph"); // optional; if set, record-estimate is called on success
   const wait = has("wait");
   const timeout = parseInt(flag("timeout") || "0", 10);
 
+  // ponytail: --dph on acquire is OPTIONAL; when supplied we record the labelled
+  // estimate via vast-billing so a later `vast-billing reconcile` has something
+  // to override. Best-effort: never block lease acquire on billing-tool errors.
+  function recordBillingEstimate() {
+    if (!dph) return;
+    const dphNum = Number(dph);
+    if (!Number.isFinite(dphNum) || dphNum <= 0) return;
+    try {
+      const billingBin = join(import.meta.dir, "vast-billing.ts");
+      const r = Bun.spawnSync(["bun", billingBin, "record-estimate", "--instance", instance, "--dph", String(dphNum), "--start", String(now())], { env: process.env });
+      if (r.exitCode !== 0) console.error(`vast-lease: billing record-estimate failed (rc=${r.exitCode}); lease acquired anyway`);
+    } catch (e) {
+      console.error(`vast-lease: billing record-estimate threw; lease acquired anyway: ${(e as Error).message}`);
+    }
+  }
+
   if (!wait) {
     if (attemptAcquire(instance, holder, ttl, reason, false)) {
+      recordBillingEstimate();
       console.log(`acquired ${instance} for ${holder} (ttl ${ttl}s)`);
       process.exit(0);
     }
@@ -249,6 +267,7 @@ async function cmdAcquire() {
   while (true) {
     if (atHeadOfQueue(instance, holder) && attemptAcquire(instance, holder, ttl, reason, false)) {
       dequeueSelf(instance, holder);
+      recordBillingEstimate();
       console.log(`acquired ${instance} for ${holder} (ttl ${ttl}s, waited)`);
       process.exit(0);
     }
