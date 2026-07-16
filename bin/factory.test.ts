@@ -92,6 +92,25 @@ beforeEach(() => {
     ].join("\n"),
   );
   chmodSync(fakePi, 0o755);
+  // Same shape for cli-agent (alias→cmdline resolution owner post-2026-07-10
+  // ruling). Worker-shell now invokes `cli-agent --pool <name>` instead of
+  // `pi -p --provider …`, so the fake bin dir must shim it the same way.
+  const fakeAgent = join(fakeBinDir, "cli-agent");
+  writeFileSync(
+    fakeAgent,
+    [
+      "#!/usr/bin/env bash",
+      "echo \"FAKE_CLI_AGENT_RAN argc=$# task=${ARC_TASK_ID:-none}\"",
+      "if [[ -n \"${ARC_TASK_ID:-}\" ]]; then",
+      "  DBF=()",
+      "  [[ -n \"${ARC_LEDGER_DB:-}\" ]] && DBF=(--db \"$ARC_LEDGER_DB\")",
+      `  bun ${JSON.stringify(LEDGER)} update "$ARC_TASK_ID" "\${DBF[@]}" --state review --evidence "fake cli-agent self-report" >/dev/null 2>&1 || true`,
+      "fi",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fakeAgent, 0o755);
 
   prefix = `arctest-${Math.random().toString(36).slice(2, 8)}`;
 
@@ -446,6 +465,27 @@ test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a strippe
     ].join("\n"),
   );
   chmodSync(fakePi, 0o755);
+  // cli-agent co-shim (2026-07-10 ruling): the real `fast`/`smart`/etc. aliases
+  // now route through `cli-agent --pool <name>`, not `pi -p`. Plant a fake one
+  // beside `pi` so the worker-shell guard ensure_cli_agent_on_path resolves it
+  // and the headless-reconcile path treats the row as `review`.
+  const fakeAgent = join(fakePiHomeDir, "cli-agent");
+  writeFileSync(
+    fakeAgent,
+    [
+      "#!/usr/bin/env bash",
+      "echo \"INVOKED cli-agent argc=$# argv0=$0\"",
+      "if [[ \"$1\" == \"--version\" ]]; then echo \"fake-cli-agent 0.0.0\"; exit 0; fi",
+      "if [[ -n \"${ARC_TASK_ID:-}\" ]]; then",
+      "  DBF=()",
+      "  [[ -n \"${ARC_LEDGER_DB:-}\" ]] && DBF=(--db \"$ARC_LEDGER_DB\")",
+      `  bun ${JSON.stringify(LEDGER)} update "$ARC_TASK_ID" "\${DBF[@]}" --state review --evidence "fake cli-agent in fake HOME/node_modules/.bin self-report" >/dev/null 2>&1 || true`,
+      "fi",
+      "exit 0",
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fakeAgent, 0o755);
 
   const realBun = process.env.HOME + "/.bun/bin";
   const realLocal = process.env.HOME + "/.local/bin";

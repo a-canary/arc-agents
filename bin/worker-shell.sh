@@ -31,6 +31,22 @@ reconcile_decision() {
   fi
 }
 
+# Structured salvage payload (pure: args → JSON on stdout). Emitted as a
+# `salvage` ledger event alongside the prose evidence when a headless worker
+# leaves commits but no terminal self-report, so a recovery worker/gate reads
+# machine-readable base/head/commits/branch/exit_code/pr_url instead of parsing
+# English. Empty pr_url → JSON null (PR not discovered). Logged under the `note`
+# event kind (the schema CHECK-constrained kind set); consumers match the inner
+# `"kind":"salvage"` marker in the payload.
+#   $1=base $2=head $3=commits $4=branch $5=exit_code $6=pr_url
+salvage_payload_json() {
+  local pr="$6"
+  local pr_json="null"
+  [[ -n "$pr" ]] && pr_json="\"$pr\""
+  printf '{"kind":"salvage","base":"%s","head":"%s","commits":%d,"branch":"%s","exit_code":%d,"pr_url":%s,"reason":"commits present, no terminal self-report"}' \
+    "$1" "$2" "$3" "$4" "$5" "$pr_json"
+}
+
 # Per-worker logfile for the headless child's stdout/stderr (Gap 1: M-0002
 # observability — a stalled headless worker otherwise leaves no trail, since it
 # inherits only the tmux pane TTY). Pure: $1=worker name → path on stdout.
@@ -210,35 +226,104 @@ ensure_claude_afk_on_path() {
   return 0
 }
 
-# Fast-forward the given repo's local `main` to `origin/main`. Closes the
-# "local main N behind origin" pattern documented in
-# analysis-1782813826.md §"Pattern 4 follow-up" — the same follow-up was
-# recommended in 000103 (analysis-1782187417.md Pattern 3) but never filed
-# until now. Worker-shell.sh is the structural fix: any worker that claims
-# against the repo observes a current `main` BEFORE its worktree is added,
-# which keeps `merge-guard`'s `--local-merged-sha` truth-check and the
-# `git worktree add -B <branch> ... main` base accurate. Pure: $1 = repo path
-# → 0 on ff/no-op, non-zero on missing-repo or no-remote (caller treats
-# non-zero as "skip ff, continue"; not fatal). No-op when origin/main is
-# already reachable from main.
+# Discover the repo's default branch (e.g. `main`, `master`, `develop`). The
+# factory previously hardcoded `main` in three sites (fast_forward_main,
+# worktree add base, BASELINE_SHA fallback) — arc-webui's GitHub default is
+# `master` (analysis-1783678328.md Pattern 2, 1 confirmed ghost merge
+# `000101-hygiene-arc-webui-improve-architecture`), so workers branching off
+# `main` produced merges invisible on `master`. Mirror the resolve_repo
+# convention: probe three sources in priority order, fall back to `main` so
+# the script's own repo (and the 12 other `default=main` repos in the estate)
+# don't regress. Pure: $1 = repo path → branch name on stdout. Empty stdout
+# signals "could not determine" — callers must default to `main` themselves.
+default_branch_for_repo() {
+  local repo="$1"
+  [ -d "${repo}/.git" ] || { return 0; }
+  # (1) Fastest path: Git tracks the remote's HEAD via refs/remotes/origin/HEAD,
+  # populated by `git remote set-head origin --auto` (or any `git clone`). This
+  # is a symbolic ref, so read with `git symbolic-ref`.
+  local sym
+  sym="$(git -C "$repo" symbolic-ref --quiet refs/remotes/origin/HEAD 2>/dev/null || true)"
+  if [ -n "$sym" ]; then
+    echo "${sym##*/}"
+    return 0
+  fi
+  # (2) Slow path: query GitHub's API. Same answer as (1) when (1) is set,
+  # but covers repos where nobody has run `remote set-head` (rare in
+  # production, common in fresh test fixtures). `gh` is in the factory's PATH.
+  local gh_default
+  gh_default="$(gh repo view "$repo" --json defaultBranchRef --jq '.defaultBranchRef.name' 2>/dev/null || true)"
+  if [ -n "$gh_default" ]; then
+    echo "$gh_default"
+    return 0
+  fi
+  # (3) Last-ditch probe: whichever branch `HEAD` tracks when local is on the
+  # default. The script's own repo + every other `default=main` repo hits
+  # this path. We still emit nothing here so the caller's `${VAR:-main}`
+  # fallback wins.
+  return 0
+}
+
+# `cli-agent` is the AXI router CLI for cli-proxy — post-2026-07-10 ruling,
+# arc-agents' exec_cli_alias points every alias at `cli-agent --pool <name>`.
+# Lives in the same install dirs as `pi` (both are npm/node-symlinks under
+# ~/node_modules/.bin or globally under ~/.local/bin). Mirror ensure_pi_on_path
+# — same probes, never fatal. Without this, systemd-stripped-PATH workers
+# can't resolve `cli-agent` and degenerate to zero candidates.
+ensure_cli_agent_on_path() {
+  command -v cli-agent >/dev/null 2>&1 && return 0
+  local d node_bin npm_prefix candidates
+  node_bin="$(command -v node 2>/dev/null || true)"
+  candidates=()
+  [ -n "$node_bin" ] && candidates+=( "$(dirname "$node_bin")/../lib/node_modules/node/bin" )
+  if command -v npm >/dev/null 2>&1; then
+    npm_prefix="$(npm prefix -g 2>/dev/null || true)"
+    [ -n "$npm_prefix" ] && candidates+=( "${npm_prefix}/bin" )
+  fi
+  candidates+=( "${HOME}/.local/bin" "${HOME}/node_modules/.bin" )
+  for d in "${candidates[@]}"; do
+    if [ -x "${d}/cli-agent" ]; then export PATH="${d}:${PATH}"; return 0; fi
+  done
+  return 0
+}
+
+# Fast-forward the given repo's default branch (e.g. local `main` or
+# `master`) to `origin/<default>`. Closes the "local main N behind origin"
+# pattern documented in analysis-1782813826.md §"Pattern 4 follow-up" — the
+# same follow-up was recommended in 000103 (analysis-1782187417.md Pattern 3)
+# but never filed until now. Worker-shell.sh is the structural fix: any
+# worker that claims against the repo observes a current default branch
+# BEFORE its worktree is added, which keeps `merge-guard`'s
+# `--local-merged-sha` truth-check and the `git worktree add -B <branch>
+# ... <default>` base accurate. analysis-1783678328.md Pattern 2 widened the
+# fix: the literal `main` here used to mismatch arc-webui's actual default
+# (`master`), so workers branched off the wrong base and their merges were
+# invisible on production. Pure: $1 = repo path → 0 on ff/no-op, non-zero on
+# missing-repo or no-remote (caller treats non-zero as "skip ff, continue";
+# not fatal). No-op when origin/<default> is already reachable from the local
+# default branch.
 #
 # ponytail: cheap `fetch + merge --ff-only`; a real merge conflict is
-# impossible here because local main was at-or-behind origin/main by
+# impossible here because local default was at-or-behind origin/default by
 # construction (we're racing only the cron-pushed merges). If conflict ever
 # appears, the helper returns non-zero and the worker boots on the stale-but-
-# known main — same as today, just with one fewer race window.
+# known default — same as today, just with one fewer race window.
 fast_forward_main() {
   local repo="$1"
   [ -d "${repo}/.git" ] || return 1
+  local default_branch
+  default_branch="$(default_branch_for_repo "$repo")"
+  default_branch="${default_branch:-main}"
   # Bail when there's no `origin` remote to fetch — common for fresh local
   # clones without a remote, or hygiene rows against a worktree-only repo.
   git -C "$repo" remote get-url origin >/dev/null 2>&1 || return 1
-  # Fast-forward only when there's actually something to ff: local main must
-  # be an ancestor of origin/main (i.e., origin has commits we don't). If
-  # they're equal or local is ahead, `merge --ff-only` would refuse — skip.
-  git -C "$repo" fetch -q origin main 2>/dev/null || return 1
-  if git -C "$repo" merge-base --is-ancestor main origin/main 2>/dev/null; then
-    git -C "$repo" merge --ff-only origin/main 2>/dev/null || return 1
+  # Fast-forward only when there's actually something to ff: local default
+  # must be an ancestor of origin/<default> (i.e., origin has commits we
+  # don't). If they're equal or local is ahead, `merge --ff-only` would
+  # refuse — skip.
+  git -C "$repo" fetch -q origin "$default_branch" 2>/dev/null || return 1
+  if git -C "$repo" merge-base --is-ancestor "$default_branch" "origin/$default_branch" 2>/dev/null; then
+    git -C "$repo" merge --ff-only "origin/$default_branch" 2>/dev/null || return 1
   fi
   return 0
 }
@@ -257,8 +342,12 @@ command -v claude >/dev/null 2>&1 || export PATH="${HOME}/.local/bin:${PATH}"
 
 # Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
 # has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.
+# `cli-agent` is the post-2026-07-10 successor for alias→cmdline resolution —
+# every fast/smart/opus-max/minimax-build alias now routes through it, so the
+# stripped-PATH guard must extend to it too.
 ensure_pi_on_path
 ensure_claude_afk_on_path
+ensure_cli_agent_on_path
 
 WORKER="${1:?worker name required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
@@ -385,21 +474,30 @@ WT_BRANCH="worker/${CLAIM_ID}"
 # runs BEFORE `worktree add` so even the FIRST claim after a merge observes
 # current main. See fast_forward_main() above for the helper contract.
 fast_forward_main "$WT_REPO" || true
+# Discover the repo's default branch ONCE and reuse at the worktree-add +
+# BASELINE_SHA fallback sites. Same helper fast_forward_main uses — keeps
+# the three references in lockstep (analysis-1783678328.md Pattern 2 root
+# cause: the original three references drifted from each other silently).
+WT_DEFAULT="$(default_branch_for_repo "$WT_REPO")"
+WT_DEFAULT="${WT_DEFAULT:-main}"
 if [ ! -d "$WT_DIR" ]; then
-  # -B resets the branch to main's tip if a stale branch lingers from a prior
-  # reaped attempt; --force overrides a leftover claude-agent worktree lock.
-  if ! git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" main 2>/dev/null; then
+  # -B resets the branch to the default's tip if a stale branch lingers from
+  # a prior reaped attempt; --force overrides a leftover claude-agent
+  # worktree lock.
+  if ! git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" "$WT_DEFAULT" 2>/dev/null; then
     # Branch may be checked out elsewhere; fall back to a detached worktree so
     # the worker still isolates rather than silently running in prod root.
-    git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" main
+    git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" "$WT_DEFAULT"
   fi
 fi
 cd "$WT_DIR"
 # Baseline HEAD at claim time — reused worktrees from a prior claim may sit
-# commits ahead of main already; reconcile must count only THIS run's
-# commits, not everything since main (else a stale reused worktree with 0 new
-# commits masks an empty/failed engine run as reviewable work).
-BASELINE_SHA="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo main)"
+# commits ahead of the default already; reconcile must count only THIS run's
+# commits, not everything since the default (else a stale reused worktree
+# with 0 new commits masks an empty/failed engine run as reviewable work).
+# Fall back to the default branch name when rev-parse fails (empty repo, no
+# commits yet) — same `WT_DEFAULT` variable, so the two sites can't drift.
+BASELINE_SHA="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo "$WT_DEFAULT")"
 # Record branch + worktree on the row so reapWorktrees() prunes both after the
 # task merges. Bootstrap write (pre-agent), same exception as the claim above;
 # all in-session writes still route through the bookie.
@@ -500,9 +598,15 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   fi
 
   HEADLESS=0
-  for _arg in "${CMD_PARTS[@]}"; do
-    if [[ "$_arg" == "-p" ]]; then HEADLESS=1; break; fi
-  done
+  # cli-agent is headless-by-name (single-shot route() call, never exec()s) —
+  # it carries no `-p` flag of its own, so name it explicitly here.
+  if [[ "${CMD_PARTS[0]:-}" == "cli-agent" ]]; then
+    HEADLESS=1
+  else
+    for _arg in "${CMD_PARTS[@]}"; do
+      if [[ "$_arg" == "-p" ]]; then HEADLESS=1; break; fi
+    done
+  fi
 
   if [[ "$HEADLESS" != "1" ]]; then
     # Interactive engine of last resort — exec hands over the TTY. The pane pipe
@@ -536,8 +640,19 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   COMMITS_AHEAD="$(git -C "$WT_DIR" rev-list --count "${BASELINE_SHA}..HEAD" 2>/dev/null || echo 0)"
   if [[ "$(reconcile_decision "$AGENT_RC" "$COMMITS_AHEAD")" == "review" ]]; then
     HEAD_SHA="$(git -C "$WT_DIR" rev-parse --short HEAD 2>/dev/null || echo unknown)"
+    HEAD_FULL="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo unknown)"
+    # A crashed headless worker may have already filed a PR before exiting.
+    # Discover it (best-effort) so recovery doesn't re-file. `gh` absent/
+    # unauthed/no-PR all collapse to empty → pr_url null in the payload.
+    DISCOVERED_PR="$(gh pr view "$WT_BRANCH" --json url -q .url 2>/dev/null || true)"
     EVIDENCE="headless reconcile: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
     bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state review --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+    # Structured handoff for the recovery worker/gate (Pattern 1, analysis-1783935600).
+    # ponytail: base/head/branch/pr_url interpolated raw — all are git SHAs/refnames
+    # or a github URL (no `"`/`\`), so JSON stays valid; add jq-escaping only if a
+    # value ever carries those chars. base+head both full SHAs so recovery joins cleanly.
+    SALVAGE_JSON="$(salvage_payload_json "$BASELINE_SHA" "$HEAD_FULL" "$COMMITS_AHEAD" "$WT_BRANCH" "$AGENT_RC" "$DISCOVERED_PR")"
+    bun "$LEDGER_BIN" event "$CLAIM_ID" note "$SALVAGE_JSON" "${DB_FLAG[@]}" --agent "$WORKER" >/dev/null 2>&1 || true
     capture_scrollback_to_log "$WORKER" "$LOG_FILE"
     exit "$AGENT_RC"
   fi
@@ -546,9 +661,13 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   echo "worker-shell: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) produced no work (rc=${AGENT_RC}); trying next" >&2
 done
 
-# Every candidate exhausted with no commits and no self-report → failed. The row
-# leaves `claimed` with evidence and is NOT recycled.
-EVIDENCE="headless reconcile: all ${#CMD_CANDIDATES[@]} candidate engine(s) for alias '${ALIAS}' produced no work (last rc=${LAST_RC}); marked failed."
-bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state failed --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+# Every candidate exhausted with no commits and no self-report → this is an
+# engine-infrastructure outage, not a task defect (e.g. MiniMax billing lapse
+# starving every candidate for this alias). Mark `blocked` with a
+# machine-readable reason so the auto-recovery sweep can flip it back to
+# `ready` once the alias produces work again — `failed` stays reserved for
+# task-attributable errors.
+EVIDENCE="headless reconcile: all ${#CMD_CANDIDATES[@]} candidate engine(s) for alias '${ALIAS}' produced no work (last rc=${LAST_RC}); engine-alias-no-work:${ALIAS}"
+bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state blocked --evidence "$EVIDENCE" >/dev/null 2>&1 || true
 capture_scrollback_to_log "$WORKER" "$LOG_FILE"
 exit "$LAST_RC"

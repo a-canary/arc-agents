@@ -1,22 +1,17 @@
 {
   "exec_cli_alias": {
-    "fast": [
-      "pi -p --provider minimax --model MiniMax-M3 --thinking off {prompt}",
-      "claude-afk --model sonnet --thinking off -p {prompt}"
-    ],
+    "fast": ["cli-agent --pool fast {prompt}"],
     "smart": [
-      "claude-afk --model fable -p {prompt}",
-      "claude-afk --model opus -p {prompt}",
-      "pi -p --provider minimax --model MiniMax-M3 --thinking high {prompt}"
+      "cli-agent --pool smart {prompt}",
+      "claude-afk --model opus -p {prompt}"
     ],
     "opus-max": [
-      "claude-afk --model fable -p {prompt}",
-      "claude-afk --model opus -p {prompt}",
-      "pi -p --provider minimax --model MiniMax-M3 --thinking high {prompt}"
+      "cli-agent --pool smart {prompt}",
+      "claude-afk --model opus -p {prompt}"
     ],
     "minimax-build": [
-      "pi -p --provider minimax --model MiniMax-M3 --thinking off {prompt}",
-      "claude-afk --model sonnet --thinking off -p {prompt}"
+      "cli-agent --pool fast {prompt}",
+      "cli-agent --pool smart {prompt}"
     ]
   },
   "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },

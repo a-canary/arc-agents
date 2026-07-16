@@ -33,8 +33,46 @@ export function hasSalvageableCommits(db: Database, issueId: string): boolean {
   return row !== null;
 }
 
+// Selects rows for triaging:
+//   - state=review kind=prd                  (always; PRD awaiting verdict)
+//   - state=review kind=task older than 48h  (orphaned review task — re-queue/merge-review)
+//   - state=ready hitl=1 kind=task older than 2h  (HITL park lift on parked task)
+//   - state=ready kind=prd older than 48h         (PRD dead-lane: legacy mint or
+//                                                  cascade-on-merge → pre-judge flip;
+//                                                  see close-the-ready-prd-dead-lane)
 export const SELECT_SQL =
-  "select id, title, kind, state, coalesce(body_md,'') body from issues where ((state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800))) or (state='ready' and hitl=1 and kind='task' and updated_at < unixepoch('now')-7200)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
+  "select id, title, kind, state, coalesce(body_md,'') body from issues where ((state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800))) or (state='ready' and hitl=1 and kind='task' and updated_at < unixepoch('now')-7200) or (state='ready' and kind='prd' and updated_at < unixepoch('now')-172800)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
+
+// Pre-judge flip — PRD acceptance criterion (close-the-ready-prd-dead-lane):
+// the webui /approvals/:id/approve route is `prd+review` only, so a stale ready
+// PRD must be atomically flipped to state=review BEFORE the judge fires. The
+// flip is idempotent (re-running on an already-review row is a no-op) and is
+// the only state transition this module performs outside the existing
+// ready→auto-unpark + review→ready re-queue logic.
+//
+// Returns {flipped, from, to}. `flipped=true` means exactly one row moved;
+// the row's updated_at is bumped so the stamp SELECT arm does not re-pick it.
+export function preJudgeFlip(db: Database, issueId: string): { flipped: boolean; from: string; to: string } {
+  const cur = db
+    .query<{ state: string; kind: string }, [string]>(
+      "select state, kind from issues where id = ?",
+    )
+    .get(issueId);
+  if (!cur) return { flipped: false, from: "", to: "" };
+  if (cur.state !== "ready" || cur.kind !== "prd") {
+    return { flipped: false, from: cur.state, to: cur.state };
+  }
+  // Atomic guard: the where clause pins both state and kind so two concurrent
+  // triage ticks cannot double-flip, and a row whose state changed under us
+  // (e.g. another write flipped it to wip) is left alone.
+  const r = db
+    .query("update issues set state='review', updated_at=unixepoch('now') where id = ? and state='ready' and kind='prd'")
+    .run(issueId);
+  db.query(
+    "insert into issue_events (issue_id, ts, agent, kind, payload_md) values (?, strftime('%s','now'), 'gate-triage', 'progress', ?)",
+  ).run(issueId, "→ review\n\npre-judge flip by gate-triage: stale ready PRD promoted to review so the webui approve path accepts the verdict.");
+  return { flipped: r.changes === 1, from: "ready", to: "review" };
+}
 
 const ESCALATION = `Risky moves (delete/overwrite beyond your worktree, force-push, prod deploy/restart, docker outside your own stack, spend, secrets, cron/systemd edits) — STOP and dispatch a Task subagent (model: opus) to adjudicate with the exact command and blast radius; proceed only on an explicit APPROVE, else park the task with the denial as evidence.`;
 
@@ -83,11 +121,22 @@ if (import.meta.main) {
   const rows = db.query(SELECT_SQL).all(STAMP) as Array<{ id: string; title: string; kind: string; state: string; body: string }>;
   let human = 0, auto = 0, skipped = 0;
   for (const r of rows) {
+    // Pre-judge flip (close-the-ready-prd-dead-lane): the webui approve path is
+    // prd+review only, so a stale ready PRD must move to review BEFORE the
+    // judge runs. After the flip we re-derive rowState so the existing arm
+    // selection below sees the post-flip state. re-running on an already-review
+    // row is a no-op (preJudgeFlip returns flipped=false).
+    let rowState = r.state;
+    if (r.state === "ready" && r.kind === "prd") {
+      const flip = preJudgeFlip(db, r.id);
+      if (flip.flipped) console.log(`pre-judge flipped ${r.id}: ready → review`);
+      rowState = flip.to;
+    }
     const v = judge(r.title, r.body);
     if (!v) { skipped++; console.log(`skip (no verdict): ${r.id}`); continue; }
     db.query("update issues set body_md = body_md || ? where id = ?").run(stamp(v), r.id);
     if (v.gate === "human") { human++; console.log(`HUMAN GATE: ${r.id} — ${v.reason}`); continue; }
-    if (r.state === "ready") {
+    if (rowState === "ready") {
       // hitl park on a ready task (e.g. auto-oversight parked it): auto verdict lifts the park.
       db.query("update issues set hitl=0 where id = ? and state='ready'").run(r.id);
       auto++; console.log(`auto-unparked: ${r.id} — ${v.reason}`);

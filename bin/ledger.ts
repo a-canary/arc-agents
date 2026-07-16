@@ -7,6 +7,7 @@ import { readFileSync } from "node:fs";
 import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
+import { routeProjectFromBody } from "../src/ledger/hygiene-project-route";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { parseDiffReviewPayload, checkReviewerIndependence } from "../src/ledger/diff-review";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
@@ -79,6 +80,10 @@ function die(msg: string): never {
   process.exit(1);
 }
 
+function escapeRe(s: string): string {
+  return s.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
 function getFlag(name: string): string | undefined {
   const i = args.findIndex((a) => a === `--${name}` || a.startsWith(`--${name}=`));
   if (i === -1) return undefined;
@@ -128,7 +133,11 @@ switch (cmd) {
     if (errs.length > 0) {
       die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
     }
-    const project = input.project ?? "arc-agents";
+    // Empty/whitespace --project must NOT propagate empty to the row — the factory
+  // falls back to arc-agents for empty projects, silently misrouting non-arc-agents
+  // work (see analysis-1783934070.md Pattern 3). ?? only substitutes on null/
+  // undefined; trim-then-fall-back defends at the bookie layer.
+  const project = input.project?.trim() || "arc-agents";
     const kind = input.kind!;
     const type = input.type!;
     const title = input.title!;
@@ -400,6 +409,13 @@ switch (cmd) {
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+      // Fetch the row's project once when we're headed toward state=merged
+      // — used by both the merge-guard (checkMergeGuard) and the runner
+      // factory (defaultRunner). Hoisting it here avoids a second SQL
+      // round-trip and makes the project-pinning to defaultRunner obvious.
+      const project = state === "merged"
+        ? db.query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?").get(id)?.project
+        : undefined;
       if (state === "merged") {
         // diff_review payload contract: require the LATEST diff_review event
         // to parse as JSON {reviewer_identity, reviewed_sha, verdict}, and
@@ -430,9 +446,6 @@ switch (cmd) {
         // analysis-1780502957 Pattern 1 Part A: enforce pr_url's repo matches
         // the row's project field. The guard runs at the bookie layer so
         // a worker cannot mark a row merged against the wrong github repo.
-        const project = db
-          .query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?")
-          .get(id)?.project;
         const guardMsg = checkMergeGuard(project, pr);
         if (guardMsg) die(guardMsg);
       }
@@ -442,7 +455,13 @@ switch (cmd) {
         // the row's stored pr_url; the row's pr_url is the fallback when no
         // --pr is supplied this invocation.
         const effectivePr = inPlace ? null : (pr ?? cur.pr_url ?? null);
-        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, inPlace, run: defaultRunner });
+        // Pass the row's project through so defaultRunner pins the git/gh
+        // child to ~/repos/<repoDir>. Without this, a worker/cron running
+        // from a non-repo cwd (e.g. ~/trash/<ts>/, a reaped worktree) fires
+        // the merge-guard from a directory that isn't a git repo, git
+        // exits 128, and the operator sees an empty trailing-colon
+        // refusal message (analysis-1783937189 Pattern 1).
+        const verdict = await verifyMergeTruth({ prUrl: effectivePr, localSha, inPlace, run: defaultRunner(project) });
         if (!verdict.ok) {
           db.run(
             `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
@@ -738,13 +757,23 @@ switch (cmd) {
     if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    // Resolve project: explicit --project wins; otherwise inherit the
-    // observed-in-task row's project (single source of truth — the worker
-    // is filing a followup for that specific task); otherwise default to
-    // 'arc-agents'. The cron caller (bin/hygiene-tick.ts) does not go
-    // through hygiene-emit (it inserts directly with the repo name), so
-    // this change only affects worker-emitted followups.
+    // Resolve project, in precedence order:
+    //   1. explicit --project (worker knows best)
+    //   2. file-path routing — if --body names a shared-source file
+    //      (bin/ledger.ts, src/ledger/*, …) it can only live in that file's
+    //      home repo, regardless of which task observed it. Beats observed-
+    //      task inheritance because the fix physically must land there
+    //      (improve-architecture-route-hygiene-emit-: arc-skills task, fix in
+    //      arc-agents src → row must be project=arc-agents or bookie's merge
+    //      guard refuses the PR as a repo mismatch).
+    //   3. inherit --observed-in-task row's project (the worker is filing a
+    //      followup for that specific task).
+    //   4. default 'arc-agents'.
+    // The cron caller (bin/hygiene-tick.ts) does not go through hygiene-emit
+    // (it inserts directly with the repo name), so this only affects
+    // worker-emitted followups.
     let project = explicitProject;
+    if (!project) project = routeProjectFromBody(body) ?? undefined;
     if (!project && observed) {
       const observedRow = db
         .query<{ project: string }, [string]>(`SELECT project FROM issues WHERE id=?`)
@@ -811,7 +840,9 @@ switch (cmd) {
     const db = openWithMigrate(getFlag("db"));
     const observed = getFlag("observed-in-task");
     const agent = getFlag("agent") ?? "bookie";
-    const project = getFlag("project") ?? "arc-agents";
+    // Empty/whitespace --project must NOT propagate empty to the followup rows
+    // (same trap as create + plan + chat-reply — analysis-1783934070.md Pattern 3).
+    const project = getFlag("project")?.trim() || "arc-agents";
     const projectErrs = validateProjectLowerCase(project);
     if (projectErrs.length > 0) die(projectErrs.map((e) => `${e.field}: ${e.message}`).join("\n"));
     const created: { id: string; title: string; type: string }[] = [];
@@ -1235,8 +1266,18 @@ switch (cmd) {
     //   --stale-hours N      claim age cutoff (default 4)
     //   --worktree-root P    scan root (default ~/worktrees)
     //   --repo-prefix S      dir prefix to consider (default "arc-agents-")
+    //   - project_misroutes: kind=task rows with project='' (default
+    //     arc-agents) whose body references a sibling repo name under
+    //     --repos-root, i.e. the row was likely filed against the wrong
+    //     project (see project-repo-map.ts for the project->dir mapping)
+    // Flags:
+    //   --stale-hours N      claim age cutoff (default 4)
+    //   --worktree-root P    scan root (default ~/worktrees)
+    //   --repo-prefix S      dir prefix to consider (default "arc-agents-")
+    //   --repos-root P       sibling-repos scan root (default ~/repos)
     //   --strict             exit 1 if any anomaly present (phantom/stale
-    //                        claims, untracked worktree dirs, scan error).
+    //                        claims, untracked worktree dirs, scan error,
+    //                        project misroutes).
     //                        mergeable_worktrees is informational and never
     //                        triggers a non-zero exit on its own.
     const { readdirSync, existsSync, statSync } = require("node:fs") as typeof import("node:fs");
@@ -1247,6 +1288,7 @@ switch (cmd) {
     const staleHours = parseInt(getFlag("stale-hours") ?? "4", 10);
     const worktreeRoot = getFlag("worktree-root") ?? `${process.env.HOME}/worktrees`;
     const repoPrefix = getFlag("repo-prefix") ?? "arc-agents-";
+    const reposRoot = getFlag("repos-root") ?? `${process.env.HOME}/repos`;
     const staleCutoff = Math.floor(Date.now() / 1000) - staleHours * 3600;
 
     const phantomClaims = db
@@ -1274,6 +1316,37 @@ switch (cmd) {
         `SELECT state, COUNT(*) AS n FROM issues GROUP BY state ORDER BY n DESC`,
       )
       .all();
+
+    // project_misroutes: kind=task rows filed against the default project
+    // (project IS NULL or '') whose body mentions a sibling repo dir name
+    // (e.g. "arc-webui") as a whole word — a strong signal the row belongs
+    // to that project instead. Only sibling dirs under reposRoot other than
+    // "arc-agents" itself are candidates; word-boundary match avoids
+    // matching substrings inside unrelated identifiers.
+    const misrouteCandidates: string[] = existsSync(reposRoot)
+      ? readdirSync(reposRoot).filter((n) => {
+          if (n === "arc-agents") return false;
+          try { return statSync(pjoin(reposRoot, n)).isDirectory(); } catch { return false; }
+        })
+      : [];
+
+    const defaultProjectTasks = db
+      .query<{ id: string; body_md: string | null }, []>(
+        `SELECT id, body_md FROM issues WHERE kind = 'task' AND (project IS NULL OR project = '')`,
+      )
+      .all();
+
+    const projectMisroutes: { id: string; suspected_project: string }[] = [];
+    for (const row of defaultProjectTasks) {
+      if (!row.body_md) continue;
+      for (const candidate of misrouteCandidates) {
+        const re = new RegExp(`\\b${escapeRe(candidate)}\\b`);
+        if (re.test(row.body_md)) {
+          projectMisroutes.push({ id: row.id, suspected_project: candidate });
+          break;
+        }
+      }
+    }
 
     let untrackedWorktreeDirs: string[] = [];
     let mergeableWorktrees: { path: string; branch: string | null }[] = [];
@@ -1387,6 +1460,7 @@ switch (cmd) {
       untracked_worktree_dirs: untrackedWorktreeDirs,
       mergeable_worktrees: mergeableWorktrees,
       worktree_scan_error: worktreeScanError,
+      project_misroutes: projectMisroutes,
     };
 
     const strict = args.includes("--strict");
@@ -1394,7 +1468,8 @@ switch (cmd) {
       phantomClaims.length +
       staleClaims.length +
       untrackedWorktreeDirs.length +
-      (worktreeScanError ? 1 : 0);
+      (worktreeScanError ? 1 : 0) +
+      projectMisroutes.length;
 
     if (args.includes("--json")) {
       console.log(JSON.stringify(report, null, 2));
@@ -1440,6 +1515,13 @@ switch (cmd) {
     if (worktreeScanError) {
       lines.push("");
       lines.push(`worktree_scan_error: ${worktreeScanError}`);
+    }
+    lines.push(`project_misroutes:       ${projectMisroutes.length}`);
+    for (const r of projectMisroutes.slice(0, 5)) {
+      lines.push(`  - ${r.id}  suspected_project=${r.suspected_project}`);
+    }
+    if (projectMisroutes.length > 5) {
+      lines.push(`  ... +${projectMisroutes.length - 5} more`);
     }
     console.log(lines.join("\n"));
     if (strict && anomalyCount > 0) process.exit(1);
@@ -1682,11 +1764,16 @@ switch (cmd) {
                                        array.
   scratch-gc [--root P --days N --apply]
                                        list/delete stale ~/vault/scratch/<slug>/ dirs
-  doctor [--stale-hours N --worktree-root P --repo-prefix S --json --strict]
+  doctor [--stale-hours N --worktree-root P --repo-prefix S --repos-root P
+          --json --strict]
                                        pure-read health probe: phantom_claims,
                                        stale_claims (>N hr, default 4),
                                        state_counts, untracked_worktree_dirs,
-                                       mergeable_worktrees. Default output is a
+                                       mergeable_worktrees, project_misroutes
+                                       (kind=task rows filed against the
+                                       default project whose body names a
+                                       sibling repo under --repos-root,
+                                       default ~/repos). Default output is a
                                        human table; --json emits the raw report.
                                        --strict exits 1 on any anomaly
                                        (phantom/stale/untracked/scan_error);

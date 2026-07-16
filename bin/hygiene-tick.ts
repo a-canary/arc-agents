@@ -18,6 +18,7 @@
 import { readFileSync, existsSync } from "node:fs";
 import { parse as parseYaml } from "yaml";
 import { open, mintId } from "../src/ledger/db";
+import { runRecoverySweep } from "./recovery-sweep";
 
 function die(code: number, msg: string): never {
   process.stderr.write(`hygiene-tick: ${msg}\n`);
@@ -55,6 +56,22 @@ const cadence: CadenceMap =
     : {};
 
 const db = open();
+try {
+  runRecoverySweep(
+    db,
+    process.env.ARC_RECOVERY_PROBE_OUTPUT !== undefined
+      ? () => ({
+          rc: Number(process.env.ARC_RECOVERY_PROBE_RC ?? "0"),
+          stdout: process.env.ARC_RECOVERY_PROBE_OUTPUT!,
+        })
+      : undefined,
+  );
+} catch (error) {
+  // The recovery sweep is opportunistic: a probe timeout or alias-cmd error
+  // must not block the hygiene rotation. The dedicated recovery cron catches
+  // long-term outages; here we just log and continue.
+  process.stderr.write(`hygiene-tick: recovery sweep failed: ${String(error)}\n`);
+}
 
 // Open = not in a terminal state.
 const TERMINAL = ["merged", "cancelled", "failed"];

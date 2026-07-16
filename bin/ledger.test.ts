@@ -1664,11 +1664,14 @@ test("alias-cmd prints the full failover group, one candidate per line", async (
   const r = await runRawNoDb("alias-cmd", "smart");
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  // smart is a 3-candidate escalation group (fable → opus → minimax).
-  expect(lines.length).toBe(3);
+  // smart is a 2-candidate group: cli-agent resolves the registry pool
+  // (fable → opus → minimax internally), then a last-resort interactive opus
+  // exec alias. arc-agents owns the alias→cli-agent call; cli-proxy + cli-agent
+  // own the pool→cmdline-template resolution.
+  expect(lines.length).toBe(2);
   for (const l of lines) expect(l).toContain("{prompt}");
-  expect(lines[0]).toContain("fable");
-  expect(lines[lines.length - 1]).toContain("pi -p");
+  expect(lines[0]).toContain("cli-agent");
+  expect(lines[lines.length - 1]).toContain("opus");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {
@@ -1968,6 +1971,25 @@ test("create --project accepts lower-case", async () => {
   }
 });
 
+// Regression: empty/whitespace --project must NOT propagate empty to the row.
+// ?? only substitutes on null/undefined; trim-then-fall-back defends at the
+// bookie layer so callers can't accidentally mint project='' rows that the
+// factory then misroutes into the arc-agents default worktree
+// (analysis-1783934070.md Pattern 3, 2026-07-13).
+test("create --project='' / whitespace normalises to arc-agents default", async () => {
+  for (const p of ["", "   ", "\t"]) {
+    const { db, cleanup } = freshDb();
+    try {
+      await run(db, "init");
+      const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", `t-${p.length}`, "--project", p)) as { id: string };
+      const r = (await run(db, "show", c.id)) as { issue: { project: string } };
+      expect(r.issue.project).toBe("arc-agents");
+    } finally {
+      cleanup();
+    }
+  }
+});
+
 test("update --project rejects mixed-case", async () => {
   const { db, cleanup } = freshDb();
   try {
@@ -2085,6 +2107,60 @@ test("hygiene-emit with --observed-in-task pointing at missing row falls back to
       "--title", "missing observed", "--observed-in-task", "does-not-exist")) as { id: string };
     const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
     expect(shown.issue.project).toBe("arc-agents");
+  } finally {
+    cleanup();
+  }
+});
+
+// ── file-path routing beats observed-task inheritance (improve-architecture-route-hygiene-emit-) ──
+// A shared-source file (src/ledger/*, bin/ledger.ts) only lives in arc-agents.
+// When --body names one, project routes to arc-agents even if the observed
+// task is a different project — otherwise bookie's merge guard refuses the PR.
+
+test("hygiene-emit routes to arc-agents when body names a shared-source file, beating observed-task", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp",
+      "--title", "arc-skills parent", "--project", "arc-skills")) as { id: string };
+    const r = (await run(db, "hygiene-emit", "--skill", "improve-architecture",
+      "--title", "fix merge-truth",
+      "--body", "the fix lives in src/ledger/merge-truth.ts",
+      "--observed-in-task", parent.id)) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("arc-agents");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit explicit --project still beats file-path routing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = (await run(db, "hygiene-emit", "--skill", "improve-architecture",
+      "--title", "explicit over route",
+      "--body", "touches src/ledger/claim.ts",
+      "--project", "arc-skills")) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("arc-skills");
+  } finally {
+    cleanup();
+  }
+});
+
+test("hygiene-emit body with no shared-source path still inherits observed-task project", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp",
+      "--title", "expert-horde parent 2", "--project", "expert-horde")) as { id: string };
+    const r = (await run(db, "hygiene-emit", "--skill", "clarify-docs",
+      "--title", "doc drift",
+      "--body", "the README wording is stale",
+      "--observed-in-task", parent.id)) as { id: string };
+    const shown = (await run(db, "show", r.id)) as { issue: { project: string } };
+    expect(shown.issue.project).toBe("expert-horde");
   } finally {
     cleanup();
   }

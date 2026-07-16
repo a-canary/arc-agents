@@ -76,6 +76,42 @@ describe("plan.ts — emit PRD + tracer-bullet tasks to the approval gate (ADR-0
     expect(run(PLAN, ["--project", "arc-webui", "--tracer", "x"]).code).not.toBe(0);
     expect(run(PLAN, ["--project", "arc-webui", "--title", "y"]).code).not.toBe(0);
   });
+
+  // Regression: empty-string --project (e.g. from a /chat/draft call where the
+  // thread has no chat_meta.project) must NOT propagate to the PRD or its tracer
+  // tasks. Empty used to slip past `?? "arc-webui"` (?? only substitutes on
+  // null/undefined), leaving kind=prd rows with project='' that the factory
+  // then dispatched into the arc-agents default worktree — the root cause of
+  // 6 webui→arc-agents misroutes on 2026-07-13 (analysis-1783934070.md
+  // Pattern 3). plan.ts must normalize empty/whitespace to its default.
+  it("treats empty-string --project as missing and defaults to arc-webui (no project='' leak)", () => {
+    const r = run(PLAN, [
+      "--project", "", "--title", "Empty project probe", "--body", "b",
+      "--tracer", "s1", "--tracer", "s2",
+    ]);
+    expect(r.code).toBe(0);
+    const { prdId, tracerIds } = JSON.parse(r.out.trim());
+    expect(show(prdId).project).toBe("arc-webui");
+    for (const tid of tracerIds) expect(show(tid).project).toBe("arc-webui");
+  });
+
+  it("treats whitespace-only --project as missing and defaults to arc-webui", () => {
+    const r = run(PLAN, [
+      "--project", "   ", "--title", "Whitespace project probe", "--body", "b",
+      "--tracer", "s",
+    ]);
+    expect(r.code).toBe(0);
+    const { prdId, tracerIds } = JSON.parse(r.out.trim());
+    expect(show(prdId).project).toBe("arc-webui");
+    expect(show(tracerIds[0]).project).toBe("arc-webui");
+  });
+
+  it("omitted --project defaults to arc-webui", () => {
+    const r = run(PLAN, ["--title", "No project flag", "--body", "b", "--tracer", "s"]);
+    expect(r.code).toBe(0);
+    const { prdId } = JSON.parse(r.out.trim());
+    expect(show(prdId).project).toBe("arc-webui");
+  });
 });
 
 // ── Pairwise PRD relationships (migration 028) ────────────────────────────────

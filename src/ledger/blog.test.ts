@@ -4,7 +4,7 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { migrate } from "./migrate";
-import { createBlogPost, listBlogPosts } from "./blog";
+import { createBlogPost, listBlogPosts, renderPrChip } from "./blog";
 
 function blogFresh(): Database {
   const db = new Database(":memory:");
@@ -200,4 +200,63 @@ test("choreOnly with search filter", () => {
   const rows = listBlogPosts(db, { search: "SQLite", choreOnly: true });
   expect(rows.length).toBe(1);
   expect(rows[0]!.title).toBe("SQLite cron report");
+});
+
+// ── pr_url / pr_state ─────────────────────────────────────────────────────────
+
+test("createBlogPost round-trips pr_url and pr_state", () => {
+  const db = blogFresh();
+  const post = createBlogPost(db, {
+    project: "arc",
+    title: "PR-linked post",
+    body_md: "body",
+    pr_url: "https://github.com/x/y/pull/1",
+    pr_state: "merged",
+  });
+  expect(post.pr_url).toBe("https://github.com/x/y/pull/1");
+  expect(post.pr_state).toBe("merged");
+
+  const [row] = listBlogPosts(db, { project: "arc" });
+  expect(row!.pr_url).toBe("https://github.com/x/y/pull/1");
+  expect(row!.pr_state).toBe("merged");
+});
+
+test("createBlogPost leaves pr_url/pr_state null when omitted", () => {
+  const db = blogFresh();
+  const post = createBlogPost(db, { project: "arc", title: "No PR", body_md: "body" });
+  expect(post.pr_url).toBeUndefined();
+  expect(post.pr_state).toBeUndefined();
+
+  const [row] = listBlogPosts(db, { project: "arc" });
+  expect(row!.pr_url).toBeNull();
+  expect(row!.pr_state).toBeNull();
+});
+
+// ── renderPrChip ───────────────────────────────────────────────────────────────
+
+test("renderPrChip returns empty string when no pr_url", () => {
+  expect(renderPrChip({ pr_url: undefined, pr_state: undefined })).toBe("");
+});
+
+test("renderPrChip defaults to open when pr_state is missing", () => {
+  const html = renderPrChip({ pr_url: "https://github.com/x/y/pull/2", pr_state: undefined });
+  expect(html).toBe(
+    `<a class="pr-chip pr-chip--open" href="https://github.com/x/y/pull/2">open</a>`,
+  );
+});
+
+test("renderPrChip renders merged and closed states", () => {
+  expect(renderPrChip({ pr_url: "https://x/1", pr_state: "merged" })).toBe(
+    `<a class="pr-chip pr-chip--merged" href="https://x/1">merged</a>`,
+  );
+  expect(renderPrChip({ pr_url: "https://x/1", pr_state: "closed" })).toBe(
+    `<a class="pr-chip pr-chip--closed" href="https://x/1">closed</a>`,
+  );
+});
+
+test("renderPrChip escapes HTML-unsafe characters in pr_url", () => {
+  const html = renderPrChip({ pr_url: `https://x/1?a=1&b="<b>"`, pr_state: "open" });
+  expect(html).toBe(
+    `<a class="pr-chip pr-chip--open" href="https://x/1?a=1&amp;b=&quot;&lt;b&gt;&quot;">open</a>`,
+  );
 });

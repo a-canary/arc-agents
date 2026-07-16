@@ -1,0 +1,11 @@
+# arc-agents cron entries
+# Format: minute hour day month weekday
+#
+# Install (idempotent):  ( crontab -l 2>/dev/null; cat bin/cron/recovery-sweep.cron ) | crontab -
+#
+# Restore / uninstall:  crontab -l | grep -v 'recovery-sweep-tick' | crontab -
+
+# recovery-sweep-tick — every 5 min, flips engine-outage-blocked rows back to
+# `ready` once their alias is producing work again. See bin/recovery-sweep-tick.sh
+# for the manual-run path (force-recover after a known outage resolution).
+*/5 * * * * /home/aaron/repos/arc-agents/bin/recovery-sweep-tick.sh >> /home/aaron/.cache/arc-recovery-sweep-tick.log 2>&1

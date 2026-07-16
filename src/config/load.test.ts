@@ -31,10 +31,10 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
   const cmds = getAliasCommands("smart", cfg);
-  // The real config's smart tier escalates fable → opus → minimax.
+  // The real config's smart tier is a cli-agent pool call with an interactive opus last-resort.
   expect(cmds.length).toBeGreaterThan(1);
-  expect(cmds[0]).toContain("fable");
-  expect(cmds[cmds.length - 1]).toContain("pi -p");
+  expect(cmds[0]).toContain("cli-agent");
+  expect(cmds[cmds.length - 1]).toContain("opus");
   for (const c of cmds) expect(c).toContain("{prompt}");
 });
 

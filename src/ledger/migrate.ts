@@ -1358,6 +1358,34 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "029_blog_pr_url",
+    // Add nullable pr_url + pr_state to blog posts so the feed can render a
+    // linked state chip next to the existing origin_task_id meta. Coarse
+    // state vocabulary (open/merged/closed) matches the PRD's spec.
+    //
+    // Additive + idempotent: ALTER-ADD only if absent (PRAGMA table_info),
+    // matching the 021_hygiene_complete + 022_feedback_table pattern. The
+    // blog table itself was created in 020, so any DB reaching this migration
+    // has blog. CHECK on pr_state enforces the closed vocab; absence is
+    // always allowed (posts without a PR are still first-class).
+    up: (db) => {
+      const cols = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(blog)")
+          .all()
+          .map((r) => r.name),
+      );
+      const add = (name: string, decl: string) => {
+        if (!cols.has(name)) db.exec(`ALTER TABLE blog ADD COLUMN ${name} ${decl}`);
+      };
+      add("pr_url", "TEXT");
+      add("pr_state", "TEXT CHECK (pr_state IS NULL OR pr_state IN ('open','merged','closed'))");
+      db.exec(
+        "CREATE INDEX IF NOT EXISTS idx_blog_pr_url ON blog(pr_url) WHERE pr_url IS NOT NULL",
+      );
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

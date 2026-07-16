@@ -25,6 +25,7 @@ async function doctor(db: string, root: string, extra: string[] = []): Promise<{
   untracked_worktree_dirs: string[];
   mergeable_worktrees: { path: string; branch: string | null }[];
   worktree_scan_error: string | null;
+  project_misroutes: { id: string; suspected_project: string }[];
 }> {
   const r = await $`bun ${cli} doctor --db ${db} --worktree-root ${root} --json ${extra}`.quiet();
   return JSON.parse(r.stdout.toString());
@@ -350,3 +351,60 @@ test("doctor --strict: mergeable_worktrees alone does NOT trigger non-zero exit"
     cleanup();
   }
 });
+
+test("doctor: project_misroutes flags default-project task naming a sibling repo", async () => {
+  const { db, root, cleanup } = fresh();
+  try {
+    await $`bun ${cli} init --db ${db}`.quiet();
+
+    const reposRoot = mkdtempSync(join(tmpdir(), "repos-root-"));
+    try {
+      mkdirSync(join(reposRoot, "arc-agents"));
+      mkdirSync(join(reposRoot, "arc-webui"));
+
+      const sqliteDb = new Database(db);
+      const now = Math.floor(Date.now() / 1000);
+      sqliteDb.run(`
+        INSERT INTO issues (id, project, body_md, kind, type, title, state, created_at, updated_at)
+        VALUES ('mis-1', '', 'wire up the arc-webui viewport shell', 'task', 'mvp', 't', 'ready', ?, ?)
+      `, [now, now]);
+      sqliteDb.close();
+
+      const out = await doctor(db, root, ["--repos-root", reposRoot]);
+      expect(out.project_misroutes).toEqual([{ id: "mis-1", suspected_project: "arc-webui" }]);
+    } finally {
+      rmSync(reposRoot, { recursive: true, force: true });
+    }
+  } finally {
+    cleanup();
+  }
+});
+
+test("doctor: project_misroutes ignores rows with no sibling-repo mention", async () => {
+  const { db, root, cleanup } = fresh();
+  try {
+    await $`bun ${cli} init --db ${db}`.quiet();
+
+    const reposRoot = mkdtempSync(join(tmpdir(), "repos-root-"));
+    try {
+      mkdirSync(join(reposRoot, "arc-agents"));
+      mkdirSync(join(reposRoot, "arc-webui"));
+
+      const sqliteDb = new Database(db);
+      const now = Math.floor(Date.now() / 1000);
+      sqliteDb.run(`
+        INSERT INTO issues (id, project, body_md, kind, type, title, state, created_at, updated_at)
+        VALUES ('ok-1', '', 'improve the ledger doctor check', 'task', 'mvp', 't', 'ready', ?, ?)
+      `, [now, now]);
+      sqliteDb.close();
+
+      const out = await doctor(db, root, ["--repos-root", reposRoot]);
+      expect(out.project_misroutes).toEqual([]);
+    } finally {
+      rmSync(reposRoot, { recursive: true, force: true });
+    }
+  } finally {
+    cleanup();
+  }
+});
+
