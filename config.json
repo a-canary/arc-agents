@@ -9,7 +9,10 @@
       "cli-agent --pool smart {prompt}",
       "claude-afk --model opus -p {prompt}"
     ],
-    "minimax-build": ["cli-agent --pool fast {prompt}"]
+    "minimax-build": [
+      "cli-agent --pool fast {prompt}",
+      "cli-agent --pool smart {prompt}"
+    ]
   },
   "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },
   "default_alias": "fast",
