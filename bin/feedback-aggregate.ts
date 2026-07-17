@@ -95,7 +95,7 @@ const TRUSTED_SOURCES = new Set(["direct", "mission", "operator"]);
 // queue it, the trigger gate can't fire, and rows stay OPEN indefinitely. Adding a
 // future machine log writer is a one-line append. See PR #318 (sibling slice, same
 // exclusion applied to the Lane-2 drain).
-export const MACHINE_LOG_SOURCES = new Set(["auto-oversight"]);
+export const MACHINE_LOG_SOURCES = new Set(["auto-oversight", "gate-triage"]);
 
 // Trust keys on the EXPLICIT author_trust column first (closing the source='direct'
 // degeneracy: arc-webui stamps every row 'direct', so a single product user looked like
