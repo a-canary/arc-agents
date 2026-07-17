@@ -110,6 +110,40 @@ function salvageHandoffs(db: Database): SalvageHandoff[] {
   return handoffs;
 }
 
+export type PrStateRunner = (prUrl: string) => "OPEN" | "MERGED" | "CLOSED" | null;
+
+export type MergedPrDesync = { issueId: string; prUrl: string };
+
+// Sweep `state='merged'` rows for a PR that GitHub still shows OPEN — the
+// inverse of the review-row salvage check above. Ledger flips to `merged`
+// when the merge command runs, but GitHub's own merge can still fail after
+// (branch protection, no approval) with nothing re-checking. Flags only —
+// does not auto-flip state, this needs a human/HITL call per row.
+// See analysis-1784260802.md (discord-bridge PR #8 stuck OPEN).
+export function sweepMergedPrDesync(db: Database, prState: PrStateRunner): MergedPrDesync[] {
+  const rows = db
+    .query<{ id: string; pr_url: string | null }, []>(
+      `SELECT id, pr_url FROM issues WHERE state='merged' AND pr_url IS NOT NULL`,
+    )
+    .all();
+  const desyncs: MergedPrDesync[] = [];
+  for (const row of rows) {
+    if (!row.pr_url) continue;
+    const state = prState(row.pr_url);
+    if (state !== "OPEN") continue;
+    const payload = JSON.stringify({ kind: "merged_pr_desync", pr_url: row.pr_url, gh_state: state });
+    const prior = db.query<{ payload_md: string }, [string, string]>(
+      `SELECT payload_md FROM issue_events WHERE issue_id=? AND kind='note' AND agent='recovery-sweep' AND payload_md=? LIMIT 1`,
+    ).get(row.id, payload);
+    if (!prior) db.run(
+      `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'recovery-sweep', ?)`,
+      [row.id, payload],
+    );
+    desyncs.push({ issueId: row.id, prUrl: row.pr_url });
+  }
+  return desyncs;
+}
+
 export function sweepRecovery(
   db: Database,
   opts: RecoverySweepOptions,
