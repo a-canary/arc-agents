@@ -90,6 +90,7 @@ test("selectNewFeedback skips auto-oversight log rows — display-only, never dr
 test("MACHINE_LOG_SOURCES is exported and seeds with auto-oversight", () => {
   expect(MACHINE_LOG_SOURCES).toBeInstanceOf(Set);
   expect(MACHINE_LOG_SOURCES.has("auto-oversight")).toBe(true);
+  expect(MACHINE_LOG_SOURCES.has("gate-triage")).toBe(true);
 });
 
 test("projectsWithOpenFeedback omits a project whose backlog is ONLY oversight rows", () => {
