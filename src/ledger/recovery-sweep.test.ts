@@ -8,7 +8,7 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { migrate } from "./migrate";
-import { sweepRecovery, type Probe, type RecoverySweepOptions } from "./recovery-sweep";
+import { sweepRecovery, sweepMergedPrDesync, type Probe, type RecoverySweepOptions } from "./recovery-sweep";
 
 function setup(): Database {
   const db = new Database(":memory:");
@@ -354,4 +354,25 @@ test("rc=0 with empty stdout is NOT recovery — that is the no-work symptom", (
   expect(r.kept).toEqual(["e1"]);
   expect(r.probes).toEqual([{ alias: "fast", rc: 0, recovered: false, flipped: 0, kept: 1 }]);
   expect(db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='e1'").get()?.state).toBe("blocked");
+});
+
+test("sweepMergedPrDesync flags merged rows whose PR is still OPEN on GitHub", () => {
+  const db = setup();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, pr_url)
+     VALUES ('m1', 'p', 't', '', 'mvp', 'merged', 'task', 'https://github.com/a/b/pull/8')`,
+  );
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, pr_url)
+     VALUES ('m2', 'p', 't', '', 'mvp', 'merged', 'task', 'https://github.com/a/b/pull/9')`,
+  );
+  const prState = (url: string) => (url.endsWith("/8") ? "OPEN" as const : "MERGED" as const);
+  const desyncs = sweepMergedPrDesync(db, prState);
+  expect(desyncs).toEqual([{ issueId: "m1", prUrl: "https://github.com/a/b/pull/8" }]);
+  const events = eventsFor(db, "m1", "note");
+  expect(events.length).toBe(1);
+  expect(JSON.parse(events[0]!.payload_md)).toMatchObject({ kind: "merged_pr_desync", gh_state: "OPEN" });
+  // idempotent: re-running does not duplicate the event
+  sweepMergedPrDesync(db, prState);
+  expect(eventsFor(db, "m1", "note").length).toBe(1);
 });
