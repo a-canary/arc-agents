@@ -27,6 +27,7 @@ const SHARED_SOURCE_PREFIXES: ReadonlyArray<readonly [string, string]> = [
   ["bin/wait-for-ledger", "arc-agents"],
   ["src/ledger/", "arc-agents"],
   ["src/profiles/", "arc-agents"],
+  ["skills/", "arc-agents"],
 ];
 
 // Match file-path-shaped tokens: word chars, slashes, dots, dashes ending in
