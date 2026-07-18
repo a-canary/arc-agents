@@ -699,6 +699,57 @@ test("decompose: JSON child with pool override deviates from parent pool", async
   }
 });
 
+test("decompose: JSON child with body+project sets both, project deviates from parent", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent for body+project",
+      "--tier", "mvp", "--pool", "build", "--project", "arc-agents")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "child with body", body: "the body text", project: "webui" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { body_md: string; project: string };
+    };
+    expect(cs.issue.body_md).toBe("the body text");
+    expect(cs.issue.project).toBe("webui");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with unrecognized field → validation error, zero rows inserted", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent bad field",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = await runRaw(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "bad child", acceptance: "nope" }),
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/unrecognized/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: top-level --title flag hard-errors instead of silently dropping", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent top-level flag",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = await runRaw(db, "decompose", parent.id, "--child", "kid", "--title", "oops", "--body", "oops2");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/does not accept top-level --title/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("decompose: JSON child with bad agent enum → validation error, zero rows inserted", async () => {
   const { db, cleanup } = freshDb();
   try {
