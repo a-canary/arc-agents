@@ -21,8 +21,12 @@ test("returns null when body names no shared-source path", () => {
   expect(routeProjectFromBody("update the README and CHOICES.md wording")).toBeNull();
 });
 
+test("routes a skills/ SKILL.md path to arc-agents", () => {
+  expect(routeProjectFromBody("edit skills/foo/SKILL.md in arc-skills")).toBe("arc-agents");
+});
+
 test("returns null for a non-shared source file", () => {
-  expect(routeProjectFromBody("edit skills/foo/SKILL.md in arc-skills")).toBeNull();
+  expect(routeProjectFromBody("update the CHANGELOG.md wording")).toBeNull();
 });
 
 test("returns null for empty/undefined body", () => {
