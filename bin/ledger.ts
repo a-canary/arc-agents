@@ -233,10 +233,14 @@ switch (cmd) {
   case "decompose": {
     // ledger decompose <parent-id> --child "t1" --child "t2" ...
     // Each --child value may be a bare title string (inherits parent tier+pool,
-    // agent='agent_unset') OR a JSON object {"title":..., "tier"?:..., "pool"?:..., "agent"?:...}.
+    // agent='agent_unset') OR a JSON object
+    // {"title":..., "body"?:..., "project"?:..., "tier"?:..., "pool"?:..., "agent"?:...}.
+    // No top-level --title/--body/--project flags exist (unlike `create`); passing them
+    // hard-errors instead of being silently dropped (improve-architecture-ledger-decompose-ch).
     // Atomic: insert N HITL children, set parent.blocked_by=[ids], parent.state='blocked'.
 
-    type ChildSpec = { title: string; tier?: Tier; pool?: Pool; agent?: Agent };
+    type ChildSpec = { title: string; body?: string; project?: string; tier?: Tier; pool?: Pool; agent?: Agent };
+    const CHILD_SPEC_KEYS = ["title", "body", "project", "tier", "pool", "agent"];
 
     const parent = args[1];
     if (!parent || parent.startsWith("--")) die("parent id required (positional)");
@@ -249,6 +253,10 @@ switch (cmd) {
         if (v !== undefined) rawChildren.push(v);
       } else if (a.startsWith("--child=")) {
         rawChildren.push(a.slice("--child=".length));
+      } else if (a === "--title" || a === "--body" || a === "--project" || a.startsWith("--title=") || a.startsWith("--body=") || a.startsWith("--project=")) {
+        // decompose has no per-call --title/--body/--project flags (create does).
+        // Silently ignoring these produced garbage children (see improve-architecture-ledger-decompose-ch).
+        die(`decompose does not accept top-level --title/--body/--project. Pass a --child JSON object instead: --child '{"title":"...","body":"...","project":"..."}'`);
       }
     }
 
@@ -267,7 +275,19 @@ switch (cmd) {
         if (!obj.title || typeof obj.title !== "string") {
           die(`--child JSON must include a "title" string field`);
         }
+        const unknownKeys = Object.keys(obj).filter((k) => !CHILD_SPEC_KEYS.includes(k));
+        if (unknownKeys.length > 0) {
+          die(`--child JSON has unrecognized field(s): ${unknownKeys.join(", ")}. Supported: ${CHILD_SPEC_KEYS.join(", ")}`);
+        }
         const spec: ChildSpec = { title: obj.title as string };
+        if (obj.body !== undefined) {
+          if (typeof obj.body !== "string") die(`--child: "body" must be a string`);
+          spec.body = obj.body;
+        }
+        if (obj.project !== undefined) {
+          if (typeof obj.project !== "string") die(`--child: "project" must be a string`);
+          spec.project = obj.project;
+        }
         if (obj.tier !== undefined) {
           if (!TIER_VALUES.includes(obj.tier as Tier)) {
             die(`--child: invalid tier '${obj.tier}' — must be one of: ${TIER_VALUES.join(", ")}`);
@@ -317,10 +337,12 @@ switch (cmd) {
         const childTier = spec.tier ?? parentRow.tier;
         const childPool = spec.pool ?? parentRow.pool;
         const childAgent = spec.agent ?? "agent_unset";
+        const childProject = spec.project ?? parentRow.project;
+        const childBody = spec.body ?? "";
         db.run(
           `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent)
-           VALUES (?, ?, ?, ?, '', '', 'HITL', 'ready', 'task', NULL, ?, ?, ?)`,
-          [id, parentRow.project, parent, spec.title, childTier, childPool, childAgent],
+           VALUES (?, ?, ?, ?, ?, '', 'HITL', 'ready', 'task', NULL, ?, ?, ?)`,
+          [id, childProject, parent, spec.title, childBody, childTier, childPool, childAgent],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
