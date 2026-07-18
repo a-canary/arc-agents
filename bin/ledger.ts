@@ -394,6 +394,17 @@ switch (cmd) {
     if (inPlace && evidence && evidence.length > 280) {
       die(`--evidence for --in-place must be \u2264280 chars (got ${evidence.length}). Concise evidence is intentional \u2014 long justifications are a ghost-merge smell.`);
     }
+    // --no-diff: hygiene/analysis skills legitimately terminate with zero diff
+    // (nothing to trash, N<3 sample, fix already landed upstream). Without this,
+    // workers overload state=failed for correct negative results, losing signal
+    // for stats/sweeper heuristics. --no-diff skips the diff_review requirement
+    // in exchange for mandatory --evidence naming the negative result; it does
+    // NOT skip verifyMergeTruth (a --no-diff merge still needs --pr/--local-merged-sha/
+    // --in-place like any other merge).
+    const noDiff = args.includes("--no-diff");
+    if (noDiff && !evidence) {
+      die("--no-diff requires --evidence <note> explaining the negative result (no diff to review).");
+    }
     const branch = getFlag("branch");
     const worktree = getFlag("worktree");
     const hitl = getFlag("hitl");
@@ -440,7 +451,7 @@ switch (cmd) {
       const project = state === "merged"
         ? db.query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?").get(id)?.project
         : undefined;
-      if (state === "merged") {
+      if (state === "merged" && !noDiff) {
         // diff_review payload contract: require the LATEST diff_review event
         // to parse as JSON {reviewer_identity, reviewed_sha, verdict}, and
         // the reviewer_identity must not match the row's claimed_by. This
@@ -455,7 +466,7 @@ switch (cmd) {
           .get(id);
         if (!latestReview) {
           die(
-            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging.`,
+            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging. If this row has no diff to review, use --no-diff --evidence "<why>" instead.`,
           );
         }
         const reviewParse = parseDiffReviewPayload(latestReview.payload_md);
@@ -467,9 +478,13 @@ switch (cmd) {
           .get(id)?.claimed_by;
         const indepMsg = checkReviewerIndependence(reviewParse.payload.reviewer_identity, claimedBy);
         if (indepMsg) die(indepMsg);
+      }
+      if (state === "merged") {
         // analysis-1780502957 Pattern 1 Part A: enforce pr_url's repo matches
         // the row's project field. The guard runs at the bookie layer so
         // a worker cannot mark a row merged against the wrong github repo.
+        // Applies regardless of --no-diff — a no-diff merge with a PR still
+        // must point at the right repo.
         const guardMsg = checkMergeGuard(project, pr);
         if (guardMsg) die(guardMsg);
       }
@@ -550,9 +565,13 @@ switch (cmd) {
     vals.push(id);
     db.run(`UPDATE issues SET ${sets.join(", ")} WHERE id=?`, vals);
     if (state) {
+      // [no-diff] prefix lets stats/sweeper heuristics (claim-stale-sweeper
+      // cooldown, hygiene dashboards) distinguish a correct negative result
+      // from a real code-shipping merge without a schema change.
+      const payload = evidence ? `→ ${state}\n\n${evidence}` : `→ ${state}`;
       db.run(
         `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
-        [id, state === "merged" ? "merged" : state === "failed" ? "failed" : "progress", getFlag("agent") ?? "cli", evidence ? `→ ${state}\n\n${evidence}` : `→ ${state}`],
+        [id, state === "merged" ? "merged" : state === "failed" ? "failed" : "progress", getFlag("agent") ?? "cli", noDiff ? `[no-diff] ${payload}` : payload],
       );
     }
     out({ id, updated: true });
@@ -1763,13 +1782,18 @@ switch (cmd) {
                                        to stdout for ops/debug; --type-filter
                                        includes the AND type=?2 variant
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
-  update <id> [--state --evidence --pr --local-merged-sha --in-place --branch --worktree --hitl 0|1 --agent --project]
+  update <id> [--state --evidence --pr --local-merged-sha --in-place --no-diff --branch --worktree --hitl 0|1 --agent --project]
                                        state=merged requires one of:
                                          --pr <url-or-#num>        gh pr view must say MERGED
                                          --local-merged-sha <sha>  sha must be on origin/main
                                          --in-place                explicit in-place acknowledgement
                                                                   (no PR/sha verification; --evidence
                                                                   is the receipt; mutex with --pr).
+                                       --no-diff skips the diff_review requirement for a
+                                       correct negative-result merge (nothing to trash, N<3
+                                       sample, fix already landed); requires --evidence
+                                       naming the negative result. Still needs --pr/
+                                       --local-merged-sha/--in-place like any merge.
                                        Override with ARC_SKIP_MERGE_TRUTH=1.
                                        --agent/--project patch the row (metadata update, no
                                        --state). With --state, --agent names the event author;
