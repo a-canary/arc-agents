@@ -2224,6 +2224,41 @@ test("update --in-place with valid --evidence (≤280) and diff_review succeeds"
   }
 });
 
+// --- --no-diff (ledger-add-no-diff-no-op-terminal-state-) --------------------
+// Hygiene/analysis skills legitimately terminate with zero diff. --no-diff
+// skips the diff_review requirement in exchange for mandatory --evidence.
+
+test("update --state merged --no-diff refused without --evidence", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    const r = await runRaw(db, "update", c.id, "--state", "merged", "--no-diff", "--in-place");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/--no-diff requires --evidence|--in-place requires --evidence/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --state merged --no-diff succeeds without diff_review event", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--no-diff", "--in-place", "--evidence", "N<3 sample, nothing to trash");
+    if (r.exitCode !== 0) {
+      throw new Error(r.stderr.toString());
+    }
+    const shown = (await run(db, "show", c.id)) as { issue: { state: string }; events: { kind: string; payload_md: string }[] };
+    expect(shown.issue.state).toBe("merged");
+    const mergedEvent = shown.events.find((e) => e.kind === "merged");
+    expect(mergedEvent?.payload_md).toMatch(/^\[no-diff\]/);
+  } finally {
+    cleanup();
+  }
+});
+
 test("update --in-place refused when --pr also supplied (mutex existing guard)", async () => {
   const { db, cleanup } = freshDb();
   try {
