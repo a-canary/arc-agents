@@ -2,7 +2,7 @@
 // Pure functions over (project, pr_url) — no db access, fixtures inline.
 
 import { test, expect } from "bun:test";
-import { checkMergeGuard, parsePrRepo, PROJECT_GH_REPO } from "./merge-guard";
+import { checkInPlaceGuard, checkMergeGuard, parsePrRepo, PROJECT_GH_REPO } from "./merge-guard";
 
 // Fixture: a row that mirrors the broken cli-proxy OSS-readiness pattern —
 // project=cli-proxy but pr_url points at a-canary/arc-agents/pull/197.
@@ -98,4 +98,24 @@ test("checkMergeGuard: short-circuits for unknown project, null project, unparse
   expect(checkMergeGuard("brand-new-project", "https://github.com/a-canary/brand-new-project/pull/1")).toBeNull();
   expect(checkMergeGuard("cli-proxy", null)).toBeNull();
   expect(checkMergeGuard("cli-proxy", "not a url")).toBeNull();
+});
+
+test("checkInPlaceGuard: refuses --in-place for non-owned project (conjecture)", () => {
+  const msg = checkInPlaceGuard("conjecture", true, false);
+  expect(msg).toContain("conjecture");
+  expect(msg).toContain("--force-in-place");
+});
+
+test("checkInPlaceGuard: --force-in-place overrides the refusal", () => {
+  expect(checkInPlaceGuard("conjecture", true, true)).toBeNull();
+});
+
+test("checkInPlaceGuard: allows --in-place on owned projects and null/unknown project", () => {
+  expect(checkInPlaceGuard("arc-agents", true, false)).toBeNull();
+  expect(checkInPlaceGuard(null, true, false)).toBeNull();
+  expect(checkInPlaceGuard("some-new-project", true, false)).toBeNull();
+});
+
+test("checkInPlaceGuard: no-op when not an in-place merge", () => {
+  expect(checkInPlaceGuard("conjecture", false, false)).toBeNull();
 });
