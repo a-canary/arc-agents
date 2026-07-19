@@ -28,3 +28,4 @@ bun.lockb
 *.sqlite3
 .env
 .env.*
+estate-secret-inventory-findings.json
