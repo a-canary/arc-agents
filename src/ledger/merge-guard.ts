@@ -76,3 +76,29 @@ export function checkMergeGuard(
     `or escalate via HITL for project reassignment.`
   );
 }
+
+// Projects where only the operator may land code: workers open a draft PR
+// and Aaron submits/merges (USER.md "Non-owned public PRs"). On these repos
+// an --in-place merge assertion can only be wrong — the worker cannot have
+// merged anything, so the ledger-says-merged/GH-says-open desync is
+// guaranteed (conjecture PR #28, analysis-1784455208 Pattern 1). Extend
+// when a new human-merge-only project is onboarded.
+export const NON_OWNED_PROJECTS: ReadonlySet<string> = new Set(["conjecture"]);
+
+// Returns null when the in-place merge is allowed, or a refusal string.
+// force (--force-in-place) is the explicit operator escape hatch.
+export function checkInPlaceGuard(
+  project: string | null | undefined,
+  inPlace: boolean,
+  force: boolean,
+): string | null {
+  if (!inPlace || force || !project || !NON_OWNED_PROJECTS.has(project)) return null;
+  return (
+    `refuse merged: --in-place is not valid for project='${project}' — it is a ` +
+    `non-owned public repo where workers open draft PRs and only the operator ` +
+    `merges (USER.md). An in-place assertion here guarantees a ledger/GitHub ` +
+    `desync (see conjecture PR #28). File a draft PR and park the row in ` +
+    `state=review, or pass --force-in-place if you are the operator asserting ` +
+    `a merge that really happened outside GitHub.`
+  );
+}

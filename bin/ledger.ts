@@ -21,7 +21,7 @@ import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
 import { parseFollowupTable } from "../src/ledger/followup-table";
-import { checkMergeGuard } from "../src/ledger/merge-guard";
+import { checkInPlaceGuard, checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
 import { encode as toonEncode } from "../src/ledger/toon-encode";
@@ -487,6 +487,11 @@ switch (cmd) {
         // must point at the right repo.
         const guardMsg = checkMergeGuard(project, pr);
         if (guardMsg) die(guardMsg);
+        // analysis-1784455208 Pattern 1: --in-place on a non-owned public
+        // repo asserts a merge the worker cannot have performed (only the
+        // operator merges there). Refuse unless --force-in-place.
+        const inPlaceMsg = checkInPlaceGuard(project, inPlace, args.includes("--force-in-place"));
+        if (inPlaceMsg) die(inPlaceMsg);
       }
       if (state === "merged" && process.env.ARC_SKIP_MERGE_TRUTH !== "1") {
         // --in-place overrides any stale pr_url on the row (the worker is
@@ -1829,7 +1834,7 @@ switch (cmd) {
                                        state=merged requires one of:
                                          --pr <url-or-#num>        gh pr view must say MERGED
                                          --local-merged-sha <sha>  sha must be on origin/main
-                                         --in-place                explicit in-place acknowledgement
+                                         --in-place                explicit in-place acknowledgement (refused on non-owned repos; --force-in-place overrides)
                                                                   (no PR/sha verification; --evidence
                                                                   is the receipt; mutex with --pr).
                                        --no-diff skips the diff_review requirement for a
