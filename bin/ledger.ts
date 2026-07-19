@@ -21,7 +21,7 @@ import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
 import { parseFollowupTable } from "../src/ledger/followup-table";
-import { checkMergeGuard } from "../src/ledger/merge-guard";
+import { checkMergeGuard, checkInPlaceOwnershipGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
 import { encode as toonEncode } from "../src/ledger/toon-encode";
@@ -452,6 +452,11 @@ switch (cmd) {
         ? db.query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?").get(id)?.project
         : undefined;
       if (state === "merged" && !noDiff) {
+        // analysis-1784455208 Pattern 1 Part B: --in-place asserts the
+        // worker itself confirmed the merge; not valid on non-owned public
+        // repos where only Aaron may merge (PR #28 desync on conjecture).
+        const ownershipMsg = checkInPlaceOwnershipGuard(project, inPlace);
+        if (ownershipMsg) die(ownershipMsg);
         // diff_review payload contract: require the LATEST diff_review event
         // to parse as JSON {reviewer_identity, reviewed_sha, verdict}, and
         // the reviewer_identity must not match the row's claimed_by. This

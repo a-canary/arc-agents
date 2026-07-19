@@ -2,7 +2,7 @@
 // Pure functions over (project, pr_url) — no db access, fixtures inline.
 
 import { test, expect } from "bun:test";
-import { checkMergeGuard, parsePrRepo, PROJECT_GH_REPO } from "./merge-guard";
+import { checkMergeGuard, parsePrRepo, PROJECT_GH_REPO, checkInPlaceOwnershipGuard } from "./merge-guard";
 
 // Fixture: a row that mirrors the broken cli-proxy OSS-readiness pattern —
 // project=cli-proxy but pr_url points at a-canary/arc-agents/pull/197.
@@ -98,4 +98,29 @@ test("checkMergeGuard: short-circuits for unknown project, null project, unparse
   expect(checkMergeGuard("brand-new-project", "https://github.com/a-canary/brand-new-project/pull/1")).toBeNull();
   expect(checkMergeGuard("cli-proxy", null)).toBeNull();
   expect(checkMergeGuard("cli-proxy", "not a url")).toBeNull();
+});
+
+// analysis-1784455208.md Pattern 1 Part B: PR #28
+// (clarify-docs-conjecture-scrub-hardcoded-) used --in-place on conjecture
+// (non-owned public repo) and desynced — ledger said merged, GH still OPEN.
+test("checkInPlaceOwnershipGuard: refuses --in-place on non-owned public repo (conjecture)", () => {
+  const refusal = checkInPlaceOwnershipGuard("conjecture", true);
+  expect(refusal).not.toBeNull();
+  expect(refusal).toContain("conjecture");
+  expect(refusal).toContain("--pr");
+  expect(refusal).toContain("--local-merged-sha");
+});
+
+test("checkInPlaceOwnershipGuard: allows --pr/--local-merged-sha path on non-owned repo (inPlace=false)", () => {
+  expect(checkInPlaceOwnershipGuard("conjecture", false)).toBeNull();
+});
+
+test("checkInPlaceOwnershipGuard: allows --in-place on owned repos (arc-agents, cli-proxy)", () => {
+  expect(checkInPlaceOwnershipGuard("arc-agents", true)).toBeNull();
+  expect(checkInPlaceOwnershipGuard("cli-proxy", true)).toBeNull();
+});
+
+test("checkInPlaceOwnershipGuard: short-circuits on null/undefined project", () => {
+  expect(checkInPlaceOwnershipGuard(null, true)).toBeNull();
+  expect(checkInPlaceOwnershipGuard(undefined, true)).toBeNull();
 });

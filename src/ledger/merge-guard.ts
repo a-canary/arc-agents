@@ -49,6 +49,39 @@ export function parsePrRepo(prUrl: string | null | undefined): string | null {
   return `${m[1]}/${m[2]}`;
 }
 
+// Part B of analysis-1784455208.md (conjecture Pattern 1): projects that
+// are non-owned public repos (worker may only open a draft PR; Aaron
+// submits/merges — see USER.md "Non-owned public PRs" + CHOICES A-0005
+// "User-owned repos prefixed arc-"). `--in-place` asserts the worker
+// itself confirmed the merge landed, which is never true here — only
+// Aaron merges these repos. PR #28 (clarify-docs-conjecture-scrub-
+// hardcoded-) used --in-place on conjecture and desynced (ledger said
+// merged, GH still OPEN); recovery-sweep had to correct it.
+//
+// Explicit small set, same convention as PROJECT_GH_REPO — extend when
+// a new non-owned public repo is onboarded.
+export const NON_OWNED_PUBLIC_REPOS: ReadonlySet<string> = new Set([
+  "conjecture",
+]);
+
+// Returns null when --in-place is allowed, or a refusal string naming
+// the project and the required alternative (--pr / --local-merged-sha).
+export function checkInPlaceOwnershipGuard(
+  project: string | null | undefined,
+  inPlace: boolean,
+): string | null {
+  if (!inPlace) return null;
+  if (!project) return null;
+  if (!NON_OWNED_PUBLIC_REPOS.has(project)) return null;
+  return (
+    `refuse merged: project='${project}' is a non-owned public repo ` +
+    `(worker opens draft PR only; Aaron submits/merges). --in-place asserts ` +
+    `a merge the worker cannot make here. Supply --pr <url> once Aaron has ` +
+    `merged it, or --local-merged-sha <sha> if the merge commit is on ` +
+    `origin/main.`
+  );
+}
+
 // Returns null when the merge is allowed, or a human-readable refusal
 // string naming both the expected and actual repos when the guard
 // fires. project=null/undefined short-circuits (legacy rows from
