@@ -594,8 +594,16 @@ switch (cmd) {
     ).get(id);
     if (!cur) die(`no such issue: ${id}`);
     if (cur.state !== "blocked") die(`refuse repoint-blocked-by: ${id} is state=${cur.state}, not blocked`);
+    if (newBlockers.includes(id)) die(`refuse repoint-blocked-by: ${id} cannot block itself`);
     for (const b of newBlockers) {
-      if (!db.query("SELECT 1 FROM issues WHERE id=?").get(b)) die(`no such issue (blocker): ${b}`);
+      const blocker = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(b);
+      if (!blocker) die(`no such issue (blocker): ${b}`);
+      // A blocker already in a terminal state would cascade-unblock this row
+      // on the very next `tick` sweep, defeating the point of repointing
+      // (avoiding premature wake per the discovering task's brief).
+      if (blocker.state === "merged" || blocker.state === "cancelled") {
+        die(`refuse repoint-blocked-by: blocker ${b} is already state=${blocker.state}; repointing to it would immediately cascade-unblock ${id} on the next tick`);
+      }
     }
     const blockedBy = JSON.stringify(newBlockers);
     db.run(
