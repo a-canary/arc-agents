@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseVerdict, stamp, SELECT_SQL, hasSalvageableCommits, preJudgeFlip } from "./gate-triage";
+import { parseVerdict, stamp, SELECT_SQL, hasSalvageableCommits, preJudgeFlip, isNonOwnedRepoPr } from "./gate-triage";
 
 describe("parseVerdict", () => {
   test("accepts valid auto verdict with tool list", () => {
@@ -40,8 +40,9 @@ import { Database } from "bun:sqlite";
 test("selection: prds always, tasks only when review-stale >48h", () => {
   const db = new Database(":memory:");
   db.run("create table issues (id text, title text, body_md text, kind text, state text, updated_at integer, hitl integer default 0)");
+  db.run("alter table issues add column pr_url text");
   const now = Math.floor(Date.now() / 1000);
-  const ins = db.query("insert into issues values (?,?,?,?,?,?,?)");
+  const ins = db.query("insert into issues (id, title, body_md, kind, state, updated_at, hitl) values (?,?,?,?,?,?,?)");
   ins.run("p1", "prd fresh", "", "prd", "review", now, 0);
   ins.run("t-old", "task stale", "", "task", "review", now - 3 * 86400, 0);
   ins.run("t-new", "task fresh", "", "task", "review", now - 3600, 0);
@@ -147,6 +148,18 @@ test("hasSalvageableCommits: true only when a progress event logged commits", ()
   expect(hasSalvageableCommits(db, "t-empty")).toBe(false);
   expect(hasSalvageableCommits(db, "t-other")).toBe(false);
   expect(hasSalvageableCommits(db, "t-missing")).toBe(false);
+});
+
+describe("isNonOwnedRepoPr", () => {
+  test("true for a conjecture PR url", () => {
+    expect(isNonOwnedRepoPr("https://github.com/a-canary/Conjecture/pull/17")).toBe(true);
+  });
+  test("false for an owned repo url", () => {
+    expect(isNonOwnedRepoPr("https://github.com/a-canary/arc-agents/pull/5")).toBe(false);
+  });
+  test("false for empty/missing pr_url", () => {
+    expect(isNonOwnedRepoPr("")).toBe(false);
+  });
 });
 
 test("merge-review feedback ids use the full task id (24-char prefixes collide)", () => {
