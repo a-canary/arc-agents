@@ -412,6 +412,8 @@ switch (cmd) {
     // masked real decomposition attempts as successful no-ops. The
     // purpose-built `decompose` verb wires parent.blocked_by + parent.state
     // atomically alongside child inserts; use that for fan-out.
+    // Known gap: no correction path for a stale blocked_by on a row not
+    // created via decompose. See CHOICES.md I-0010.
     if (args.includes("--blocked-by")) {
       die("--blocked-by is set by the `decompose` verb, not `update`. Use `ledger decompose <parent> --child \"<title>\"` to wire parent.blocked_by + parent.state=blocked atomically.");
     }
