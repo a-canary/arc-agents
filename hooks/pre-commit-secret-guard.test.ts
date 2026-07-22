@@ -82,10 +82,12 @@ afterEach(() => {
   rmSync(workDir, { recursive: true, force: true });
 });
 
+// fixture must be high-entropy: gitleaks >=8.24 entropy-gates the github-pat
+// rule, so a sequential ghp_1234... token is silently not detected
 maybeTest("hook: blocks a commit staging a planted fake secret", () => {
   runInstall();
   stageFiles([
-    ["config.txt", "GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwxyz\n"],
+    ["config.txt", "GITHUB_TOKEN=ghp_x9J2mQ7vLpR4tY8wZk3fH6bN1cV5dG0sAeUo\n"],
   ]);
   const r = commitViaShim();
   expect(r.status).not.toBe(0);
@@ -115,7 +117,7 @@ maybeTest("hook: passes benign high-entropy content (hash, UUID)", () => {
 maybeTest("hook: SECRET_GUARD_SKIP=1 bypasses the secret check", () => {
   runInstall();
   stageFiles([
-    ["config.txt", "GITHUB_TOKEN=ghp_1234567890abcdefghijklmnopqrstuvwxyz\n"],
+    ["config.txt", "GITHUB_TOKEN=ghp_x9J2mQ7vLpR4tY8wZk3fH6bN1cV5dG0sAeUo\n"],
   ]);
   const r = commitViaShim({ SECRET_GUARD_SKIP: "1" });
   expect(r.status).toBe(0);
