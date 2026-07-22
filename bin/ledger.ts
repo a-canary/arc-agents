@@ -21,7 +21,7 @@ import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
 import { parseFollowupTable } from "../src/ledger/followup-table";
-import { checkMergeGuard } from "../src/ledger/merge-guard";
+import { checkInPlaceGuard, checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
 import { loadProfile } from "../src/profiles/load";
 import { encode as toonEncode } from "../src/ledger/toon-encode";
@@ -412,6 +412,8 @@ switch (cmd) {
     // masked real decomposition attempts as successful no-ops. The
     // purpose-built `decompose` verb wires parent.blocked_by + parent.state
     // atomically alongside child inserts; use that for fan-out.
+    // Known gap: no correction path for a stale blocked_by on a row not
+    // created via decompose. See CHOICES.md I-0010.
     if (args.includes("--blocked-by")) {
       die("--blocked-by is set by the `decompose` verb, not `update`. Use `ledger decompose <parent> --child \"<title>\"` to wire parent.blocked_by + parent.state=blocked atomically.");
     }
@@ -487,6 +489,11 @@ switch (cmd) {
         // must point at the right repo.
         const guardMsg = checkMergeGuard(project, pr);
         if (guardMsg) die(guardMsg);
+        // analysis-1784455208 Pattern 1: --in-place on a non-owned public
+        // repo asserts a merge the worker cannot have performed (only the
+        // operator merges there). Refuse unless --force-in-place.
+        const inPlaceMsg = checkInPlaceGuard(project, inPlace, args.includes("--force-in-place"));
+        if (inPlaceMsg) die(inPlaceMsg);
       }
       if (state === "merged" && process.env.ARC_SKIP_MERGE_TRUTH !== "1") {
         // --in-place overrides any stale pr_url on the row (the worker is
@@ -575,6 +582,46 @@ switch (cmd) {
       );
     }
     out({ id, updated: true });
+    break;
+  }
+
+  case "repoint-blocked-by": {
+    // Repoint an existing blocked row's blocked_by to different sibling
+    // id(s), e.g. when the stated blocker resolves but the real prerequisite
+    // is a sibling created in the same decomposition. Row must already be
+    // state=blocked (use `decompose` to create+block atomically instead).
+    const id = args[1] ?? die("id required");
+    const rest = args.slice(2);
+    const flagStart = rest.findIndex((a) => a.startsWith("--"));
+    const newBlockers = flagStart === -1 ? rest : rest.slice(0, flagStart);
+    if (newBlockers.length === 0) die("at least one blocker id required: ledger repoint-blocked-by <id> <blockerId> [blockerId...]");
+    const db = openWithMigrate(getFlag("db"));
+    const cur = db.query<{ state: string; blocked_by: string | null }, [string]>(
+      "SELECT state, blocked_by FROM issues WHERE id=?",
+    ).get(id);
+    if (!cur) die(`no such issue: ${id}`);
+    if (cur.state !== "blocked") die(`refuse repoint-blocked-by: ${id} is state=${cur.state}, not blocked`);
+    if (newBlockers.includes(id)) die(`refuse repoint-blocked-by: ${id} cannot block itself`);
+    for (const b of newBlockers) {
+      const blocker = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(b);
+      if (!blocker) die(`no such issue (blocker): ${b}`);
+      // A blocker already in a terminal state would cascade-unblock this row
+      // on the very next `tick` sweep, defeating the point of repointing
+      // (avoiding premature wake per the discovering task's brief).
+      if (blocker.state === "merged" || blocker.state === "cancelled") {
+        die(`refuse repoint-blocked-by: blocker ${b} is already state=${blocker.state}; repointing to it would immediately cascade-unblock ${id} on the next tick`);
+      }
+    }
+    const blockedBy = JSON.stringify(newBlockers);
+    db.run(
+      `UPDATE issues SET blocked_by=?, updated_at=strftime('%s','now') WHERE id=?`,
+      [blockedBy, id],
+    );
+    db.run(
+      `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'progress', ?, ?)`,
+      [id, getFlag("agent") ?? "cli", `repointed blocked_by: ${cur.blocked_by ?? "null"} -> ${blockedBy}`],
+    );
+    out({ id, blocked_by: newBlockers, repointed: true });
     break;
   }
 
@@ -1782,11 +1829,14 @@ switch (cmd) {
                                        to stdout for ops/debug; --type-filter
                                        includes the AND type=?2 variant
   decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
+  repoint-blocked-by <id> <blockerId...>
+                                       repoint an existing blocked row's blocked_by to
+                                       different sibling id(s); row must be state=blocked
   update <id> [--state --evidence --pr --local-merged-sha --in-place --no-diff --branch --worktree --hitl 0|1 --agent --project]
                                        state=merged requires one of:
                                          --pr <url-or-#num>        gh pr view must say MERGED
                                          --local-merged-sha <sha>  sha must be on origin/main
-                                         --in-place                explicit in-place acknowledgement
+                                         --in-place                explicit in-place acknowledgement (refused on non-owned repos; --force-in-place overrides)
                                                                   (no PR/sha verification; --evidence
                                                                   is the receipt; mutex with --pr).
                                        --no-diff skips the diff_review requirement for a

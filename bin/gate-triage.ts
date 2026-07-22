@@ -41,7 +41,32 @@ export function hasSalvageableCommits(db: Database, issueId: string): boolean {
 //                                                  cascade-on-merge → pre-judge flip;
 //                                                  see close-the-ready-prd-dead-lane)
 export const SELECT_SQL =
-  "select id, title, kind, state, coalesce(body_md,'') body from issues where ((state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800))) or (state='ready' and hitl=1 and kind='task' and updated_at < unixepoch('now')-7200) or (state='ready' and kind='prd' and updated_at < unixepoch('now')-172800)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
+  "select id, title, kind, state, coalesce(body_md,'') body, coalesce(pr_url,'') pr_url from issues where ((state='review' and (kind='prd' or (kind='task' and updated_at < unixepoch('now')-172800))) or (state='ready' and hitl=1 and kind='task' and updated_at < unixepoch('now')-7200) or (state='ready' and kind='prd' and updated_at < unixepoch('now')-172800)) and coalesce(body_md,'') not like '%' || ? || '%' order by rowid";
+
+// Non-owned public repos: worker opens draft PR only, Aaron submits/merges (USER.md).
+// A row parked in review with an open draft PR here is correctly awaiting a human —
+// re-queueing it churns a worker claim to re-verify the same fact (analyse-recent-sessions,
+// gate-triage-skip-requeue-for-draft-pr-awaiting-human). Extend this list as new non-owned
+// repos are onboarded.
+const NON_OWNED_REPOS = ["a-canary/Conjecture"];
+
+export function isNonOwnedRepoPr(prUrl: string): boolean {
+  return NON_OWNED_REPOS.some((repo) => prUrl.includes(`github.com/${repo}/pull/`));
+}
+
+// True when the PR is still an open draft (gh CLI ground truth) — the row should stay
+// parked in review rather than being requeued. Fail-open (false) on any gh error so an
+// unreachable network doesn't silently swallow a real requeue.
+export function isDraftAwaitingHuman(prUrl: string): boolean {
+  if (!isNonOwnedRepoPr(prUrl)) return false;
+  const gh = Bun.which("gh") ?? "gh";
+  const r = spawnSync([gh, "pr", "view", prUrl, "--json", "isDraft,state"]);
+  if (r.exitCode !== 0) return false;
+  try {
+    const v = JSON.parse(new TextDecoder().decode(r.stdout));
+    return v.state === "OPEN" && v.isDraft === true;
+  } catch { return false; }
+}
 
 // Pre-judge flip — PRD acceptance criterion (close-the-ready-prd-dead-lane):
 // the webui /approvals/:id/approve route is `prd+review` only, so a stale ready
@@ -118,7 +143,7 @@ Reply with ONLY JSON: {"gate":"human"|"auto","reason":"<one sentence>","allowed_
 
 if (import.meta.main) {
   const db = new Database(DB);
-  const rows = db.query(SELECT_SQL).all(STAMP) as Array<{ id: string; title: string; kind: string; state: string; body: string }>;
+  const rows = db.query(SELECT_SQL).all(STAMP) as Array<{ id: string; title: string; kind: string; state: string; body: string; pr_url: string }>;
   let human = 0, auto = 0, skipped = 0;
   for (const r of rows) {
     // Pre-judge flip (close-the-ready-prd-dead-lane): the webui approve path is
@@ -143,6 +168,13 @@ if (import.meta.main) {
       continue;
     }
     if (r.kind === "task") {
+      // Non-owned-repo draft PR correctly awaiting Aaron: re-queueing burns a worker claim
+      // to re-verify the same "still draft, still open" fact. Leave it parked in review.
+      if (isDraftAwaitingHuman(r.pr_url)) {
+        console.log(`skip requeue (draft PR awaiting human): ${r.id}`);
+        skipped++;
+        continue;
+      }
       // Orphaned task that already produced commits (worker branch salvageable): re-running a
       // worker just bounces it back to review — it needs a MERGE REVIEW, not re-execution.
       // Surface it as a webui-visible feedback row and leave it in review.

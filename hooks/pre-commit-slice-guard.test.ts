@@ -19,6 +19,7 @@ import { fileURLToPath } from "node:url";
 
 const REPO = dirname(dirname(fileURLToPath(import.meta.url)));
 const HOOK_SRC = join(REPO, "hooks", "pre-commit-slice-guard.sh");
+const SECRET_SRC = join(REPO, "hooks", "pre-commit-secret-guard.sh");
 const INSTALL_SRC = join(REPO, "hooks", "install-pre-commit.sh");
 
 let workDir: string;
@@ -67,8 +68,10 @@ beforeEach(() => {
   // (which resolves them via `git rev-parse --show-toplevel`) finds them.
   mkdirSync(join(workDir, "hooks"), { recursive: true });
   copyFileSync(HOOK_SRC, join(workDir, "hooks", "pre-commit-slice-guard.sh"));
+  copyFileSync(SECRET_SRC, join(workDir, "hooks", "pre-commit-secret-guard.sh"));
   copyFileSync(INSTALL_SRC, join(workDir, "hooks", "install-pre-commit.sh"));
   sh("chmod", ["+x", join(workDir, "hooks", "pre-commit-slice-guard.sh")]);
+  sh("chmod", ["+x", join(workDir, "hooks", "pre-commit-secret-guard.sh")]);
   sh("chmod", ["+x", join(workDir, "hooks", "install-pre-commit.sh")]);
 
   git(["init", "-q", "-b", "main"]);
