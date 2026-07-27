@@ -43,19 +43,22 @@ describe("plan.ts — emit PRD + tracer-bullet tasks to the approval gate (ADR-0
     expect(prd.state).toBe("review"); // awaiting the human gate (pendingPrds)
     expect(prd.project).toBe("arc-webui");
 
-    for (const tid of tracerIds) {
+    // Tracer 1 gated on the PRD; tracer i also chained on tracer i-1
+    // (sequential tracer-bullet dependencies, minted at plan time).
+    for (const [i, tid] of tracerIds.entries()) {
       const t = show(tid);
       expect(t.kind).toBe("task");
       expect(t.state).toBe("blocked");
-      expect(JSON.parse(t.blocked_by as string)).toEqual([prdId]); // gated on the PRD
+      const expected = i === 0 ? [prdId] : [prdId, tracerIds[i - 1]];
+      expect(JSON.parse(t.blocked_by as string)).toEqual(expected);
     }
   });
 
-  it("approving the PRD releases its tracers to the worker pool (unblock_dependents)", () => {
+  it("approving the PRD releases only the first tracer; each later tracer waits for its predecessor to merge", () => {
     const { prdId, tracerIds } = JSON.parse(
       run(PLAN, [
         "--project", "arc-webui", "--title", "Spine test", "--body", "b",
-        "--tracer", "s1", "--tracer", "s2",
+        "--tracer", "s1", "--tracer", "s2", "--tracer", "s3",
       ]).out.trim(),
     );
     expect(show(tracerIds[0]).state).toBe("blocked");
@@ -66,9 +69,43 @@ describe("plan.ts — emit PRD + tracer-bullet tasks to the approval gate (ADR-0
     // diff_review event — a different gate from PRD approval.)
     const db = new Database(DB);
     db.run("UPDATE issues SET state='merged' WHERE id=?", [prdId]);
-    db.close();
 
-    expect(show(tracerIds[0]).state).toBe("ready"); // claimable by bg-worker pool
+    expect(show(tracerIds[0]).state).toBe("ready"); // first slice claimable
+    expect(show(tracerIds[1]).state).toBe("blocked"); // chained on tracer 1
+    expect(show(tracerIds[2]).state).toBe("blocked");
+
+    // tracer 1 merges → tracer 2 releases; tracer 3 still waits on tracer 2.
+    db.run("UPDATE issues SET state='merged' WHERE id=?", [tracerIds[0]]);
+    expect(show(tracerIds[1]).state).toBe("ready");
+    expect(show(tracerIds[2]).state).toBe("blocked");
+
+    db.run("UPDATE issues SET state='merged' WHERE id=?", [tracerIds[1]]);
+    db.close();
+    expect(show(tracerIds[2]).state).toBe("ready");
+  });
+
+  // Documents the ceiling named in plan.ts: unblock_dependents fires on *merged*
+  // only, so a cancelled predecessor strands its successor; a failed one is
+  // recoverable by re-readying it.
+  it("a cancelled tracer strands its successor; a failed one does not", () => {
+    const { prdId, tracerIds } = JSON.parse(
+      run(PLAN, [
+        "--project", "arc-webui", "--title", "Strand test", "--body", "b",
+        "--tracer", "s1", "--tracer", "s2",
+      ]).out.trim(),
+    );
+    const db = new Database(DB);
+    db.run("UPDATE issues SET state='merged' WHERE id=?", [prdId]);
+
+    // cancelled predecessor → successor never releases (the ceiling).
+    db.run("UPDATE issues SET state='cancelled' WHERE id=?", [tracerIds[0]]);
+    expect(show(tracerIds[1]).state).toBe("blocked");
+
+    // failed predecessor is recoverable: re-ready it, land it, successor releases.
+    db.run("UPDATE issues SET state='failed' WHERE id=?", [tracerIds[0]]);
+    expect(show(tracerIds[1]).state).toBe("blocked");
+    db.run("UPDATE issues SET state='merged' WHERE id=?", [tracerIds[0]]);
+    db.close();
     expect(show(tracerIds[1]).state).toBe("ready");
   });
 

@@ -7,7 +7,8 @@
 // Mints a PRD (kind=prd) parked at the human approval gate (state=review) plus
 // one tracer-bullet task per --tracer, each blocked on the PRD. Approving the
 // PRD at /approvals flips it to merged; the canonical unblock_dependents trigger
-// then releases the tracers to 'ready' for the bg-worker pool. This emitter only
+// then releases the FIRST tracer to 'ready' for the bg-worker pool, each later
+// tracer following when its predecessor merges. This emitter only
 // PRODUCES proposals — it never spawns implementation workers, merges, or deploys.
 //
 // Designed to be launched as a detached subprocess by arc-webui /chat, never run
@@ -101,15 +102,31 @@ const prdId = ledger("create", [
 ledger("update", [prdId, "--state", "review"]);
 
 // 2. one tracer-bullet task per slice, each blocked on the PRD so it stays out
-//    of the worker pool until the human approves at the gate.
-const tracerIds = tracers.map((t) =>
-  ledger("create", [
-    "--kind", "task", "--type", "mvp", "--project", project,
-    "--title", t, "--blocked-by", JSON.stringify([prdId]),
-    "--agent", "developer", "--tier", "mvp", "--pool", "build",
-    "--source-module", "plan",
-  ]).id as string,
-);
+//    of the worker pool until the human approves at the gate. Slices are
+//    tracer bullets — smallest first, each building on the spine of the last —
+//    so tracer i is ALSO blocked on tracer i-1 (improve-architecture-planner-
+//    chain-imple-zrnx: parallel dispatch of structurally dependent siblings
+//    wasted worker slots). The unblock_dependents trigger releases a tracer
+//    only when every blocker is merged: tracer 1 on PRD approval, each later
+//    tracer when its predecessor merges.
+// ponytail: full sequential chain; per-slice dependency edges from plan-agent
+// if genuinely parallel slices ever matter.
+// Known ceiling: unblock_dependents releases only on blockers *merged*, so a
+// cancelled tracer strands its successors (a failed one is recoverable with
+// `ledger update <tracer> --state ready`). Recovery for the cancelled case needs
+// the repoint-blocked-by gap in CHOICES I-0010 closed; chains are <=3 long.
+const tracerIds: string[] = [];
+for (const t of tracers) {
+  const prev = tracerIds[tracerIds.length - 1];
+  tracerIds.push(
+    ledger("create", [
+      "--kind", "task", "--type", "mvp", "--project", project,
+      "--title", t, "--blocked-by", JSON.stringify(prev ? [prdId, prev] : [prdId]),
+      "--agent", "developer", "--tier", "mvp", "--pool", "build",
+      "--source-module", "plan",
+    ]).id as string,
+  );
+}
 
 // 3. pairwise relationships — insert transactionally. We open the same DB the
 //    ledger CLI wrote to (ARC_LEDGER_DB env override, or ~/vault/ledger.db)
