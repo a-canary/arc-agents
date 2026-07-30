@@ -769,13 +769,22 @@ switch (cmd) {
     //   pending    blockers whose state is not merged|failed|cancelled
     //   failed     blockers whose state is failed|cancelled
     // A parent with no blocked_by is trivially unblocked+success.
-    // Exit: 0 unblocked / 1 pending / nonzero structured error for missing id.
-    const id = args[1] ?? die("id required");
+    // Exit: 0 unblocked / 1 pending / 2 missing-id. Distinct codes let a
+    //   script distinguish "keep waiting" from "id does not exist"; a
+    //   missing id is not a state to wait on.
+    const id = args[1];
+    if (!id || id.startsWith("--")) {
+      process.stderr.write("id required\n");
+      process.exit(2);
+    }
     const db = openWithMigrate(getFlag("db"));
     const parent = db.query<{ id: string; state: string; blocked_by: string | null }, [string]>(
       "SELECT id, state, blocked_by FROM issues WHERE id=?",
     ).get(id);
-    if (!parent) die(`no such issue: ${id}`);
+    if (!parent) {
+      process.stderr.write(`no such issue: ${id}\n`);
+      process.exit(2);
+    }
     let blockers: string[] = [];
     if (parent.blocked_by && parent.blocked_by !== "[]") {
       const parsed = JSON.parse(parent.blocked_by);
@@ -1937,7 +1946,7 @@ switch (cmd) {
   print-claim-sql [--type-filter]      emit canonical claim SQL (src/ledger/claim.ts)
                                        to stdout for ops/debug; --type-filter
                                        includes the AND type=?2 variant
-  decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
+  decompose <parent> --child T [...]   atomic: create N children (inherit parent type), parent → blocked
   repoint-blocked-by <id> <blockerId...>
                                        repoint an existing blocked row's blocked_by to
                                        different sibling id(s); row must be state=blocked
@@ -1978,7 +1987,7 @@ switch (cmd) {
   show <id>
   join-status <id>                pure read: is <id> past the dependency barrier?
                                        {id, state, unblocked, success, pending, failed}
-                                       exit 0 unblocked / 1 pending / nonzero on missing id
+                                       exit 0 unblocked / 1 pending / 2 missing id
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue

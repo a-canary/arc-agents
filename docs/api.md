@@ -19,7 +19,7 @@ All entry via `bun bin/ledger.ts <verb> [flags]`.
 | `list [--state S] [--kind K] [--limit N]` | List issues | |
 | `show <id>` | Full row + event history | |
 | `decompose <parent-id>` | Decompose into task children | Atomic; parent → `blocked`; children inherit parent `type`/`pool`/`tier` |
-| `join-status <id>` | Pure read of dependency barrier | `{id, state, unblocked, success, pending, failed}`; exit 0 unblocked / 1 pending / nonzero on missing id |
+| `join-status <id>` | Pure read of dependency barrier | `{id, state, unblocked, success, pending, failed}`; exit 0 unblocked / 1 pending / 2 on missing id |
 | `tick` | Cascade unblock + reclaim stale claims | Run by factory; also a backstop |
 | `spawn-ready [--pool X]` | List claimable tasks | |
 | `hitl emit` | Emit a HITL prompt | See HITL verbs below |

@@ -528,7 +528,10 @@ test("terminal state cannot transition", async () => {
   }
 });
 
-test("decompose: parent → blocked, N children created with HITL/ready", async () => {
+test("decompose: parent → blocked, N children inherit parent type, state=ready", async () => {
+  // Decompose children are normal worker tasks. They inherit the parent's
+  // priority (`type`) instead of being hard-coded to `HITL`; HITL priority
+  // is reserved for human-decision rows.
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
@@ -545,9 +548,9 @@ test("decompose: parent → blocked, N children created with HITL/ready", async 
     expect(JSON.parse(shown.issue.blocked_by)).toEqual(r.children.map((c) => c.id));
 
     for (const c of r.children) {
-      const cs = (await run(db, "show", c.id)) as { issue: { state: string; type: string; kind: string; parent_id: string } };
+      const cs = (await run(db, "show", c.id)) as { issue: { state: string; type: string; kind: string; parent_id: string; hitl: number } };
       expect(cs.issue.state).toBe("ready");
-      expect(cs.issue.type).toBe("HITL");
+      expect(cs.issue.type).toBe("mvp");
       expect(cs.issue.kind).toBe("task");
       expect(cs.issue.parent_id).toBe(parent.id);
     }
@@ -2387,6 +2390,21 @@ test("update --in-place with no worktree_path set (rows from non-worktree source
   }
 });
 
+// ── join-status helpers (top-level so all tests can use them) ──────
+// `ledger join-status <parent>` is a pure read: no state writes, no
+// updated_at bump, no claimed_by clear. It tells a worker (or a human)
+// whether the parent is past the dependency barrier and whether every
+// blocker landed as a success.
+
+async function forceState(db: string, id: string, state: "merged" | "failed" | "cancelled"): Promise<void> {
+  if (state === "merged") {
+    await stubDiffReview(db, id);
+    await run(db, "update", id, "--state", "merged");
+    return;
+  }
+  await run(db, "update", id, "--state", state);
+}
+
 describe("ADR-0013 Wave 3 verb + kind aliases", () => {
   test("ledger issue and ledger ticket both reach the bare-list body (Wave 3 scope)", async () => {
     const { db, cleanup } = freshDb();
@@ -2452,20 +2470,7 @@ describe("ADR-0013 Wave 3 verb + kind aliases", () => {
     }
   });
 
-// ── join-status verb (AXI-shaped read) ────────────────────────────────────
-// `ledger join-status <parent>` is a pure read: no state writes, no
-// updated_at bump, no claimed_by clear. It tells a worker (or a human)
-// whether the parent is past the dependency barrier and whether every
-// blocker landed as a success.
-
-async function forceState(db: string, id: string, state: "merged" | "failed" | "cancelled"): Promise<void> {
-  if (state === "merged") {
-    await stubDiffReview(db, id);
-    await run(db, "update", id, "--state", "merged");
-    return;
-  }
-  await run(db, "update", id, "--state", state);
-}
+});
 
 test("join-status: still-blocked parent reports pending blockers, exit 1", async () => {
   const { db, cleanup } = freshDb();
@@ -2566,14 +2571,27 @@ test("join-status: parent with no blocked_by is trivially unblocked", async () =
   }
 });
 
-test("join-status: missing parent → structured error, nonzero", async () => {
+test("join-status: missing parent → structured error, exit 2 (distinct from pending)", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
     const out = await runRaw(db, "join-status", "does-not-exist");
-    expect(out.exitCode).not.toBe(0);
+    expect(out.exitCode).toBe(2);
     const stderr = out.stderr.toString();
     expect(stderr).toMatch(/no such issue: does-not-exist/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("join-status: missing id argument → exit 2", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const out = await runRaw(db, "join-status");
+    expect(out.exitCode).toBe(2);
+    const stderr = out.stderr.toString();
+    expect(stderr).toMatch(/id required/);
   } finally {
     cleanup();
   }
