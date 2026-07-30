@@ -528,7 +528,10 @@ test("terminal state cannot transition", async () => {
   }
 });
 
-test("decompose: parent → blocked, N children created with HITL/ready", async () => {
+test("decompose: parent → blocked, N children inherit parent type, state=ready", async () => {
+  // Decompose children are normal worker tasks. They inherit the parent's
+  // priority (`type`) instead of being hard-coded to `HITL`; HITL priority
+  // is reserved for human-decision rows.
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
@@ -545,12 +548,106 @@ test("decompose: parent → blocked, N children created with HITL/ready", async 
     expect(JSON.parse(shown.issue.blocked_by)).toEqual(r.children.map((c) => c.id));
 
     for (const c of r.children) {
-      const cs = (await run(db, "show", c.id)) as { issue: { state: string; type: string; kind: string; parent_id: string } };
+      const cs = (await run(db, "show", c.id)) as { issue: { state: string; type: string; kind: string; parent_id: string; hitl: number } };
       expect(cs.issue.state).toBe("ready");
-      expect(cs.issue.type).toBe("HITL");
+      expect(cs.issue.type).toBe("mvp");
       expect(cs.issue.kind).toBe("task");
+      expect(cs.issue.hitl).toBe(0);
       expect(cs.issue.parent_id).toBe(parent.id);
     }
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: bare string child inherits parent type (regression)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent task",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(db, "decompose", parent.id, "--child", "bare title")) as {
+      parent: string;
+      children: { id: string; title: string }[];
+    };
+    expect(r.children.length).toBe(1);
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { type: string; tier: string; pool: string; agent: string; hitl: number };
+    };
+    expect(cs.issue.type).toBe("mvp");
+    expect(cs.issue.tier).toBe("mvp");
+    expect(cs.issue.pool).toBe("build");
+    expect(cs.issue.agent).toBe("agent_unset");
+    expect(cs.issue.hitl).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with type override sets type, parent type still wins for other fields", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent type override",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "deeper slice", type: "quality" }),
+    )) as { parent: string; children: { id: string; title: string }[] };
+    expect(r.children.length).toBe(1);
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { type: string; tier: string; pool: string };
+    };
+    expect(cs.issue.type).toBe("quality");
+    expect(cs.issue.tier).toBe("mvp");
+    expect(cs.issue.pool).toBe("build");
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: type=HITL parent still produces HITL children (no regression)", async () => {
+  // When the parent itself is a human-decision row, fan-out children must
+  // also be HITL priority so the factory skip-on-hitl invariant is preserved
+  // (the bookie is the right path for these).
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "HITL", "--title", "human-decision parent",
+      "--tier", "trust", "--pool", "interactive")) as { id: string };
+    const r = (await run(db, "decompose", parent.id, "--child", "ask user x")) as {
+      children: { id: string }[];
+    };
+    const cs = (await run(db, "show", r.children[0]!.id)) as {
+      issue: { type: string; hitl: number };
+    };
+    expect(cs.issue.type).toBe("HITL");
+    // The hitl=1 flag is the gate; type is the priority class. Children
+    // inherit type from parent; hitl=0 stays the decompose default (workers
+    // may still surface a human-decision need through other rows).
+    expect(cs.issue.hitl).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("decompose: JSON child with bad type enum → validation error, zero rows inserted", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent bad type",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = await runRaw(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "bad", type: "bogus" }),
+    );
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/type/);
+
+    // No partial write — parent still ready, no child rows.
+    const shown = (await run(db, "show", parent.id)) as { issue: { state: string; blocked_by: string | null } };
+    expect(shown.issue.state).toBe("ready");
+    expect(shown.issue.blocked_by).toBeNull();
   } finally {
     cleanup();
   }

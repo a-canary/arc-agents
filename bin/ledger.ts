@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
-import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
+import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, TYPE_VALUES, type Tier, type Pool, type Agent, type Type } from "../src/ledger/bookie-validator";
 import { routeProjectFromBody } from "../src/ledger/hygiene-project-route";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { parseDiffReviewPayload, checkReviewerIndependence } from "../src/ledger/diff-review";
@@ -251,8 +251,8 @@ switch (cmd) {
     // hard-errors instead of being silently dropped (improve-architecture-ledger-decompose-ch).
     // Atomic: insert N HITL children, set parent.blocked_by=[ids], parent.state='blocked'.
 
-    type ChildSpec = { title: string; body?: string; project?: string; tier?: Tier; pool?: Pool; agent?: Agent };
-    const CHILD_SPEC_KEYS = ["title", "body", "project", "tier", "pool", "agent"];
+    type ChildSpec = { title: string; body?: string; project?: string; tier?: Tier; pool?: Pool; agent?: Agent; type?: Type };
+    const CHILD_SPEC_KEYS = ["title", "body", "project", "tier", "pool", "agent", "type"];
 
     const parent = args[1];
     if (!parent || parent.startsWith("--")) die("parent id required (positional)");
@@ -318,6 +318,12 @@ switch (cmd) {
           }
           spec.agent = obj.agent as Agent;
         }
+        if (obj.type !== undefined) {
+          if (!TYPE_VALUES.includes(obj.type as Type)) {
+            die(`--child: invalid type '${obj.type}' — must be one of: ${TYPE_VALUES.join(", ")}`);
+          }
+          spec.type = obj.type as Type;
+        }
         childSpecs.push(spec);
       } else {
         // Bare title string — inherit tier+pool from parent, agent defaults to agent_unset.
@@ -330,8 +336,8 @@ switch (cmd) {
     if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    const parentRow = db.query<{ id: string; project: string; state: string; tier: string; pool: string }, [string]>(
-      "SELECT id, project, state, tier, pool FROM issues WHERE id=?",
+    const parentRow = db.query<{ id: string; project: string; state: string; tier: string; pool: string; type: string }, [string]>(
+      "SELECT id, project, state, tier, pool, type FROM issues WHERE id=?",
     ).get(parent);
     if (!parentRow) die(`no such issue: ${parent}`);
     if (parentRow.state === "merged" || parentRow.state === "cancelled") {
@@ -349,12 +355,17 @@ switch (cmd) {
         const childTier = spec.tier ?? parentRow.tier;
         const childPool = spec.pool ?? parentRow.pool;
         const childAgent = spec.agent ?? "agent_unset";
+        // Children inherit the parent's `type` (priority) by default. A
+        // `type=HITL` parent is a human-decision row whose fan-out children
+        // must remain HITL priority; everything else stays in the parent's
+        // class. JSON `--child` may override `type` for the rare re-shape.
+        const childType = (spec.type ?? parentRow.type) as Type;
         const childProject = spec.project ?? parentRow.project;
         const childBody = spec.body ?? "";
         db.run(
           `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent)
-           VALUES (?, ?, ?, ?, ?, '', 'HITL', 'ready', 'task', NULL, ?, ?, ?)`,
-          [id, childProject, parent, spec.title, childBody, childTier, childPool, childAgent],
+           VALUES (?, ?, ?, ?, ?, '', ?, 'ready', 'task', NULL, ?, ?, ?)`,
+          [id, childProject, parent, spec.title, childBody, childType, childTier, childPool, childAgent],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
