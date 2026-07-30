@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const SCRIPT = process.cwd() + "/bin/pre-merge.sh";
+// Resolve SCRIPT via import.meta.dir so the test is invocation-cwd-independent.
+// (process.cwd() + relative path breaks when bun test is invoked from outside
+// the repo root, e.g. `bun test /abs/path/to/test.ts`.)
+const SCRIPT = import.meta.dir + "/pre-merge.sh";
 
 // Extract a gate function body using nesting-aware brace matching.
 function extractFn(name: string): string {
@@ -199,5 +202,21 @@ describe("pre-merge.sh gate_api_key_guard", () => {
     // "csk-" prefix but only 15 chars — below the 20-char min threshold
     const out = runApiKeyGuard(["# comment containing csk-too-short"]);
     expect(out).toContain("PASS:api-key-guard");
+  });
+});
+
+describe("pre-merge.sh bash parser smoke", () => {
+  // Regression: a stray single-quote inside a single-quoted regex on line 150
+  // broke `bash -n` and disabled the whole file. Per-gate TS tests mirror the
+  // semantics; this test guards the bash parser itself so future quoting bugs
+  // fail loudly instead of silently disabling the gate.
+  test("bash -n exits 0 (no parse errors in bin/pre-merge.sh)", () => {
+    const res = spawnSync("bash", ["-n", SCRIPT], { encoding: "utf8" });
+    expect(res.status).toBe(0);
+    if (res.status !== 0) {
+      throw new Error(
+        `bash -n failed:\nstdout: ${res.stdout}\nstderr: ${res.stderr}`
+      );
+    }
   });
 });
