@@ -23,7 +23,7 @@ const AGENT_COMBOS: Array<[string, string]> = [
   ["nope", "build"], // unknown agent → DEFAULT
 ];
 
-const EXTERNAL_SKILLS = new Set(["grill-with-docs", "choose-wisely"]);
+const EXTERNAL_SKILLS = new Set(["grill-with-docs", "choose-wisely", "anti-sycophancy", "install-anti-sycophancy"]);
 
 describe("resolveTemplate (agent-keyed)", () => {
   it("sprint agent → sprint frame regardless of pool", () => {
