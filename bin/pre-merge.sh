@@ -145,9 +145,12 @@ gate_api_key_guard() {
       found=1
       break
     fi
-    # os.environ.get / os.getenv with empty-fallback default (silent fail on unset)
-    if echo "$line" | grep -qE 'os\.environ\.get\([^)]*[\'\"].*[\"\']' || \
-       echo "$line" | grep -qE 'os\.getenv\([^)]*[\'\"].*[\"\']'; then
+    # os.environ.get / os.getenv with empty-string default (silent fail on unset)
+    # Split per-quote-style — mirrors bin/pre-merge.test.ts.
+    if echo "$line" | grep -qE "os\\.environ\\.get\\([^)]*,\\s*''\\)" || \
+       echo "$line" | grep -qE "os\\.environ\\.get\\([^)]*,\\s*\"\"\\)" || \
+       echo "$line" | grep -qE "os\\.getenv\\([^)]*,\\s*''\\)" || \
+       echo "$line" | grep -qE "os\\.getenv\\([^)]*,\\s*\"\"\\)"; then
       fail "api-key-guard" "empty env-var default (silent fail): ${line:0:80}"
       found=1
       break
@@ -158,8 +161,10 @@ gate_api_key_guard() {
       found=1
       break
     fi
-    # API_KEY = "" / = '' (empty string assignment)
-    if echo "$line" | grep -qE '(API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|CEREBRAS_API_KEY)\s*=\s*["\']{2}'; then
+    # API_KEY = "" / = '' (empty string assignment to known key vars)
+    # Split per-quote-style — mirrors bin/pre-merge.test.ts.
+    if echo "$line" | grep -qE "(API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|CEREBRAS_API_KEY)\\s*=\\s*\"\"" || \
+       echo "$line" | grep -qE "(API_KEY|ANTHROPIC_API_KEY|OPENAI_API_KEY|CEREBRAS_API_KEY)\\s*=\\s*''"; then
       fail "api-key-guard" "empty API_KEY assignment found: ${line:0:80}"
       found=1
       break
