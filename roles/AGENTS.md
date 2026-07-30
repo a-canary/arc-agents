@@ -18,15 +18,15 @@ Never write an unverified claim into CHOICES.md, CONTEXT.md, a PR description, o
 
 CONTEXT.md term: [evidence-first](../CONTEXT.md#evidence-first).
 
-## 2. Concern → HITL Decomposition
+## 2. Concern → Decomposition
 
-When a worker hits a decision outside its CHOICES scope, a risky/irreversible action, or a blocker only a human can resolve: **decompose into HITL children, don't guess and don't stall**.
+When a worker hits a decision outside its CHOICES scope, a risky/irreversible action, or a blocker only a human can resolve: **decompose, don't guess and don't stall**.
 
 The `~/agents/` predecessor wrote `outbox/concern-*.md` files for this. In arc-agents the mechanism is the ledger:
 
-1. Worker writes N HITL child rows via bookie (recursion allowed, fanout cap = 5 — if you need more, the task isn't atomic; re-shape into an umbrella child instead).
+1. Worker writes N child rows via bookie (recursion allowed, fanout cap = 5 — if you need more, the task isn't atomic; re-shape into an umbrella child instead). Children inherit the parent's `type` and `pool`; a `type=HITL` parent is the only case where children stay HITL priority.
 2. Worker sets `parent.blocked_by = [childIds]`, flips `parent.state = blocked`.
-3. Interviewer (or `class=taste` worker) emits a `hitl_prompts` row if the decision is user-facing.
+3. For human-decision children, the child has `type=HITL, hitl=1`; the interviewer (or `class=taste` worker) emits a `hitl_prompts` row if the decision is user-facing.
 
 Do *not* decompose for decisions inside CHOICES scope, low-risk, reversible work — just act.
 
@@ -77,7 +77,7 @@ Stop. Do not guess.
 
 1. `ke-recall <query>` — search KE for prior decisions.
 2. `grep` the journal/events for similar past rows.
-3. If still unclear and the decision affects taste or impact, **decompose into HITL** rather than picking silently (§2).
+3. If still unclear and the decision affects taste or impact, **decompose** rather than picking silently (§2).
 4. Document the assumption in the row's event log before acting.
 
 Confusion acted on silently compounds.
