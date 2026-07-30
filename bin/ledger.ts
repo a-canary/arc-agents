@@ -761,6 +761,78 @@ switch (cmd) {
     break;
   }
 
+  case "join-status": {
+    // Pure read: answer "is this parent past the dependency barrier?"
+    // without mutating any row. The agent's contract:
+    //   unblocked  parent.state != 'blocked' AND every blocker is terminal
+    //   success    unblocked AND every blocker is 'merged'
+    //   pending    blockers whose state is not merged|failed|cancelled
+    //   failed     blockers whose state is failed|cancelled
+    // A parent with no blocked_by is trivially unblocked+success.
+    // Exit: 0 unblocked / 1 pending / nonzero structured error for missing id.
+    const id = args[1] ?? die("id required");
+    const db = openWithMigrate(getFlag("db"));
+    const parent = db.query<{ id: string; state: string; blocked_by: string | null }, [string]>(
+      "SELECT id, state, blocked_by FROM issues WHERE id=?",
+    ).get(id);
+    if (!parent) die(`no such issue: ${id}`);
+    let blockers: string[] = [];
+    if (parent.blocked_by && parent.blocked_by !== "[]") {
+      const parsed = JSON.parse(parent.blocked_by);
+      if (Array.isArray(parsed)) blockers = parsed.filter((b): b is string => typeof b === "string");
+    }
+    type JoinState = "merged" | "failed" | "cancelled" | "ready" | "claimed" | "wip" | "review" | "blocked" | null;
+    const placeholders = blockers.map(() => "?").join(",");
+    const blockerRows = blockers.length
+      ? db
+          .query<{ id: string; state: JoinState }, string[]>(
+            `SELECT id, state FROM issues WHERE id IN (${placeholders})`,
+          )
+          .all(...blockers)
+      : [];
+    const byId = new Map(blockerRows.map((r) => [r.id, r.state]));
+    const missing: string[] = [];
+    const pending: { id: string; state: string }[] = [];
+    const failed: { id: string; state: string }[] = [];
+    const merged: string[] = [];
+    for (const b of blockers) {
+      const s = byId.get(b) ?? null;
+      if (s === null) { missing.push(b); continue; }
+      if (s === "merged") merged.push(b);
+      else if (s === "failed" || s === "cancelled") failed.push({ id: b, state: s });
+      else pending.push({ id: b, state: s });
+    }
+    // ponytail: success is strict — every blocker must be merged AND
+    // nothing missing. The integration step is the right place to handle
+    // a missing-blocker case (refuse + re-claim, don't paper over here).
+    // A parent with no blockers is trivially unblocked + success (nothing to wait on).
+    const unblocked = blockers.length === 0
+      ? parent.state !== "blocked"
+      : parent.state !== "blocked" && pending.length === 0 && missing.length === 0;
+    const success = blockers.length === 0
+      ? unblocked
+      : unblocked && failed.length === 0 && missing.length === 0 && merged.length === blockers.length;
+    const body = {
+      id: parent.id,
+      state: parent.state,
+      unblocked,
+      success,
+      pending,
+      failed,
+      ...(missing.length ? { missing } : {}),
+    };
+    out(body);
+    if (process.stderr.isTTY) {
+      const hint = unblocked
+        ? success
+          ? `Next: parent ${parent.id} is ready to integrate.`
+          : `Next: parent ${parent.id} is past the barrier but had failures; integrate or decompose.`
+        : `Next: ${pending.length} pending blocker(s); run \`ledger show ${parent.id}\` or wait for \`ledger tick\`.`;
+      process.stderr.write(hint + "\n");
+    }
+    process.exit(unblocked ? 0 : 1);
+  }
+
   case "hitl": {
     // hitl emit --class taste|impact --kind ask_choice|ask_text|ask_confirm|notify|show_artifact
     //          --prompt "<q>" [--option X --option Y ...] [--recommended <idx-or-string>]
@@ -1904,6 +1976,9 @@ switch (cmd) {
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them
   show <id>
+  join-status <id>                pure read: is <id> past the dependency barrier?
+                                       {id, state, unblocked, success, pending, failed}
+                                       exit 0 unblocked / 1 pending / nonzero on missing id
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue
