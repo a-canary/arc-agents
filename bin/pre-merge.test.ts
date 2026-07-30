@@ -4,7 +4,10 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { spawnSync } from "node:child_process";
 
-const SCRIPT = process.cwd() + "/bin/pre-merge.sh";
+// Resolve SCRIPT via import.meta.dir so the test is invocation-cwd-independent.
+// (process.cwd() + relative path breaks when bun test is invoked from outside
+// the repo root, e.g. `bun test /abs/path/to/test.ts`.)
+const SCRIPT = import.meta.dir + "/pre-merge.sh";
 
 // Extract a gate function body using nesting-aware brace matching.
 function extractFn(name: string): string {
