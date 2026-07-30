@@ -142,10 +142,10 @@ describe("renderSystemPrompt (agent-keyed)", () => {
     expect(p).toContain("/triage-failed");
   });
 
-  it("includes AGENTS.md doctrine (Evidence-First, HITL Decomposition, Pattern Detection)", () => {
+  it("includes AGENTS.md doctrine (Evidence-First, Decomposition, Pattern Detection)", () => {
     const p = renderSystemPrompt({ ...base, kind: "task", agent: "developer", pool: "build" });
     expect(p).toContain("Evidence-First");
-    expect(p).toContain("HITL Decomposition");
+    expect(p).toContain("Concern → Decomposition");
     expect(p).toContain("Pattern Detection");
   });
 

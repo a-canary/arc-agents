@@ -36,7 +36,7 @@ Child spec schema:
 }
 ```
 
-For HITL decomposition the typical child has `kind=task, type=HITL, hitl=1`.
+For HITL decomposition the typical child has `kind=task, type=HITL, hitl=1`. When the parent itself is `type=HITL` (a human-decision row), fan-out children inherit `type=HITL`. For orchestrator fan-out (the common case), children inherit the parent's `type` and are not HITL priority — they are normal worker tasks. The new `ledger join-status <parent>` verb is the read-only check for the parent.
 
 ## Constraints
 

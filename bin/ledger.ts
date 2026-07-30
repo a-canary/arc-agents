@@ -6,7 +6,7 @@ import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
-import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, type Tier, type Pool, type Agent } from "../src/ledger/bookie-validator";
+import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, TYPE_VALUES, type Tier, type Pool, type Agent, type Type } from "../src/ledger/bookie-validator";
 import { routeProjectFromBody } from "../src/ledger/hygiene-project-route";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { parseDiffReviewPayload, checkReviewerIndependence } from "../src/ledger/diff-review";
@@ -251,8 +251,8 @@ switch (cmd) {
     // hard-errors instead of being silently dropped (improve-architecture-ledger-decompose-ch).
     // Atomic: insert N HITL children, set parent.blocked_by=[ids], parent.state='blocked'.
 
-    type ChildSpec = { title: string; body?: string; project?: string; tier?: Tier; pool?: Pool; agent?: Agent };
-    const CHILD_SPEC_KEYS = ["title", "body", "project", "tier", "pool", "agent"];
+    type ChildSpec = { title: string; body?: string; project?: string; tier?: Tier; pool?: Pool; agent?: Agent; type?: Type };
+    const CHILD_SPEC_KEYS = ["title", "body", "project", "tier", "pool", "agent", "type"];
 
     const parent = args[1];
     if (!parent || parent.startsWith("--")) die("parent id required (positional)");
@@ -318,6 +318,12 @@ switch (cmd) {
           }
           spec.agent = obj.agent as Agent;
         }
+        if (obj.type !== undefined) {
+          if (!TYPE_VALUES.includes(obj.type as Type)) {
+            die(`--child: invalid type '${obj.type}' — must be one of: ${TYPE_VALUES.join(", ")}`);
+          }
+          spec.type = obj.type as Type;
+        }
         childSpecs.push(spec);
       } else {
         // Bare title string — inherit tier+pool from parent, agent defaults to agent_unset.
@@ -330,8 +336,8 @@ switch (cmd) {
     if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
 
     const db = openWithMigrate(getFlag("db"));
-    const parentRow = db.query<{ id: string; project: string; state: string; tier: string; pool: string }, [string]>(
-      "SELECT id, project, state, tier, pool FROM issues WHERE id=?",
+    const parentRow = db.query<{ id: string; project: string; state: string; tier: string; pool: string; type: string }, [string]>(
+      "SELECT id, project, state, tier, pool, type FROM issues WHERE id=?",
     ).get(parent);
     if (!parentRow) die(`no such issue: ${parent}`);
     if (parentRow.state === "merged" || parentRow.state === "cancelled") {
@@ -349,12 +355,17 @@ switch (cmd) {
         const childTier = spec.tier ?? parentRow.tier;
         const childPool = spec.pool ?? parentRow.pool;
         const childAgent = spec.agent ?? "agent_unset";
+        // Children inherit the parent's `type` (priority) by default. A
+        // `type=HITL` parent is a human-decision row whose fan-out children
+        // must remain HITL priority; everything else stays in the parent's
+        // class. JSON `--child` may override `type` for the rare re-shape.
+        const childType = (spec.type ?? parentRow.type) as Type;
         const childProject = spec.project ?? parentRow.project;
         const childBody = spec.body ?? "";
         db.run(
           `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent)
-           VALUES (?, ?, ?, ?, ?, '', 'HITL', 'ready', 'task', NULL, ?, ?, ?)`,
-          [id, childProject, parent, spec.title, childBody, childTier, childPool, childAgent],
+           VALUES (?, ?, ?, ?, ?, '', ?, 'ready', 'task', NULL, ?, ?, ?)`,
+          [id, childProject, parent, spec.title, childBody, childType, childTier, childPool, childAgent],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
@@ -748,6 +759,87 @@ switch (cmd) {
       process.stderr.write(hint + "\n");
     }
     break;
+  }
+
+  case "join-status": {
+    // Pure read: answer "is this parent past the dependency barrier?"
+    // without mutating any row. The agent's contract:
+    //   unblocked  parent.state != 'blocked' AND every blocker is terminal
+    //   success    unblocked AND every blocker is 'merged'
+    //   pending    blockers whose state is not merged|failed|cancelled
+    //   failed     blockers whose state is failed|cancelled
+    // A parent with no blocked_by is trivially unblocked+success.
+    // Exit: 0 unblocked / 1 pending / 2 missing-id. Distinct codes let a
+    //   script distinguish "keep waiting" from "id does not exist"; a
+    //   missing id is not a state to wait on.
+    const id = args[1];
+    if (!id || id.startsWith("--")) {
+      process.stderr.write("id required\n");
+      process.exit(2);
+    }
+    const db = openWithMigrate(getFlag("db"));
+    const parent = db.query<{ id: string; state: string; blocked_by: string | null }, [string]>(
+      "SELECT id, state, blocked_by FROM issues WHERE id=?",
+    ).get(id);
+    if (!parent) {
+      process.stderr.write(`no such issue: ${id}\n`);
+      process.exit(2);
+    }
+    let blockers: string[] = [];
+    if (parent.blocked_by && parent.blocked_by !== "[]") {
+      const parsed = JSON.parse(parent.blocked_by);
+      if (Array.isArray(parsed)) blockers = parsed.filter((b): b is string => typeof b === "string");
+    }
+    type JoinState = "merged" | "failed" | "cancelled" | "ready" | "claimed" | "wip" | "review" | "blocked" | null;
+    const placeholders = blockers.map(() => "?").join(",");
+    const blockerRows = blockers.length
+      ? db
+          .query<{ id: string; state: JoinState }, string[]>(
+            `SELECT id, state FROM issues WHERE id IN (${placeholders})`,
+          )
+          .all(...blockers)
+      : [];
+    const byId = new Map(blockerRows.map((r) => [r.id, r.state]));
+    const missing: string[] = [];
+    const pending: { id: string; state: string }[] = [];
+    const failed: { id: string; state: string }[] = [];
+    const merged: string[] = [];
+    for (const b of blockers) {
+      const s = byId.get(b) ?? null;
+      if (s === null) { missing.push(b); continue; }
+      if (s === "merged") merged.push(b);
+      else if (s === "failed" || s === "cancelled") failed.push({ id: b, state: s });
+      else pending.push({ id: b, state: s });
+    }
+    // ponytail: success is strict — every blocker must be merged AND
+    // nothing missing. The integration step is the right place to handle
+    // a missing-blocker case (refuse + re-claim, don't paper over here).
+    // A parent with no blockers is trivially unblocked + success (nothing to wait on).
+    const unblocked = blockers.length === 0
+      ? parent.state !== "blocked"
+      : parent.state !== "blocked" && pending.length === 0 && missing.length === 0;
+    const success = blockers.length === 0
+      ? unblocked
+      : unblocked && failed.length === 0 && missing.length === 0 && merged.length === blockers.length;
+    const body = {
+      id: parent.id,
+      state: parent.state,
+      unblocked,
+      success,
+      pending,
+      failed,
+      ...(missing.length ? { missing } : {}),
+    };
+    out(body);
+    if (process.stderr.isTTY) {
+      const hint = unblocked
+        ? success
+          ? `Next: parent ${parent.id} is ready to integrate.`
+          : `Next: parent ${parent.id} is past the barrier but had failures; integrate or decompose.`
+        : `Next: ${pending.length} pending blocker(s); run \`ledger show ${parent.id}\` or wait for \`ledger tick\`.`;
+      process.stderr.write(hint + "\n");
+    }
+    process.exit(unblocked ? 0 : 1);
   }
 
   case "hitl": {
@@ -1854,7 +1946,7 @@ switch (cmd) {
   print-claim-sql [--type-filter]      emit canonical claim SQL (src/ledger/claim.ts)
                                        to stdout for ops/debug; --type-filter
                                        includes the AND type=?2 variant
-  decompose <parent> --child T [...]   atomic: create N HITL children, parent → blocked
+  decompose <parent> --child T [...]   atomic: create N children (inherit parent type), parent → blocked
   repoint-blocked-by <id> <blockerId...>
                                        repoint an existing blocked row's blocked_by to
                                        different sibling id(s); row must be state=blocked
@@ -1893,6 +1985,9 @@ switch (cmd) {
                                        default excludes terminal (merged/
                                        cancelled/failed); --all includes them
   show <id>
+  join-status <id>                pure read: is <id> past the dependency barrier?
+                                       {id, state, unblocked, success, pending, failed}
+                                       exit 0 unblocked / 1 pending / 2 missing id
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue

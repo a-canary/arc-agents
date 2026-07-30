@@ -528,7 +528,10 @@ test("terminal state cannot transition", async () => {
   }
 });
 
-test("decompose: parent → blocked, N children created with HITL/ready", async () => {
+test("decompose: parent → blocked, N children inherit parent type, state=ready", async () => {
+  // Decompose children are normal worker tasks. They inherit the parent's
+  // priority (`type`) instead of being hard-coded to `HITL`; HITL priority
+  // is reserved for human-decision rows.
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
@@ -545,9 +548,9 @@ test("decompose: parent → blocked, N children created with HITL/ready", async 
     expect(JSON.parse(shown.issue.blocked_by)).toEqual(r.children.map((c) => c.id));
 
     for (const c of r.children) {
-      const cs = (await run(db, "show", c.id)) as { issue: { state: string; type: string; kind: string; parent_id: string } };
+      const cs = (await run(db, "show", c.id)) as { issue: { state: string; type: string; kind: string; parent_id: string; hitl: number } };
       expect(cs.issue.state).toBe("ready");
-      expect(cs.issue.type).toBe("HITL");
+      expect(cs.issue.type).toBe("mvp");
       expect(cs.issue.kind).toBe("task");
       expect(cs.issue.parent_id).toBe(parent.id);
     }
@@ -2387,6 +2390,21 @@ test("update --in-place with no worktree_path set (rows from non-worktree source
   }
 });
 
+// ── join-status helpers (top-level so all tests can use them) ──────
+// `ledger join-status <parent>` is a pure read: no state writes, no
+// updated_at bump, no claimed_by clear. It tells a worker (or a human)
+// whether the parent is past the dependency barrier and whether every
+// blocker landed as a success.
+
+async function forceState(db: string, id: string, state: "merged" | "failed" | "cancelled"): Promise<void> {
+  if (state === "merged") {
+    await stubDiffReview(db, id);
+    await run(db, "update", id, "--state", "merged");
+    return;
+  }
+  await run(db, "update", id, "--state", state);
+}
+
 describe("ADR-0013 Wave 3 verb + kind aliases", () => {
   test("ledger issue and ledger ticket both reach the bare-list body (Wave 3 scope)", async () => {
     const { db, cleanup } = freshDb();
@@ -2451,4 +2469,130 @@ describe("ADR-0013 Wave 3 verb + kind aliases", () => {
       cleanup();
     }
   });
+
+});
+
+test("join-status: still-blocked parent reports pending blockers, exit 1", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "parent",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(db, "decompose", parent.id, "--child", "alpha", "--child", "bravo")) as {
+      children: { id: string }[];
+    };
+    // alpha merged, bravo still in progress. The non-sprint cascade
+    // keeps the parent blocked until every blocker is merged, so
+    // `unblocked=false` and the still-running child is the only pending
+    // entry. The merged child is neither pending nor failed.
+    await forceState(db, r.children[0]!.id, "merged");
+
+    const out = await runRaw(db, "join-status", parent.id);
+    expect(out.exitCode).toBe(1);
+    const body = JSON.parse(out.stdout.toString());
+    expect(body.id).toBe(parent.id);
+    expect(body.state).toBe("blocked");
+    expect(body.unblocked).toBe(false);
+    expect(body.success).toBe(false);
+    expect(body.pending.map((b: { id: string }) => b.id)).toEqual([r.children[1]!.id]);
+    expect(body.failed).toEqual([]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("join-status: unblocked but failed child → success=false, exit 0", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    // kind=sprint: requeue once all blockers are terminal (merged|failed|cancelled).
+    const parent = (await run(db, "create", "--kind", "sprint", "--type", "mvp", "--title", "sprint parent",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(db, "decompose", parent.id, "--child", "alpha", "--child", "bravo")) as {
+      children: { id: string }[];
+    };
+    await forceState(db, r.children[0]!.id, "merged");
+    await forceState(db, r.children[1]!.id, "failed");
+    await run(db, "tick");
+
+    const out = await runRaw(db, "join-status", parent.id);
+    expect(out.exitCode).toBe(0);
+    const body = JSON.parse(out.stdout.toString());
+    expect(body.state).toBe("ready");
+    expect(body.unblocked).toBe(true);
+    expect(body.success).toBe(false);
+    expect(body.failed.map((b: { id: string }) => b.id)).toEqual([r.children[1]!.id]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("join-status: all merged → success=true, exit 0", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "sprint", "--type", "mvp", "--title", "sprint all-merged",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+    const r = (await run(db, "decompose", parent.id, "--child", "alpha", "--child", "bravo")) as {
+      children: { id: string }[];
+    };
+    for (const c of r.children) await forceState(db, c.id, "merged");
+    await run(db, "tick");
+
+    const out = await runRaw(db, "join-status", parent.id);
+    expect(out.exitCode).toBe(0);
+    const body = JSON.parse(out.stdout.toString());
+    expect(body.unblocked).toBe(true);
+    expect(body.success).toBe(true);
+    expect(body.pending).toEqual([]);
+    expect(body.failed).toEqual([]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("join-status: parent with no blocked_by is trivially unblocked", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "lone",
+      "--tier", "mvp", "--pool", "build")) as { id: string };
+
+    const out = await runRaw(db, "join-status", parent.id);
+    expect(out.exitCode).toBe(0);
+    const body = JSON.parse(out.stdout.toString());
+    expect(body.id).toBe(parent.id);
+    expect(body.unblocked).toBe(true);
+    expect(body.success).toBe(true);
+    expect(body.pending).toEqual([]);
+    expect(body.failed).toEqual([]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("join-status: missing parent → structured error, exit 2 (distinct from pending)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const out = await runRaw(db, "join-status", "does-not-exist");
+    expect(out.exitCode).toBe(2);
+    const stderr = out.stderr.toString();
+    expect(stderr).toMatch(/no such issue: does-not-exist/);
+  } finally {
+    cleanup();
+  }
+});
+
+test("join-status: missing id argument → exit 2", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const out = await runRaw(db, "join-status");
+    expect(out.exitCode).toBe(2);
+    const stderr = out.stderr.toString();
+    expect(stderr).toMatch(/id required/);
+  } finally {
+    cleanup();
+  }
 });
