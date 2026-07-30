@@ -13,7 +13,7 @@ This skill is a router for the arc-agents skills that depend on the ledger (`~/v
 |---|---|
 | `bookie` | Sole writer of ledger rows. Validates kind/type/state, mints slug ids, emits `created` event. Adds `decompose` verb that turns a PRD into a chain of TDD slices. |
 | `bookie-tdd` | TDD template for bookie subagent tasks. Pure-validator TDD, fixture patterns, table-driven cases, red-green-refactor. |
-| `prd-to-issues` | Decompose a PRD into N sprint ledger rows, each a tracer-bullet thin vertical slice with `Requirements + Success criteria` in `body_md`. |
+| `spec-to-tickets` | Decompose a spec into N sprint ledger rows, each a tracer-bullet thin vertical slice with `Requirements + Success criteria` in `body_md`. |
 | `spawn` | Worker decomposition verb. Inserts child ledger rows under the current task, wires `parent.blocked_by` to the new children, flips parent to `blocked`. NOT a process spawn. |
 | `sprint-supervise` | Re-entrant sprint supervisor loop. Drives a single thin vertical slice to evidence-backed done across re-entry cycles: load prior handoffs, check evidence, complete or decompose, write re-entry handoff, tear down. |
 | `to-ledger` | Owner-facing flow for filing a single ledger row. Walks the user through the required flags, then delegates the write to `bookie`. |

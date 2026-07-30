@@ -1,4 +1,4 @@
-import { test, expect } from "bun:test";
+import { test, expect, describe } from "bun:test";
 import { $ } from "bun";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
@@ -2385,4 +2385,70 @@ test("update --in-place with no worktree_path set (rows from non-worktree source
   } finally {
     cleanup();
   }
+});
+
+describe("ADR-0013 Wave 3 verb + kind aliases", () => {
+  test("ledger issue and ledger ticket both reach the bare-list body (Wave 3 scope)", async () => {
+    const { db, cleanup } = freshDb();
+    try {
+      await run(db, "init");
+      await run(db, "create", "--title", "spec-test", "--kind", "prd", "--type", "mvp", "--body", "x");
+
+      // Both verb spellings should return the same row.
+      const viaTicket = (await run(db, "ticket")) as Array<{ id: string }>;
+      const viaIssue = (await run(db, "issue")) as Array<{ id: string }>;
+      expect(viaTicket).toHaveLength(1);
+      expect(viaIssue).toEqual(viaTicket);
+
+      // Filter by --kind spec is treated as --kind prd on read-side.
+      const viaSpecFilter = (await run(db, "issue", "--kind", "spec")) as Array<{ id: string }>;
+      expect(viaSpecFilter).toEqual(viaTicket);
+
+      // Bare `ledger list` works as before (no alias semantics).
+      const viaList = (await run(db, "list")) as Array<{ id: string }>;
+      expect(viaList).toEqual(viaTicket);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("show emits both ticket + issue keys (dual-key backward compat)", async () => {
+    const { db, cleanup } = freshDb();
+    try {
+      await run(db, "init");
+      const created = await run(db, "create", "--title", "dual-key-test", "--kind", "prd", "--type", "mvp", "--body", "x");
+      const id = (created as { id: string }).id;
+
+      // Use the canonical "show" verb — `ledger issue show X` falls through to
+      // the list body (matches Wave 3 scope; bare-list only for the issue alias).
+      const shown = (await run(db, "show", id)) as {
+        ticket?: { id: string; state: string };
+        issue?: { id: string; state: string };
+        events: unknown[];
+      };
+      expect(shown.ticket).toBeDefined();
+      expect(shown.issue).toBeDefined();
+      expect(shown.ticket!.id).toBe(id);
+      expect(shown.issue!.id).toBe(id);
+      // Both keys hold the same row data (structurally equal — JSON parse loses reference identity).
+      expect(shown.ticket).toEqual(shown.issue);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("--kind spec on create is translated to prd (write-side symmetry)", async () => {
+    const { db, cleanup } = freshDb();
+    try {
+      await run(db, "init");
+      // Without translation this would write kind="spec" and break schema constraint.
+      const created = await run(db, "create", "--title", "spec-write", "--kind", "spec", "--type", "mvp", "--body", "x");
+      const id = (created as { id: string }).id;
+
+      const shown = (await run(db, "show", id)) as { issue: { kind: string } };
+      expect(shown.issue.kind).toBe("prd");
+    } finally {
+      cleanup();
+    }
+  });
 });

@@ -51,6 +51,13 @@ let cmd: string | undefined;
     break;
   }
   cmd = args[i];
+  // ADR-0013 Wave 3: `issue` is a deprecated verb alias, available one
+  // release. Resolution is at the SWITCH level (see `case "issue":` below,
+  // which falls through to the list body next to the canonical
+  // `case "ticket":`). We do NOT rewrite `issue` here, because then a
+  // future `case "show":` etc. would also need to be reached under the
+  // new name — that requires a sub-command dispatcher, out of scope for
+  // Wave 3 (the original `case "issue":` was always bare-list only).
   // Move any pre-verb flags to their original position; getFlag walks
   // process.argv-derived args anyway, so order doesn't matter for flag
   // lookup. No rewrite needed.
@@ -118,10 +125,15 @@ switch (cmd) {
   }
 
   case "create": {
+    // ADR-0013 Wave 3: --kind spec → prd translation (write-side). Mirrors
+    // the read-side filter in list/ls above so callers can use the new
+    // vocabulary on either verb without tripping the schema constraint.
+    const _kindFlag = getFlag("kind");
+    const _kindTranslated = _kindFlag === "spec" ? "prd" : _kindFlag;
     // Flag-only. No positional args allowed.
     const input: CreateInput = {
       title: getFlag("title"),
-      kind: getFlag("kind"),
+      kind: _kindTranslated,
       type: getFlag("type"),
       body: getFlag("body"),
       acceptance: getFlag("acceptance"),
@@ -659,10 +671,23 @@ switch (cmd) {
     break;
   }
 
+  // ADR-0013 Wave 3: `issue` is a deprecated verb alias for the list body
+  // (was always bare-list only); `ticket` is the canonical replacement.
+  // Both fall through here for one release; `issue` emits a stderr hint.
+  case "issue":
+  case "ticket":
   case "ls":
   case "list": {
+    if (cmd === "issue" && process.stderr.isTTY) {
+      process.stderr.write(
+        "warning: `ledger issue` is deprecated; use `ledger ticket` (ADR-0013)\n",
+      );
+    }
     const state = getFlag("state");
-    const kind = getFlag("kind");
+    // ADR-0013 Wave 3: accept `--kind spec` as canonical alias for the legacy `prd`.
+    // The schema still stores `prd` (Wave 4 will move to `kind=spec, type=prd`).
+    const kindRaw = getFlag("kind");
+    const kind = kindRaw === "spec" ? "prd" : kindRaw;
     const type = getFlag("type");
     const createdBy = getFlag("created-by");
     const all = args.includes("--all");
@@ -711,7 +736,8 @@ switch (cmd) {
     const issue = db.query("SELECT * FROM issues WHERE id=?").get(id);
     if (!issue) die(`no such issue: ${id}`);
     const events = db.query("SELECT seq, ts, agent, kind, payload_md FROM issue_events WHERE issue_id=? ORDER BY seq").all(id);
-    out({ issue, events });
+    // ADR-0013 Wave 3: dual-key emission — `ticket` is canonical, `issue` is deprecated alias.
+    out({ ticket: issue, issue, events });
     if (process.stderr.isTTY) {
       const st = (issue as { state: string }).state;
       const hint = st === "ready"

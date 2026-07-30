@@ -16,6 +16,13 @@
  *   2. Be reversible (capture schema snapshot before any DDL)
  *   3. Run inside a single SQLite transaction
  *   4. Coordinate with the dual-write layer (bin/ledger.ts writes through it)
+ *   5. Model prod constraints the stub does NOT cover: FK(issue_id)
+ *      references, indexes (kind/state/project), views referring to the
+ *      legacy `issues` / `issue_events` table names, and any triggers
+ *      that reference the kind enum. The stub schema in
+ *      `bin/migrate-029.test.ts` omits these deliberately (tests should
+ *      stay focused on the rename mechanics); prod migration must
+ *      enumerate them at planning time.
  *
  * Full ADR: ~/repos/arc-agents/docs/adr/0013-issue-ticket-prd-spec-rename.md
  */
@@ -23,23 +30,24 @@
 import { Database } from "bun:sqlite";
 
 const SCHEMA_BEFORE = `
--- Snapshot the legacy columns before any rename. Rollback re-creates them.
-ATTACH DATABASE ':memory:' AS legacy_snapshot;
-CREATE TABLE legacy_snapshot.issues AS SELECT * FROM main.issues;
-CREATE TABLE legacy_snapshot.issue_events AS SELECT * FROM main.issue_events;
-DETACH DATABASE legacy_snapshot;
+-- Snapshot the legacy tables before any rename. The real migration writes
+-- these to ~/vault/ledger.migrate-029.bak for rollback safety; the stub
+-- keeps them in the same DB so the test can verify the snapshot exists.
+CREATE TABLE migrate_029_legacy_issues AS SELECT * FROM issues;
+CREATE TABLE migrate_029_legacy_issue_events AS SELECT * FROM issue_events;
 `;
 
 const RENAMES = [
-  // Step 1: rename tables (SQLite ALTER TABLE RENAME is fast and safe).
-  `ALTER TABLE issues RENAME TO tickets;`,
-  `ALTER TABLE issue_events RENAME TO ticket_events;`,
-
-  // Step 2: kind enum value migration. kind='prd' → kind='spec'.
+  // Step 1: kind enum value migration. kind='prd' → kind='spec'.
   // Note: a discriminator (kind=spec, type=prd) is introduced in a sibling
   // migration (migrate-030.ts) — that one backfills type='prd' for any
   // kind='spec' row missing a type. Wave 4 only renames the kind value.
-  `UPDATE rows SET kind='spec' WHERE kind='prd';`,
+  // MUST run BEFORE the table rename below, since it targets the `issues` table.
+  `UPDATE issues SET kind='spec' WHERE kind='prd';`,
+
+  // Step 2: rename tables (SQLite ALTER TABLE RENAME is fast and safe).
+  `ALTER TABLE issues RENAME TO tickets;`,
+  `ALTER TABLE issue_events RENAME TO ticket_events;`,
 ];
 
 const POST_DUAL_WRITE_WINDOW = [
@@ -78,8 +86,18 @@ export function migrate029(db: Database): { ok: boolean; notes: string[] } {
   return { ok: true, notes };
 }
 
-// CLI entry — invoke as `bun bin/migrate-029.ts`.
+// CLI entry — invoke as `LEDGER_ALLOW_MIGRATE=1 bun bin/migrate-029.ts`.
+// ADR-0013 Wave 4 production gate: the env-var guard prevents accidental
+// prod execution while Wave 3 deprecation is still active. Drop this
+// guard when Wave 4 ships (release gate).
 if (import.meta.main) {
+  if (process.env.LEDGER_ALLOW_MIGRATE !== "1") {
+    console.error(
+      "error: bin/migrate-029.ts is Wave 4 only. Wave 3 deprecation window is open.\n" +
+        "      Set LEDGER_ALLOW_MIGRATE=1 if you REALLY mean to run it (dev/test only).",
+    );
+    process.exit(2);
+  }
   const dbPath = process.env.LEDGER_DB ?? `${process.env.HOME}/vault/ledger.db`;
   const db = new Database(dbPath, { readonly: false });
   const result = migrate029(db);

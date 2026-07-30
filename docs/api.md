@@ -283,7 +283,7 @@ the agent session.
 | `trash-retired-files` | Reversible file GC with semantic scope |
 | `triage-assign` | Batch-claim + assign tier/pool/agent for unassigned rows |
 | `sprint-supervise` | Re-entrant sprint loop for thin vertical slices |
-| `prd-to-issues` | Decompose a PRD into sprint rows |
+| `spec-to-tickets` | Decompose a spec into sprint rows |
 | `replay-shadow` | Replay a worker execution against a candidate config |
 
 ---

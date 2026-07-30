@@ -1768,7 +1768,7 @@
       "imports": [],
       "externals": []
     },
-    "skills/prd-to-issues/SKILL.md": {
+    "skills/spec-to-tickets/SKILL.md": {
       "kind": "doc",
       "loc": 44,
       "lang": "md",

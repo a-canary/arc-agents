@@ -1,9 +1,9 @@
 ---
-name: prd-to-issues
+name: spec-to-tickets
 description: "Decompose a PRD (kind=prd row or PRD-*.md file) into N sprint ledger rows, each a tracer-bullet thin vertical slice with Requirements + Success criteria in body_md."
 ---
 
-# prd-to-issues — PRD → Sprint Row Decomposition
+# spec-to-tickets — spec → Sprint Row Decomposition
 
 Turns a product requirements document into N sprint ledger rows. Each sprint is a tracer-bullet thin vertical — one deliverable, one acceptance bar.
 

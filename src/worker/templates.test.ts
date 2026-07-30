@@ -87,8 +87,8 @@ describe("opening_skills resolve to skills/<name>/SKILL.md or are external", () 
   }
 });
 
-it("skills/prd-to-issues/SKILL.md exists", () => {
-  expect(existsSync(join(REPO_ROOT, "skills", "prd-to-issues", "SKILL.md"))).toBe(true);
+it("skills/spec-to-tickets/SKILL.md exists", () => {
+  expect(existsSync(join(REPO_ROOT, "skills", "spec-to-tickets", "SKILL.md"))).toBe(true);
 });
 
 describe("renderSystemPrompt (agent-keyed)", () => {
