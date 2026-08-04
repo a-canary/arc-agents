@@ -666,9 +666,10 @@ switch (cmd) {
   }
 
   case "event": {
-    const id = args[1] ?? die("id required");
-    const kind = args[2] ?? die("kind required");
-    const payload = args[3] ?? "";
+    const pos = positionalAfterVerb();
+    const id = pos[0] ?? die("id required");
+    const kind = pos[1] ?? die("kind required");
+    const payload = pos[2] ?? "";
     const db = openWithMigrate(getFlag("db"));
     db.run(`INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`, [
       id,
