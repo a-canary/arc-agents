@@ -101,14 +101,22 @@ function getFlag(name: string): string | undefined {
   return args[i + 1];
 }
 
-// Positional args after the verb, excluding any --flag tokens and their values.
+// Positional args after the verb, excluding any --flag tokens and their
+// values. Scans the full arg list rather than args.slice(1) because a
+// leading --db (stripped separately when locating the verb, above) pushes
+// the verb past index 0 — slicing from a fixed offset misread the db path
+// itself as the first positional.
 function positionalAfterVerb(): string[] {
-  const rest = args.slice(1);
   const out: string[] = [];
-  for (let i = 0; i < rest.length; i++) {
-    const a = rest[i]!;
+  let sawVerb = false;
+  for (let i = 0; i < args.length; i++) {
+    const a = args[i]!;
     if (a.startsWith("--")) {
       if (!a.includes("=")) i++; // skip value
+      continue;
+    }
+    if (!sawVerb) {
+      sawVerb = true; // this is the verb itself; skip it
       continue;
     }
     out.push(a);
@@ -209,8 +217,7 @@ switch (cmd) {
     // --type is kept as a deprecated alias for one transition window.
     // SQL lives in src/ledger/claim.ts so the bash bootstrap in
     // worker-shell.sh and this CLI share one canonical UPDATE...RETURNING.
-    const worker = args[1] ?? die("worker required");
-    if (worker.startsWith("--")) die("worker required (positional)");
+    const worker = positionalAfterVerb()[0] ?? die("worker required");
     const poolFilter = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
     const row = claimOnce(db, worker, poolFilter);
@@ -254,8 +261,8 @@ switch (cmd) {
     type ChildSpec = { title: string; body?: string; project?: string; tier?: Tier; pool?: Pool; agent?: Agent; type?: Type };
     const CHILD_SPEC_KEYS = ["title", "body", "project", "tier", "pool", "agent", "type"];
 
-    const parent = args[1];
-    if (!parent || parent.startsWith("--")) die("parent id required (positional)");
+    const parent = positionalAfterVerb()[0];
+    if (!parent) die("parent id required (positional)");
 
     const rawChildren: string[] = [];
     for (let i = 2; i < args.length; i++) {
@@ -752,7 +759,7 @@ switch (cmd) {
   }
 
   case "show": {
-    const id = args[1] ?? die("id required");
+    const id = positionalAfterVerb()[0] ?? die("id required");
     const db = openWithMigrate(getFlag("db"));
     const issue = db.query("SELECT * FROM issues WHERE id=?").get(id);
     if (!issue) die(`no such issue: ${id}`);
@@ -782,8 +789,8 @@ switch (cmd) {
     // Exit: 0 unblocked / 1 pending / 2 missing-id. Distinct codes let a
     //   script distinguish "keep waiting" from "id does not exist"; a
     //   missing id is not a state to wait on.
-    const id = args[1];
-    if (!id || id.startsWith("--")) {
+    const id = positionalAfterVerb()[0];
+    if (!id) {
       process.stderr.write("id required\n");
       process.exit(2);
     }
