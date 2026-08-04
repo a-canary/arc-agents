@@ -17,13 +17,15 @@ and `=== PR_URL (if filed) === <url> ===`). The subagent must run this
 # GitHub repo slug (only confirmed aliases: arc-webui -> webui,
 # webui-specs -> webui-specs, conjecture -> Conjecture — verified
 # 2026-06-30 from trash-retired-files-conjecture-drop-dead PR #19,
-# starlight-slm -> Starlight-SLM — verified 2026-07-07 from PRs #8+#19).
+# starlight-slm -> Starlight-SLM — verified 2026-07-07 from PRs #8+#19,
+# onenation -> OurNation — verified 2026-08-04 from origin remote + PR #227).
 case "${PROJECT}" in
   arc-webui)    EXPECTED_REPO="a-canary/webui" ;;
   webui-specs)  EXPECTED_REPO="a-canary/webui-specs" ;;
   conjecture)   EXPECTED_REPO="a-canary/Conjecture" ;;
   starlight-slm) EXPECTED_REPO="a-canary/Starlight-SLM" ;;
   trading)      EXPECTED_REPO="a-canary/Trading" ;;
+  onenation)    EXPECTED_REPO="a-canary/OurNation" ;;
   *)            EXPECTED_REPO="a-canary/${PROJECT}" ;;
 esac
 ACTUAL_REPO="$(echo "$PR_URL" | sed -E 's|.*github.com/([^/]+/[^/]+)/pull/.*|\1|')"
@@ -56,6 +58,7 @@ for defense in depth.
 | `conjecture` | `a-canary/Conjecture` | 1 PR (#19, capital C) |
 | `starlight-slm` | `a-canary/Starlight-SLM` | 2 PRs (#8, #19, capital S-L-M) |
 | `trading` | `a-canary/Trading` | 1 PR (#166, capital T — verified 2026-07-11) |
+| `onenation` | `a-canary/OurNation` | origin remote + PR #227 (verified 2026-08-04) |
 
 When adding a new project whose local directory name differs from its
 GitHub repo slug, extend the `case` block above in this same order and
