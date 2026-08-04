@@ -393,6 +393,13 @@ switch (cmd) {
 
   case "update": {
     const id = args[1] ?? die("id required");
+    if (id === "--help" || id === "-h") {
+      printHelp();
+      break;
+    }
+    // A flag-shaped "id" (e.g. `update --state merged` with the id forgotten)
+    // would otherwise be treated as a task id and silently no-op.
+    if (id.startsWith("-")) die(`update: expected task id, got flag '${id}'`);
     const state = getFlag("state");
     const evidence = getFlag("evidence");
     const pr = getFlag("pr");
@@ -441,6 +448,9 @@ switch (cmd) {
       die("--blocked-by is set by the `decompose` verb, not `update`. Use `ledger decompose <parent> --child \"<title>\"` to wire parent.blocked_by + parent.state=blocked atomically.");
     }
     const db = openWithMigrate(getFlag("db"));
+    // Existence check up front: `updated: true` was previously unconditional,
+    // so a typo'd id reported success while updating zero rows.
+    if (!db.query("SELECT 1 FROM issues WHERE id=?").get(id)) die(`no such issue: ${id}`);
 
     // in-place worktree existence check: must run after db is available.
     if (inPlace) {
@@ -1936,7 +1946,16 @@ switch (cmd) {
   case "-h":
   case "--help":
   case "help": {
-    console.log(`ledger <verb> [args]
+    printHelp();
+    break;
+  }
+
+  default:
+    die(`unknown verb: ${cmd}`);
+}
+
+function printHelp(): void {
+  console.log(`ledger <verb> [args]
 
   init                                 run migrations
   create --kind --type --title [...]   insert row (flag-only)
@@ -2042,9 +2061,4 @@ switch (cmd) {
 NOTE: agents must route all WRITES (create, update, decompose, event) through
 the bookie subagent. Direct CLI writes are reserved for bootstrap (worker-shell
 claim) and human operators. Reads (list, show, spawn-ready) are unrestricted.`);
-    break;
-  }
-
-  default:
-    die(`unknown verb: ${cmd}`);
 }
