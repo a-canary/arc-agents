@@ -93,20 +93,27 @@ export function sweepStaleClaims(db: Database, opts: SweepOptions = {}): SweepRe
 
   const ids = stale.map((r) => r.id);
 
+  // Batch the "already noted this window?" check instead of one SELECT COUNT
+  // per cooldown-hit row (N+1). Single grouped query, same dedup semantics.
+  let alreadyNoted = new Set<string>();
+  if (cooldownHits.length > 0) {
+    const notedRows = db
+      .query<{ issue_id: string }, (string | number)[]>(
+        `SELECT DISTINCT issue_id FROM issue_events
+          WHERE kind='note' AND agent='claim-stale-sweeper' AND ts >= ?
+                AND issue_id IN (${cooldownHits.map(() => "?").join(",")})`,
+      )
+      .all(cooldownCutoff, ...cooldownHits.map((c) => c.issue_id));
+    alreadyNoted = new Set(notedRows.map((r) => r.issue_id));
+  }
+
   db.transaction(() => {
     // First-skip-per-window note: when a row hits the cooldown for the first
     // time in this trailing window, write a kind='note' event so the exclusion
     // is auditable. Subsequent skips within the same window do NOT emit (would
     // just be noise; the next skip-first resets the window).
     for (const c of cooldownHits) {
-      const prior = db
-        .query<{ n: number }, [string, number]>(
-          `SELECT COUNT(*) AS n FROM issue_events
-            WHERE issue_id=? AND kind='note' AND agent='claim-stale-sweeper'
-              AND ts >= ?`,
-        )
-        .get(c.issue_id, cooldownCutoff);
-      if ((prior?.n ?? 0) === 0) {
+      if (!alreadyNoted.has(c.issue_id)) {
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'claim-stale-sweeper', ?)`,
           [c.issue_id, `sweeper cooldown: row ${c.issue_id} excluded (${c.n} reclaims in last ${cooldownWindowSec}s)`],
