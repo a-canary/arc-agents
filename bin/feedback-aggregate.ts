@@ -442,6 +442,22 @@ function aggregateProject(db: DB, project: string, limit: number, validate: bool
     };
   }
 
+  // Cooldown: if the last collector round for this project was <60 min ago and minted
+  // no PRD, the same OPEN rows would just re-categorize to the same no-op (observed
+  // 2026-08-04: OneNation's 11 gated rows burned an LLM collector run every 5-min tick).
+  // Round timestamp is encoded in round_id ("fbr-<base36 ms>-<rand>").
+  const lastRound = db
+    .query<{ round_id: string; minted: number }, [string]>(
+      "SELECT round_id, MAX(prd_id IS NOT NULL) AS minted FROM feedback_theme WHERE project=? GROUP BY round_id ORDER BY round_id DESC LIMIT 1",
+    )
+    .get(project);
+  if (lastRound && !lastRound.minted) {
+    const lastMs = parseInt(lastRound.round_id.split("-")[1] ?? "", 36);
+    if (Number.isFinite(lastMs) && Date.now() - lastMs < 60 * 60 * 1000) {
+      return { project, aggregated: 0, flagged, validated, trigger, skipped: "cooldown", categories: [] };
+    }
+  }
+
   // CAM: the Collector reads wide and groups the batch; the Proposal Generator gates
   // EACH category (confirmsProposal). Below-threshold/uncategorised rows stay queued —
   // nothing is dropped. Counts/patterns/gate are surfaced for /feed + /approvals.
