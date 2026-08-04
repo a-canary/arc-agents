@@ -60,6 +60,7 @@ import {
   spawnWorker,
   sweepStaleClaims,
 } from "../src/factory/worker-lifecycle";
+import { sweepCrossRepoGate, type CrossRepoParked } from "../src/ledger/cross-repo-gate";
 // Re-export for back-compat: factory-triage.test.ts dynamic-imports
 // `triageUnset` (and `reapFinished`) off bin/factory.ts.
 export { triageUnset, reapFinished };
@@ -88,6 +89,7 @@ export type TickResult = {
   unclaimable_ready: number;
   spawned: string[];
   triaged: string[];
+  cross_repo_parked: CrossRepoParked[];
   pools: { any: { live: number; cap: number }; interactive: { live: number; cap: number } };
 };
 
@@ -118,6 +120,9 @@ export function tick(): TickResult {
     });
   }
   const triaged = triageUnset(db);
+  // KE Pattern A gate: park mis-routed ready rows (text targets another
+  // repo) hitl=1 BEFORE the claim path sees them; gate-triage adjudicates.
+  const crossRepoParked = sweepCrossRepoGate(db);
   const unclaimable = countUnclaimableReady(db);
   db.close();
   const reaped = [...reapedExited, ...reapedAge, ...reapedDone];
@@ -171,6 +176,7 @@ export function tick(): TickResult {
     unclaimable_ready: unclaimable,
     spawned,
     triaged,
+    cross_repo_parked: crossRepoParked,
     pools: {
       any: { live: curAny, cap: SLOTS_ANY },
       interactive: { live: curInteractive, cap: SLOTS_INTERACTIVE },
@@ -469,7 +475,7 @@ async function loop(): Promise<void> {
     try {
       const r = tick();
       const backstopRemoved = r.backstop.filter((b) => b.outcome === "removed").length;
-      if (r.reaped.length || r.spawned.length || r.swept.length || backstopRemoved) {
+      if (r.reaped.length || r.spawned.length || r.swept.length || backstopRemoved || r.cross_repo_parked.length) {
         console.log(JSON.stringify({ ts: new Date().toISOString(), ...r }));
       }
       const now = Math.floor(Date.now() / 1000);
