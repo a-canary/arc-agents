@@ -2032,6 +2032,22 @@ test("create --project rejects mixed-case with canonical suggestion", async () =
   }
 });
 
+// Regression: positionalAfterVerb treated every --flag without "=" as
+// value-taking, so a boolean flag (e.g. --json) immediately followed by a
+// stray positional swallowed that positional as its "value" and the
+// create-time "no positional args" guard never saw it (path-strip, 2026-08-04).
+test("create --json <stray> still rejects the stray positional", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await runRaw(db, "create", "--kind", "task", "--type", "mvp", "--title", "t", "--json", "stray");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("positional args not allowed for create");
+  } finally {
+    cleanup();
+  }
+});
+
 test("create --project accepts lower-case", async () => {
   const { db, cleanup } = freshDb();
   try {

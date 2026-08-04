@@ -101,6 +101,14 @@ function getFlag(name: string): string | undefined {
   return args[i + 1];
 }
 
+// Flags checked elsewhere via `args.includes("--x")` — no value token
+// follows them. Every other --flag is assumed to take a value.
+const BOOLEAN_FLAGS = new Set([
+  "--all", "--apply", "--artifacts", "--deliveries",
+  "--dry-run", "--events", "--force-in-place", "--in-place", "--json",
+  "--no-diff", "--pool-filter", "--strict", "--toon", "--type-filter",
+]);
+
 // Positional args after the verb, excluding any --flag tokens and their
 // values. Scans the full arg list rather than args.slice(1) because a
 // leading --db (stripped separately when locating the verb, above) pushes
@@ -112,7 +120,7 @@ function positionalAfterVerb(): string[] {
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a.startsWith("--")) {
-      if (!a.includes("=")) i++; // skip value
+      if (!a.includes("=") && !BOOLEAN_FLAGS.has(a)) i++; // skip value
       continue;
     }
     if (!sawVerb) {
