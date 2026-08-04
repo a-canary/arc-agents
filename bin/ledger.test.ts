@@ -88,6 +88,24 @@ test("init + create + list + claim", async () => {
   }
 });
 
+test("show works when --db precedes the verb/id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+      id: string;
+    };
+    // --db before the verb (not just after, like the `run` helper's default
+    // placement) previously made `show`/`join-status`/`claim`/`decompose`
+    // misread the db path as the id positional.
+    const r = await $`bun ${cli} --db ${db} show ${c.id}`.env(testEnv).quiet();
+    const shown = JSON.parse(r.stdout.toString()) as { issue: { id: string } };
+    expect(shown.issue.id).toBe(c.id);
+  } finally {
+    cleanup();
+  }
+});
+
 test("update --state + show events", async () => {
   const { db, cleanup } = freshDb();
   try {
