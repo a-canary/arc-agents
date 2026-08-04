@@ -24,6 +24,18 @@ export const PROJECT_GH_REPO: Readonly<Record<string, string>> = {
   // Verified 2026-07-07 from PRs #8 + #19 (both to a-canary/Starlight-SLM).
   "starlight-slm": "a-canary/Starlight-SLM",
   "llm-judge": "a-canary/llm-judge",
+  // Local project is `arc-webui`; github repo is `webui` (verified 2026-06-26
+  // from issues.pr_url, 17 PRs dominant — see CLAUDE.md alias table). Absence
+  // here let the motivating cross-repo-gate incident (row targeting
+  // a-canary/webui) slip through both the merge guard and the claim gate.
+  "arc-webui": "a-canary/webui",
+  "webui-specs": "a-canary/webui-specs",
+  "arc-skills": "a-canary/arc-skills",
+  pipeliner: "a-canary/pipeliner",
+  "discord-bridge": "a-canary/discord-bridge",
+  // Local project is `onenation`; github repo is `OurNation` (verified
+  // 2026-08-04 from origin remote + PR #227).
+  onenation: "a-canary/OurNation",
   // Local dir is `conjecture` (lowercase); github repo is `Conjecture` (capital C).
   // Without this entry, the merge guard short-circuits (unknown project = skip),
   // letting wrong-repo PRs slip through. Verified 2026-06-30 from PR #19.
