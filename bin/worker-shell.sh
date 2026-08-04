@@ -602,6 +602,12 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   # it carries no `-p` flag of its own, so name it explicitly here.
   if [[ "${CMD_PARTS[0]:-}" == "cli-agent" ]]; then
     HEADLESS=1
+    # --cwd roots cli-agent in THIS worker's worktree (cli-proxy agent mode).
+    # Without it cli-agent used the stateless pool, whose cwd is pinned to an
+    # empty sandbox (/var/tmp/cli-proxy-sandbox): tools ran but saw no repo, so
+    # every worker exited "produced no work (rc=0)". WT_DIR is under ~/worktrees,
+    # cli-proxy's default CLI_PROXY_AGENT_ROOTS allowlist.
+    CMD_PARTS+=( --cwd "$WT_DIR" )
   else
     for _arg in "${CMD_PARTS[@]}"; do
       if [[ "$_arg" == "-p" ]]; then HEADLESS=1; break; fi
