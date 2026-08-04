@@ -451,7 +451,7 @@ switch (cmd) {
       die("--no-diff requires --evidence <note> explaining the negative result (no diff to review).");
     }
     const branch = getFlag("branch");
-    const worktree = getFlag("worktree");
+    const worktree = getFlag("worktree")?.trim();
     const hitl = getFlag("hitl");
     // --blocked-by is intentionally NOT honoured on `update` — silent drops
     // masked real decomposition attempts as successful no-ops. The
