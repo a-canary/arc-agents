@@ -2630,3 +2630,24 @@ test("join-status: missing id argument → exit 2", async () => {
     cleanup();
   }
 });
+
+test("update: --db before the verb still resolves the id (not the db path)", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const created = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "t")) as {
+      id: string;
+    };
+    // Global --db precedes the verb here, unlike every other helper in this
+    // file which appends --db after args. This is the exact shape that used
+    // to misread the db path itself as the ticket id.
+    const r =
+      await $`bun ${cli} --db ${db} update ${created.id} --evidence done --in-place`
+        .env(testEnv)
+        .quiet();
+    const out = JSON.parse(r.stdout.toString());
+    expect(out.id).toBe(created.id);
+  } finally {
+    cleanup();
+  }
+});

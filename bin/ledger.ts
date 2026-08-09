@@ -407,7 +407,7 @@ switch (cmd) {
   }
 
   case "update": {
-    const id = args[1] ?? die("id required");
+    const id = positionalAfterVerb()[0] ?? die("id required");
     if (id === "--help" || id === "-h") {
       printHelp();
       break;
