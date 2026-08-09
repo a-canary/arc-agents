@@ -399,11 +399,15 @@ switch (cmd) {
   }
 
   case "update": {
-    const id = args[1] ?? die("id required");
-    if (id === "--help" || id === "-h") {
+    // positionalAfterVerb (not args[1]) — a leading --db pushes the verb
+    // past index 0, so a fixed offset misreads the db path as the id
+    // (same bug class as #392/#395).
+    const id = positionalAfterVerb()[0];
+    if (args.includes("--help") || args.includes("-h")) {
       printHelp();
       break;
     }
+    if (!id) die("id required");
     // A flag-shaped "id" (e.g. `update --state merged` with the id forgotten)
     // would otherwise be treated as a task id and silently no-op.
     if (id.startsWith("-")) die(`update: expected task id, got flag '${id}'`);
