@@ -106,6 +106,57 @@ test("show works when --db precedes the verb/id", async () => {
   }
 });
 
+test("repoint-blocked-by works when --db precedes the verb/id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "p")) as { id: string };
+    const b1 = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "b1")) as { id: string };
+    const b2 = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "b2")) as { id: string };
+    await run(db, "update", parent.id, "--state", "blocked");
+    // --db before the verb previously made repoint-blocked-by misread the db
+    // path as <id> (args[1]) and the real id as the first blocker.
+    const r = await $`bun ${cli} --db ${db} repoint-blocked-by ${parent.id} ${b1.id} ${b2.id}`.env(testEnv).quiet();
+    const res = JSON.parse(r.stdout.toString()) as { id: string; blocked_by: string[] };
+    expect(res.id).toBe(parent.id);
+    expect(res.blocked_by).toEqual([b1.id, b2.id]);
+  } finally {
+    cleanup();
+  }
+});
+
+test("render-prompt works when --db precedes the verb/id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    const r = await $`bun ${cli} --db ${db} render-prompt ${c.id} --worker w1`.env(testEnv).quiet();
+    expect(r.stdout.toString().length).toBeGreaterThan(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("hitl emit reaches the emit sub-verb (not misread as 'usage: hitl emit') when --db precedes the verb", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    // Previously args[1] read the db path as the sub-verb when --db preceded
+    // `hitl`, so this died with "usage: hitl emit ...". No delivery module is
+    // installed in a fresh db, so assert it gets past sub-verb dispatch into
+    // delivery ("no alive UX module...") rather than the usage error.
+    const r =
+      await $`bun ${cli} --db ${db} hitl emit --class taste --kind ask_choice --prompt q --option a --option b --recommended a`
+        .env(testEnv)
+        .quiet()
+        .nothrow();
+    expect(r.stderr.toString()).not.toContain("usage: hitl emit");
+    expect(r.stderr.toString()).toContain("no alive UX module");
+  } finally {
+    cleanup();
+  }
+});
+
 test("update --state + show events", async () => {
   const { db, cleanup } = freshDb();
   try {

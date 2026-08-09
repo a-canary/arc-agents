@@ -630,10 +630,9 @@ switch (cmd) {
     // id(s), e.g. when the stated blocker resolves but the real prerequisite
     // is a sibling created in the same decomposition. Row must already be
     // state=blocked (use `decompose` to create+block atomically instead).
-    const id = args[1] ?? die("id required");
-    const rest = args.slice(2);
-    const flagStart = rest.findIndex((a) => a.startsWith("--"));
-    const newBlockers = flagStart === -1 ? rest : rest.slice(0, flagStart);
+    const pos = positionalAfterVerb();
+    const id = pos[0] ?? die("id required");
+    const newBlockers = pos.slice(1);
     if (newBlockers.length === 0) die("at least one blocker id required: ledger repoint-blocked-by <id> <blockerId> [blockerId...]");
     const db = openWithMigrate(getFlag("db"));
     const cur = db.query<{ state: string; blocked_by: string | null }, [string]>(
@@ -870,7 +869,7 @@ switch (cmd) {
     // implementing this kind. Returns { id, deliveries }. MVP for taste-class
     // optimistic execution: worker emits, surfaces to user, proceeds with
     // recommended; reconciliation handled separately.
-    const sub = args[1];
+    const sub = positionalAfterVerb()[0];
     if (sub !== "emit") die("usage: hitl emit ...");
     const cls = getFlag("class") ?? die("--class taste|impact required");
     if (cls !== "taste" && cls !== "impact") die("--class must be taste|impact");
@@ -1182,7 +1181,7 @@ switch (cmd) {
   case "render-prompt": {
     // Emit the rendered worker system prompt for <id>. Pure read; no side effects.
     // worker-shell.sh shells out to this after claim so prompt logic lives in TS.
-    const id = args[1] ?? die("id required");
+    const id = positionalAfterVerb()[0] ?? die("id required");
     const worker = getFlag("worker") ?? "unknown";
     const db = openWithMigrate(getFlag("db"));
     const row = db
