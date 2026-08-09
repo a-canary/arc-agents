@@ -727,6 +727,7 @@ switch (cmd) {
     const kind = kindRaw === "spec" ? "prd" : kindRaw;
     const type = getFlag("type");
     const createdBy = getFlag("created-by");
+    const project = getFlag("project");
     const all = args.includes("--all");
     const limit = parseInt(getFlag("limit") ?? "100", 10);
     const where: string[] = [];
@@ -750,6 +751,10 @@ switch (cmd) {
         "id IN (SELECT issue_id FROM issue_events WHERE kind='created' AND agent=?)",
       );
       vals.push(createdBy);
+    }
+    if (project) {
+      where.push("project=?");
+      vals.push(project);
     }
     const sql = `SELECT id, state, kind, type, title FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
