@@ -106,13 +106,17 @@ function getFlag(name: string): string | undefined {
 // leading --db (stripped separately when locating the verb, above) pushes
 // the verb past index 0 — slicing from a fixed offset misread the db path
 // itself as the first positional.
+//
+// BOOLEAN_FLAGS: flags with no value token. Without this, e.g.
+// `update --in-place <id>` would consume <id> as --in-place's value.
+const BOOLEAN_FLAGS = new Set(["--help", "-h", "--in-place"]);
 function positionalAfterVerb(): string[] {
   const out: string[] = [];
   let sawVerb = false;
   for (let i = 0; i < args.length; i++) {
     const a = args[i]!;
     if (a.startsWith("--")) {
-      if (!a.includes("=")) i++; // skip value
+      if (!a.includes("=") && !BOOLEAN_FLAGS.has(a)) i++; // skip value
       continue;
     }
     if (!sawVerb) {

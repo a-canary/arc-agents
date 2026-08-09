@@ -76,6 +76,25 @@ test("update with --db preceding verb still finds id (not misread as db path)", 
   }
 });
 
+test("update with --in-place preceding id does not eat id as its value", () => {
+  const { path, cleanup } = freshDb();
+  try {
+    const db = openWithMigrate(path);
+    const id = mintId(db, "guard fixture row --in-place-first");
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool)
+       VALUES (?, 'arc-agents', 'guard fixture row', '', '', 'quality', 'ready', 'task', 'hygiene', 'explore')`,
+      [id],
+    );
+    db.close();
+    const r = run("update", "--in-place", id, "--evidence", "x", "--db", path);
+    expect(r.code).toBe(0);
+    expect(r.stdout).toContain('"updated": true');
+  } finally {
+    cleanup();
+  }
+});
+
 test("update with real id still succeeds", () => {
   const { path, cleanup } = freshDb();
   try {
