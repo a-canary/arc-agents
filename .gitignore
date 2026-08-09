@@ -29,3 +29,4 @@ bun.lockb
 .env
 .env.*
 estate-secret-inventory-findings.json
+codemap/
