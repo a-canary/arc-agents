@@ -508,7 +508,7 @@ switch (cmd) {
           .get(id);
         if (!latestReview) {
           die(
-            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging. If this row has no diff to review, use --no-diff --evidence "<why>" instead.`,
+            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging. If this row has no diff to review, use --no-diff --evidence "<why>" instead. If this work is a duplicate or was already shipped elsewhere, close it with --state cancelled --evidence "<why>" instead — no diff_review needed.`,
           );
         }
         const reviewParse = parseDiffReviewPayload(latestReview.payload_md);
