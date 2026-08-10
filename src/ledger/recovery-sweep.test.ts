@@ -356,6 +356,33 @@ test("rc=0 with empty stdout is NOT recovery — that is the no-work symptom", (
   expect(db.query<{ state: string }, []>("SELECT state FROM issues WHERE id='e1'").get()?.state).toBe("blocked");
 });
 
+test("inconclusive gh poll (prState=unknown) is not logged as a salvage_inspection event", () => {
+  const db = setup();
+  ins(db, "review-flaky", "review", null);
+  const valid = JSON.stringify({
+    kind: "salvage",
+    base: "abc123",
+    head: "def456",
+    commits: 2,
+    branch: "worker/fix",
+    exit_code: 124,
+    pr_url: "https://github.com/a-canary/arc-agents/pull/9",
+  });
+  db.run("INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worker-shell', ?)", ["review-flaky", valid]);
+
+  const r = sweepRecovery(db, {
+    probe: stubProbe({}),
+    commandFor: cmdFor,
+    inspectSalvage: () => ({ branchExists: true, headMatches: true, commitsMatch: true, prState: "unknown" }),
+  });
+
+  // readyForTerminalUpdate still computed (false, since prState isn't MERGED)
+  // but no event should be written — a rate-limited poll is not a real
+  // observation and must not corrupt the salvage_inspection history.
+  expect(r.salvage[0]!.readyForTerminalUpdate).toBe(false);
+  expect(eventsFor(db, "review-flaky", "note").filter((e) => e.agent === "recovery-sweep")).toHaveLength(0);
+});
+
 test("sweepMergedPrDesync flags merged rows whose PR is still OPEN on GitHub", () => {
   const db = setup();
   db.run(
