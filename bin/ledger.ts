@@ -407,14 +407,13 @@ switch (cmd) {
   }
 
   case "update": {
-    const id = positionalAfterVerb()[0] ?? die("id required");
-    if (id === "--help" || id === "-h") {
+    if (args.includes("--help") || args.includes("-h")) {
       printHelp();
       break;
     }
-    // A flag-shaped "id" (e.g. `update --state merged` with the id forgotten)
-    // would otherwise be treated as a task id and silently no-op.
-    if (id.startsWith("-")) die(`update: expected task id, got flag '${id}'`);
+    // A flag-only invocation (e.g. `update --state merged` with the id
+    // forgotten) has no positional — fail loudly instead of a silent no-op.
+    const id = positionalAfterVerb()[0] ?? die("update: expected task id");
     const state = getFlag("state");
     const evidence = getFlag("evidence");
     const pr = getFlag("pr");
