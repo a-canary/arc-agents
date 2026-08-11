@@ -456,6 +456,16 @@ function aggregateProject(db: DB, project: string, limit: number, validate: bool
     if (Number.isFinite(lastMs) && Date.now() - lastMs < 60 * 60 * 1000) {
       return { project, aggregated: 0, flagged, validated, trigger, skipped: "cooldown", categories: [] };
     }
+    // Unchanged OPEN row-set re-categorizes to the same no-op every hour (observed
+    // 2026-08-10: OneNation's 14 gated rows burned 24 collector runs/day). Skip until
+    // the set grows. ponytail: keyed on row count only — an edited-in-place row won't
+    // re-trigger; upgrade to a content hash if that ever matters.
+    const lastTotal = db
+      .query<{ n: number }, [string]>("SELECT COALESCE(SUM(count),0) AS n FROM feedback_theme WHERE round_id=?")
+      .get(lastRound.round_id);
+    if (lastTotal && rows.length === lastTotal.n) {
+      return { project, aggregated: 0, flagged, validated, trigger, skipped: "cooldown", categories: [] };
+    }
   }
 
   // CAM: the Collector reads wide and groups the batch; the Proposal Generator gates
