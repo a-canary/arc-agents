@@ -21,11 +21,16 @@ export type RecoverySweepOptions = {
   inspectSalvage?: (handoff: SalvageHandoff) => SalvageInspection;
 };
 
+// prState: null = no PR url (nothing to check). "unknown" = a PR url exists
+// but the last `gh pr view` call was inconclusive (rate-limited, network
+// blip, auth hiccup) — distinct from a real read so callers don't treat gh
+// failures as ground-truth state transitions. See
+// recovery-sweep-gh-rate-limit-corrupts-prstate.
 export type SalvageInspection = {
   branchExists: boolean;
   headMatches: boolean;
   commitsMatch: boolean;
-  prState: "OPEN" | "MERGED" | "CLOSED" | null;
+  prState: "OPEN" | "MERGED" | "CLOSED" | "unknown" | null;
 };
 
 export type ProbeSummary = {
@@ -110,7 +115,7 @@ function salvageHandoffs(db: Database): SalvageHandoff[] {
   return handoffs;
 }
 
-export type PrStateRunner = (prUrl: string) => "OPEN" | "MERGED" | "CLOSED" | null;
+export type PrStateRunner = (prUrl: string) => "OPEN" | "MERGED" | "CLOSED" | "unknown" | null;
 
 export type MergedPrDesync = { issueId: string; prUrl: string };
 
@@ -239,6 +244,10 @@ export function sweepRecovery(
         inspection.headMatches &&
         inspection.commitsMatch &&
         inspection.prState === "MERGED";
+      // An inconclusive gh poll (rate limit, network blip) is not a fresh
+      // observation — skip logging entirely rather than recording a false
+      // PR-state transition that corrupts the salvage_inspection history.
+      if (inspection.prState === "unknown") continue;
       const payload = JSON.stringify({ kind: "salvage_inspection", ...inspection, ready_for_terminal_update: handoff.readyForTerminalUpdate });
       const prior = db.query<{ payload_md: string }, [string]>(
         `SELECT payload_md FROM issue_events WHERE issue_id=? AND kind='note' AND agent='recovery-sweep' ORDER BY seq DESC LIMIT 1`,

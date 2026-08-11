@@ -30,12 +30,16 @@ function inspectSalvage(h: SalvageHandoff): SalvageInspection {
   const git = (...args: string[]) => spawnSync(["git", "-C", worktree, ...args]);
   const head = new TextDecoder().decode(git("rev-parse", "HEAD").stdout).trim();
   const commits = Number(new TextDecoder().decode(git("rev-list", "--count", `${h.base}..${h.head}`).stdout).trim());
+  // null = no PR url (nothing to check). "unknown" = gh call failed/returned
+  // an unparseable state (rate limit, network blip) — not a real read.
   let prState: SalvageInspection["prState"] = null;
   if (h.prUrl) {
     const pr = spawnSync(["gh", "pr", "view", h.prUrl, "--json", "state", "--jq", ".state"]);
     if (pr.exitCode === 0) {
       const state = new TextDecoder().decode(pr.stdout).trim();
-      if (state === "OPEN" || state === "MERGED" || state === "CLOSED") prState = state;
+      prState = state === "OPEN" || state === "MERGED" || state === "CLOSED" ? state : "unknown";
+    } else {
+      prState = "unknown";
     }
   }
   return { branchExists: true, headMatches: head === h.head, commitsMatch: commits === h.commits, prState };
@@ -43,9 +47,9 @@ function inspectSalvage(h: SalvageHandoff): SalvageInspection {
 
 export const prState: PrStateRunner = (prUrl) => {
   const r = spawnSync(["gh", "pr", "view", prUrl, "--json", "state", "--jq", ".state"]);
-  if (r.exitCode !== 0) return null;
+  if (r.exitCode !== 0) return "unknown";
   const state = new TextDecoder().decode(r.stdout).trim();
-  return state === "OPEN" || state === "MERGED" || state === "CLOSED" ? state : null;
+  return state === "OPEN" || state === "MERGED" || state === "CLOSED" ? state : "unknown";
 };
 
 export function runRecoverySweep(db: Database, sweepProbe = probe) {
