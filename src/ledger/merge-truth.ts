@@ -178,9 +178,9 @@ export function defaultRunner(project: string | null | undefined): Runner {
     // Race the process against a wall-clock timer. If the timer wins, kill
     // the child and surface exit 124 (timeout convention) with a descriptive
     // stdout so the validator can refuse the merge with a real reason.
-    // ponytail: kill on timeout; without this a corrupt .git could hang
-    // the validator forever. merge-base is in-memory; >30s = something is
-    // wrong. Bump if you ever point this at a remote refspec.
+    // Kill on timeout: without this a corrupt .git could hang the validator
+    // forever. merge-base is in-memory; >30s = something is wrong. Bump if
+    // you ever point this at a remote refspec.
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => resolve("timeout"), DEFAULT_RUNNER_TIMEOUT_MS);
