@@ -1,14 +1,17 @@
-Completed: clarify-docs for full sequential chain dependency pattern at bin/plan.ts:112.
+Completed: clarify-docs for full sequential chain dependency pattern.
 
-Deliverables:
-- CONTEXT.md: Added "Sequential Tracer Chain" glossary entry documenting the `--blocked-by` JSON array format for each tracer position, `unblock_dependents` release semantics, known ceiling (cancelled tracer strands successors), recovery paths (failed reset via `ledger update --state ready`; cancelled tracer I-0010 gap), and upgrade path (per-slice dependency edges from plan-agent).
-- bin/plan.ts: Ponytail annotation shortened to cross-reference: "The Sequential Tracer Chain pattern is documented in CONTEXT.md (glossary entry)." Preserved the per-slice future note.
-- evidence.md: Updated with final state.
+The work was completed and merged to main as PR #439 (commit 4848364)
+before this worker claimed the row. Evidence of the PR:
 
-PR: https://github.com/a-canary/arc-agents/pull/436
-Diff review: self-review (no subagent extension available in pi harness; doc-only diff), verdict=pass, no surprises/gaps/conflicts.
+- PR: https://github.com/a-canary/arc-agents/pull/439
+- Merge commit: 48483645258f5416b36979f3c3316d6478330583
+- Merge time: 2026-08-13T13:20:09Z
 
-Commits:
-- 8c2b5e7 clarify-docs: document full sequential chain dependency pattern in CONTEXT.md
-- c424e75 clarify-docs: promote ponytail annotation to reference CONTEXT.md glossary entry
-- 6f22ab7 clarify-docs: update evidence.md with final state for sequential chain pattern
+Deliverables (from PR #439):
+- CONTEXT.md: Added "Sequential Tracer Chain" glossary entry documenting:
+  - `--blocked-by` JSON array format for each tracer position
+  - `unblock_dependents` SQL trigger release semantics
+  - Known ceiling (cancelled tracer strands successors)
+  - Recovery paths (failed reset via `ledger update --state ready`; cancelled tracer I-0010 gap)
+  - Upgrade path (per-slice dependency edges from plan-agent)
+- bin/plan.ts:112: Ponytail annotation promoted to cross-reference CONTEXT.md glossary entry
