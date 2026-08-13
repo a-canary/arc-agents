@@ -9,7 +9,7 @@
 
 ## TL;DR
 
-`listExistingPrdIds()` at `bin/plan-agent.ts:270` spawns `ledger list --kind prd
+`listExistingPrdIds()` at `bin/plan-agent.ts:276` spawns `ledger list --kind prd
 --all --project <p>` and parses the JSON stdout, rather than wiring a new
 SQL query into the bookie subagent for this read-only lookup. The `ledger list`
 CLI already supports the needed filters (`--kind`, `--project`), returns JSON,
@@ -53,6 +53,6 @@ query through the bookie subagent or adding a direct `better-sqlite3` query.
 ## Cross-references
 
 - `bin/plan-agent.ts:266` — ponytail annotation
-- `bin/plan-agent.ts:270` — `listExistingPrdIds` implementation
+- `bin/plan-agent.ts:276` — `listExistingPrdIds` implementation
 - `docs/api.md` — `ledger list` CLI reference
 - ADR-0010 (`docs/adr/0010-chat-reply-triage.md`) — plan-agent design
