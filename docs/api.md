@@ -379,3 +379,37 @@ export type Relationship = { other_prd_id: string; kind: RelationshipKind }
 `project` is a free-form string on every issue row. Workers use `project=ke`
 to indicate work scoped to the KE (Knowledge Engine) subsystem within the
 broader arc-agents repo. The ledger does not enforce project values.
+
+---
+
+## Environment Variables
+
+### `VASTAI_BIN`
+
+Path to the `vastai` CLI binary. Used by `bin/vast-billing.ts` to invoke `vastai
+show invoices --raw` for spend reconciliation.
+
+- **Purpose:** Override the default binary path. If unset, falls back to
+  `~/.local/bin/vastai` (the pipx install location).
+- **Why explicit:** systemd/cron PATH typically does not include
+  `~/.local/bin`, so the auto-detection fallback fails in automated contexts.
+  Same env contract as `vast-lease.ts` and the vast-cli skill.
+- **Resolution order (first non-empty wins):** `$VASTAI_BIN` →
+  `~/.local/bin/vastai` → null (fail-open: skip reconcile with exit 0).
+
+### `VAULT_DIR`
+
+Base directory for vast leases and billing state. Used by `bin/vast-lease.ts`
+and `bin/vast-billing.ts`.
+
+- **Resolution order:** `$VAULT_DIR` → `$ARC_VAULT_HOME/vast` →
+  `$HOME/vault/vast`.
+- **Note:** `VAULT_DIR` is the legacy name; `ARC_VAULT_HOME` (with `/vast`
+  subdirectory appended) is the canonical XDG path per
+  [CHOICES.md](CHOICES.md#i-0012-cross-repo-env-var-naming-for-vaultdata-directories).
+
+### `ARC_LEDGER_DB`
+
+Path to the SQLite ledger database. See
+[CHOICES.md](CHOICES.md#i-0013-ledger-db-xdg-path) for resolution and XDG
+migration details.
