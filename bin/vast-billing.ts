@@ -14,6 +14,15 @@
 // caller is the vast-lease cron (or any operator-driven audit), NOT every
 // acquire/release cycle.
 //
+// Env var contract:
+//   VASTAI_BIN  Path to the `vastai` CLI binary. Optional; when unset the
+//               script falls back to ~/.local/bin/vastai (pipx shim). Exposed
+//               as an explicit env var because the script runs under systemd/
+//               cron where PATH does not include ~/.local/bin. The caller is
+//               responsible for setting VASTAI_BIN when the CLI lives outside
+//               the default PATH. When neither VASTAI_BIN nor ~/.local/bin/vastai
+//               exists, the script fails open (skips reconcile, exits 0).
+//
 // State lives at ~/vault/vast/<instance>/spend.json:
 //   rateEstimateDph    $/hr at lease-acquire time (labelled estimate)
 //   estimateStartEpoch epoch sec the lease started
@@ -65,8 +74,7 @@ function die(msg: string, code = 2): never {
 const VAULT = process.env.VAULT_DIR || join(homedir(), "vault");
 const ROOT = join(VAULT, "vast");
 
-// ponytail: this exists — explicit env var, same env contract as vast-lease
-// (see vast-cli skill: systemd/cron PATH doesn't include ~/.local/bin).
+// ponytail: env var contract documented in header above.
 function resolveVastaiBin(): string | null {
   if (process.env.VASTAI_BIN) return process.env.VASTAI_BIN;
   const pipxShim = join(homedir(), ".local", "bin", "vastai");
