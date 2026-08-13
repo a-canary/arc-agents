@@ -21,7 +21,7 @@
 //   hours.
 //
 // Subcommands:
-//   acquire  --instance <id> --holder <name> [--ttl <sec>=3600] [--reason "..."] [--wait [--timeout <sec>=0]]
+//   acquire  --instance <id> --holder <name> [--ttl <sec>=3600] [--dph <usd/hr>] [--reason "..."] [--wait [--timeout <sec>=0]]
 //            Atomically take the lease if free (or held by an expired/own/dead-PID lease).
 //            Without --wait: exit 0 on success, 4 if held by someone else.
 //            With --wait: enqueue a ticket and block until it's our turn AND the
@@ -238,7 +238,7 @@ async function cmdAcquire() {
 
   // ponytail: --dph on acquire is OPTIONAL; when supplied we record the labelled
   // estimate via vast-billing so a later `vast-billing reconcile` has something
-  // to override. Best-effort: never block lease acquire on billing-tool errors.
+  // to match against. Best-effort: never block lease acquire on billing-tool errors.
   function recordBillingEstimate() {
     if (!dph) return;
     const dphNum = Number(dph);
