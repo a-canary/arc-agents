@@ -1621,6 +1621,7 @@ switch (cmd) {
       // as untracked. readdir order differs across filesystems (CI surfaced the
       // orphan-first case), so we can't rely on a real worktree sorting first.
       // ponytail: linear probe over a handful of worktree dirs.
+      // See docs/decisions/ledger-status-linear-probe-worktree-dirs.md
       const candidates = dirs.filter((n) => {
         try { return statSync(pjoin(worktreeRoot, n)).isDirectory(); }
         catch { return false; }
