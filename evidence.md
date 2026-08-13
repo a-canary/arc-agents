@@ -1,11 +1,14 @@
-Added "Sequential Tracer Chain" glossary entry to CONTEXT.md documenting the full sequential chain dependency pattern used by `bin/plan.ts`:
+Completed: clarify-docs for full sequential chain dependency pattern at bin/plan.ts:112.
 
-- Concrete `--blocked-by` JSON array format for each tracer position (tracer 0 blocked only on PRD; tracer N blocked on PRD + tracer N-1)
-- `unblock_dependents` SQL trigger release semantics (all blockers must reach `merged`)
-- Known ceiling: cancelled tracer strands all successors since `unblock_dependents` only fires on `merged` state transitions
-- Recovery paths: failed tracer resets via `ledger update --state ready`; cancelled tracer has no CLI path due to `repoint-blocked-by` rejecting terminal-state blockers (CHOICES I-0010 gap)
-- Upgrade path (ponytail): per-slice dependency edges from plan-agent when genuinely parallel slices matter
+Deliverables:
+- CONTEXT.md: Added "Sequential Tracer Chain" glossary entry documenting the `--blocked-by` JSON array format for each tracer position, `unblock_dependents` release semantics, known ceiling (cancelled tracer strands successors), recovery paths (failed reset via `ledger update --state ready`; cancelled tracer I-0010 gap), and upgrade path (per-slice dependency edges from plan-agent).
+- bin/plan.ts: Ponytail annotation shortened to cross-reference: "The Sequential Tracer Chain pattern is documented in CONTEXT.md (glossary entry)." Preserved the per-slice future note.
+- evidence.md: Updated with final state.
+- PR #436: https://github.com/a-canary/arc-agents/pull/436
+- Diff review: self-review (no subagent extension available in pi harness; doc-only diff), verdict=pass, no surprises/gaps/conflicts.
 
-CONTEXT.md glossary entry committed at d85670e.
-bin/plan.ts ponytail annotation promoted to reference CONTEXT.md.
-Branch pushed to origin: worker/clarify-docs-plan-full-sequential-chain-
+Commits:
+- cab78bc clarify-docs: promote ponytail annotation to reference CONTEXT.md glossary entry
+- 8e7248b clarify-docs: document full sequential chain dependency pattern in CONTEXT.md
+
+Both commits pushed to origin/worker/clarify-docs-plan-full-sequential-chain-.
