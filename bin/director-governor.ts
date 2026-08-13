@@ -70,18 +70,32 @@ export function governor(state: GovernorState): GovernorVerdict {
 export interface ResolveOpts {
   sentinelDir: string; // caller-supplied dir for KILL/PAUSE files (e.g. <parent-repo>/.arc/director/)
   repoBudget: number;
-  tokensThisWeek: number;
   directorName?: string; // optional director name for per-Director token attribution
+  /**
+   * @deprecated Use directorName instead. resolveState now resolves tokens itself.
+   * If provided, this value is used literally and directorName-based per-director
+   * resolution is skipped.
+   */
+  tokensThisWeek?: number;
 }
 
 // ponytail: sentinel-file flags are the simplest reactive control — `existsSync`
 // of a file under a caller-supplied directory. Upgrade to a ledger row if you
 // need history (who set it, when, why).
 export function resolveState(opts: ResolveOpts): GovernorState {
+  // Resolve token tally: explicit tokensThisWeek override, per-director file,
+  // or shared WEEKLY_TOKENS file. This makes per-director tracking automatic
+  // — callers need only pass directorName, not pre-resolve the token path.
+  const tokensThisWeek =
+    opts.tokensThisWeek !== undefined
+      ? opts.tokensThisWeek
+      : opts.directorName
+        ? readWeeklyTokensForDirectorImpl(opts.sentinelDir, opts.directorName)
+        : readWeeklyTokens(opts.sentinelDir);
   return {
     killed: existsSync(join(opts.sentinelDir, "KILL")),
     paused: existsSync(join(opts.sentinelDir, "PAUSE")),
-    tokensThisWeek: opts.tokensThisWeek,
+    tokensThisWeek,
     repoBudget: opts.repoBudget,
   };
 }
@@ -142,9 +156,8 @@ export function writeWeeklyTokens(sentinelDir: string, tokens: number): number {
 // token tally within the shared sentinel dir. The governor reads THAT tally
 // when checking budget, enabling per-Director accounting within a repo.
 
-// Read a per-Director token tally. Returns 0 if file absent or unreadable.
-export function readWeeklyTokensForDirector(sentinelDir: string, directorName: string): number {
-  if (!directorName) return readWeeklyTokens(sentinelDir);
+// Internal: read per-Director token tally from file. Returns 0 if absent/unreadable.
+function readWeeklyTokensForDirectorImpl(sentinelDir: string, directorName: string): number {
   const tokenFile = join(sentinelDir, weeklyTokensFileName(directorName));
   try {
     const content = readFileSync(tokenFile, "utf8").trim();
@@ -154,6 +167,13 @@ export function readWeeklyTokensForDirector(sentinelDir: string, directorName: s
   } catch {
     return 0;
   }
+}
+
+// Read a per-Director token tally. Returns 0 if file absent or unreadable.
+// Falls back to shared WEEKLY_TOKENS when directorName is empty.
+export function readWeeklyTokensForDirector(sentinelDir: string, directorName: string): number {
+  if (!directorName) return readWeeklyTokens(sentinelDir);
+  return readWeeklyTokensForDirectorImpl(sentinelDir, directorName);
 }
 
 // Record additional token spend to a per-Director WEEKLY_TOKENS_<name> tally.
@@ -206,27 +226,23 @@ if (import.meta.main) {
     }
     // Record-only mode: write spend and exit without checking budget.
     if (recordSpend >= 0) {
-      const tokenFile = weeklyTokensFileName(directorName || undefined);
       if (directorName) {
         const total = writeWeeklyTokensForDirector(sentinelDir, directorName, recordSpend);
+        const tokenFile = weeklyTokensFileName(directorName);
         if (Number.isFinite(total)) {
           console.log(`[governor] recorded ${recordSpend} tokens to ${sentinelDir}/${tokenFile} (cumulative ${total})`);
         }
       } else {
         const total = writeWeeklyTokens(sentinelDir, recordSpend);
         if (Number.isFinite(total)) {
-          console.log(`[governor] recorded ${recordSpend} tokens to ${sentinelDir}/${tokenFile} (cumulative ${total})`);
+          console.log(`[governor] recorded ${recordSpend} tokens to ${sentinelDir}/WEEKLY_TOKENS (cumulative ${total})`);
         }
       }
       process.exit(0);
     }
-    const tokensThisWeek = directorName
-      ? readWeeklyTokensForDirector(sentinelDir, directorName)
-      : readWeeklyTokens(sentinelDir);
     const state = resolveState({
       sentinelDir,
       repoBudget: weeklyBudget,
-      tokensThisWeek,
       directorName: directorName || undefined,
     });
     const verdict = governor(state);
