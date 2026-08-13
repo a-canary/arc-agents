@@ -446,6 +446,8 @@ function aggregateProject(db: DB, project: string, limit: number, validate: bool
   // no PRD, the same OPEN rows would just re-categorize to the same no-op (observed
   // 2026-08-04: OneNation's 11 gated rows burned an LLM collector run every 5-min tick).
   // Round timestamp is encoded in round_id ("fbr-<base36 ms>-<rand>").
+  // ponytail: keyed on row count only — an edited-in-place row won't re-trigger;
+  // upgrade to a content hash if that ever matters. Migration 030 adds the column.
   const lastRound = db
     .query<{ round_id: string; minted: number }, [string]>(
       "SELECT round_id, MAX(prd_id IS NOT NULL) AS minted FROM feedback_theme WHERE project=? GROUP BY round_id ORDER BY round_id DESC LIMIT 1",

@@ -1386,6 +1386,25 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "030_feedback_theme_row_content_hash",
+    // Add row_content_hash to feedback_theme so the cooldown check in
+    // feedback-aggregate.ts can compare a content hash of the current OPEN rows
+    // against the last collector round's hash, rather than only checking row count.
+    // An edited-in-place row (same count, different content) will now correctly
+    // re-trigger a collector pass.
+    up: (db) => {
+      const cols = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(feedback_theme)")
+          .all()
+          .map((r) => r.name),
+      );
+      if (!cols.has("row_content_hash")) {
+        db.exec("ALTER TABLE feedback_theme ADD COLUMN row_content_hash TEXT");
+      }
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
