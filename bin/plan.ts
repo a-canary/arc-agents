@@ -109,8 +109,8 @@ ledger("update", [prdId, "--state", "review"]);
 //    wasted worker slots). The unblock_dependents trigger releases a tracer
 //    only when every blocker is merged: tracer 1 on PRD approval, each later
 //    tracer when its predecessor merges.
-// ponytail: full sequential chain; per-slice dependency edges from plan-agent
-// if genuinely parallel slices ever matter.
+// The Sequential Tracer Chain pattern is documented in CONTEXT.md (glossary entry).
+// per-slice dependency edges from plan-agent if genuinely parallel slices ever matter.
 // Known ceiling: unblock_dependents releases only on blockers *merged*, so a
 // cancelled tracer strands its successors (a failed one is recoverable with
 // `ledger update <tracer> --state ready`). Recovery for the cancelled case needs

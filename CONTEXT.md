@@ -154,6 +154,27 @@ The repo where `/director`'s own state lives (`.arc/director/`) and whose `AGENT
 ## Pattern
 A symptom observed across multiple rows, workers, or cycles. Distinguished from a one-off observation: a single `state=failed` row is an observation; the same failure shape across N rows is a pattern. Patterns escalate to director-level review via [triage-failed](skills/triage-failed/SKILL.md), not per-row patching. Root-cause fixes only — patching symptoms while the root cause persists wastes every future cycle.
 
+## Sequential Tracer Chain
+The pattern used by `bin/plan.ts` when minting a PRD + N tracer-bullet tasks: each tracer i is blocked on BOTH the PRD AND tracer i-1, forming a linear sequence. Concretely, the `--blocked-by` JSON arrays are:
+
+```
+tracer 0 (first slice): --blocked-by '["<prdId>"]'
+tracer 1:              --blocked-by '["<prdId>", "<tracer-0-id>"]'
+tracer N:              --blocked-by '["<prdId>", "<tracer-(N-1)-id>"]'
+```
+
+Each tracer can only be claimed and worked after ALL its blockers reach `merged`. The chain is released one-at-a-time by the `unblock_dependents` SQL trigger. This prevents parallel dispatch of structurally dependent siblings (observed in `improve-architecture-planner-chain-imple-zrnx`).
+
+See the ponytail annotation at `bin/plan.ts:112`.
+
+**Known ceiling:** `unblock_dependents` releases only on blockers in `merged` state. A `cancelled` tracer strands all successors — they will never see their blocker transition to `merged`.
+
+**Recovery paths:**
+- **Failed tracer** — possible: `ledger update <tracer> --state ready` resets the failed row to `ready`, `unblock_dependents` re-evaluates all blockers (if the other blocker is `merged`, this releases the next in chain).
+- **Cancelled tracer** — no current CLI path. `repoint-blocked-by` exists (CHOICES I-0009) but rejects blockers in terminal state (merged/cancelled), so it cannot unlink a cancelled tracer from its successors' `blocked_by`. The CHOICES I-0010 gap — no `update --blocked-by --allow-correction` escape hatch — means the only workaround is a direct `db.ts` write (tracked as an unaudited event). Chains are intentionally limited to ≤3 tracers to limit blast radius.
+
+**Upgrade path (ponytail):** If genuinely parallel slices ever matter, `bin/plan.ts` would need per-slice dependency edges from the plan-agent rather than the current hardcoded chain. The first tracer that is independent of its predecessor should omit the predecessor from its `--blocked-by`, keeping only the PRD as blocker. This requires the plan-agent to emit dependency metadata per slice (a future capability beyond the current ponytail annotation at `bin/plan.ts:112`).
+
 ## Sibling Slice
 Two or more task rows that descend from the same parent PRD and execute in parallel against overlapping surfaces, minting code independently with no shared branch or diff. The [dev promotion gate](#diff-review) reviews each slice in isolation, so cross-slice collisions — divergent helpers covering the same query axis, divergent names for the same concept — land silently until a third slice surfaces the pattern. Observed instance: arc-webui PR #40 added `recentApprovedPrds(db, limit=8)` and PR #41 added `recentlyApprovedPrds(db, limit=5)` — same SQL axis (`kind='prd' AND state='merged' ORDER BY updated_at DESC`), different return shapes, both merged. Reversible: drop one, fold into a shared helper, or document the divergence as intentional. See [Pattern](#pattern) for the cross-row promotion path when a third slice appears.
 
