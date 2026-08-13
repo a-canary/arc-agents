@@ -78,6 +78,7 @@ CURRENT_TASK="<current ledger row id>"
 # Skip the markdown header delimiter line (|---|...).
 FOLLOWUP_BLOCK=$(awk '/^## Recommended follow-up rows/,0' "$REPORT_PATH" | awk 'NR>2 && /\| [A-Z0-9]/ {print}')
 echo "$FOLLOWUP_BLOCK" | while IFS='|' read -r _ num title notes loc; do
+  # Design: awk over jq for stdlib portability — jq may not be available on all factory worker shells. See §"awk over jq for stdlib portability" in Design notes below.
   title=$(echo "$title" | xargs)
   if [ -z "$title" ]; then continue; fi
   echo "$title"
@@ -98,7 +99,7 @@ Workers must NOT write to the ledger directly — all writes route through booki
 
 ```bash
 echo "Collecting evidence row IDs..."
-# Collect unique row IDs from the report
+# Design: awk + while is stdlib; no jq dependency (same rationale as Step 2 above). See §"awk over jq for stdlib portability" in Design notes below.
 ROW_IDS=$(awk '/^## Pattern [0-9]/,/^## / { if (/row-[a-z]|^`[a-z0-9-]+`$/ || /`[a-z0-9-]{10,}`/) print }' \
   "$REPORT_PATH" | grep -oE '`[a-z0-9-]{10,}`' | tr -d '`' | sort -u)
 echo "Rows to annotate: $ROW_IDS"
@@ -124,6 +125,18 @@ Couldn't find a pattern with N≥3 evidence. Record the negative result in evide
 ### `blocked`
 
 Pattern points at a decision only the human can make (e.g. "switch model tier for class=hygiene"). Decompose into a HITL child carrying the analysis report and the proposed action. Delegate to bookie: `decompose <task-id> --child "<HITL step>"`.
+
+## Design notes
+
+### awk over jq for stdlib portability
+
+All inline data extraction in this skill uses `awk` (POSIX stdlib) rather than `jq`.
+Rationale: `jq` is not guaranteed to be available on all factory worker shells,
+especially container-based or minimal environments. `awk` is part of POSIX and
+present on virtually every Unix-like system. The two locations annotated with
+this design note are:
+- Follow-up row extraction loop (Step 2, line 81 — inline `# Design: awk over jq...` comment).
+- Evidence row annotation loop (Step 3, line 102 — inline `# Design: awk + while...` comment).
 
 ## Pattern shortlist (already documented — point future analyses here)
 
