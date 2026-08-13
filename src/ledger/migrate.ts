@@ -1210,9 +1210,11 @@ export const migrations: Migration[] = [
     // directly on feedback (no new table — fewer joins, same queryability, and the
     // task body explicitly allowed this shape).
     //
-    // ponytail: resolution is a free TEXT not a CHECK'd enum. The only verdict pass 2
-    // emits today is 'superseded'; future verdicts (e.g. 'duplicate') get added here
-    // when a slice needs them, not speculatively.
+    // ponytail: resolution is a free TEXT, not a CHECK'd enum. Because there's no CHECK
+    // constraint, adding a new verdict value (e.g. 'duplicate' in a future slice) requires
+    // zero schema changes — the code just writes the new string. The only verdict pass 2
+    // emits today is 'superseded'; future verdicts get added when a slice needs them, not
+    // speculatively. CONTEXT.md term: resolution.
     up: (db) => {
       const cols = new Set(
         db

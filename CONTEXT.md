@@ -152,6 +152,9 @@ A symptom observed across multiple rows, workers, or cycles. Distinguished from 
 ## Sibling Slice
 Two or more task rows that descend from the same parent PRD and execute in parallel against overlapping surfaces, minting code independently with no shared branch or diff. The [dev promotion gate](#diff-review) reviews each slice in isolation, so cross-slice collisions — divergent helpers covering the same query axis, divergent names for the same concept — land silently until a third slice surfaces the pattern. Observed instance: arc-webui PR #40 added `recentApprovedPrds(db, limit=8)` and PR #41 added `recentlyApprovedPrds(db, limit=5)` — same SQL axis (`kind='prd' AND state='merged' ORDER BY updated_at DESC`), different return shapes, both merged. Reversible: drop one, fold into a shared helper, or document the divergence as intentional. See [Pattern](#pattern) for the cross-row promotion path when a third slice appears.
 
+## Resolution (feedback column)
+The `resolution` column on the `feedback` table records why a feedback row reached `state='resolved'`. It is a free `TEXT` column — no `CHECK` constraint — so new verdict values can be added without schema migration. The only value emitted today is `'superseded'` (written by the Validator pass when a feedback is superseded by a newer row); future values (e.g. `'duplicate'`, `'declined'`) will be added by the consuming code when a slice needs them. See migration `024_feedback_stale_superseded` in `src/ledger/migrate.ts`.
+
 ## Drift
 Active renames or convention-residues where the old name still appears somewhere in code, comments, columns, or docs. Each entry has a 7-day TTL from the originating decision. After TTL expires, either the residue is gone (delete the line) or the rename is stuck — file a task to track the blocker and keep the entry until cleared. One line per drift, format:
 
