@@ -20,7 +20,7 @@
 
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
-import { readFileSync, existsSync } from "node:fs";
+import { readFileSync, readdirSync, existsSync } from "node:fs";
 import { resolveProjectRepo } from "../src/project-repo-map";
 
 // A candidate mission objective the planner may propose alongside the PRD (M-0010).
@@ -66,13 +66,95 @@ export function serializeObjective(o: ProposedObjective): string {
 // Baked grill-with-docs grounding: the architecture a plan must respect. Kept as a
 // constant (not a file read) because it produces excellent plans on its own (proven)
 // and avoids I/O in the hot path.
-// ponytail: richer grounding — read CONTEXT.md/ADRs + `ke recall <request>` and inject
-// them here — is a follow-up enrichment (slice 4). The gate keeps thinner drafts safe.
+// The runtime path now uses buildEnrichedContext() which reads the target repo's CONTEXT.md,
+// ADR summaries via adrGroundingFor(), and ke recall via keRecallFor(). This constant remains
+// as the fallback for arc-webui when the target repo has no CONTEXT.md of its own.
 export const ARCH_CONTEXT =
   "PROJECT CONTEXT: arc-webui is a Hono/Bun server-rendered developer portal. Pages " +
   "render to HTML through a shell() helper; there is no client build step. Prefer plain " +
   "CSS and small server routes over any JS framework or new dependency. Every change " +
   "must be small and independently reversible.";
+
+// Attempt to read the target project's docs/adr/ directory and return key constraint
+// summaries as a compact markdown block. Returns empty string if none exist, so the
+// caller can degrade gracefully (the model is still instructed to read ADRs via tools).
+// Injected directly into the prompt via buildEnrichedContext() so the planner has
+// ADR context even before its first tool call — saves a round-trip and compensates for
+// repos where the ADR volume would make a full tool-read expensive.
+export function adrGroundingFor(project: string): string {
+  try {
+    const repo = resolveProjectRepo(project);
+    if (!repo) return "";
+    const adrDir = join(repo, "docs", "adr");
+    if (!existsSync(adrDir)) return "";
+    const entries = readdirSync(adrDir).filter((f: string) => f.endsWith(".md")).sort();
+    if (entries.length === 0) return "";
+    const summaries: string[] = [];
+    for (const f of entries.slice(0, 15)) { // cap at 15 ADRs to keep prompt lean
+      const text = readFileSync(join(adrDir, f), "utf8");
+      const titleLine = text.match(/^#\s+(.+)/m);
+      const statusLine = text.match(/^\*\*Status:\*\*\s+(.+)/m);
+      // Extract the first paragraph of the Decision section (or Context if no Decision)
+      const decisionMatch = text.match(/#+\s*Decision[\s\S]*?\n\n([^#\n].+?)\n\n/);
+      const contextMatch = text.match(/#+\s*Context[\s\S]*?\n\n([^#\n].+?)\n\n/);
+      const snippet = (decisionMatch?.[1] ?? contextMatch?.[1] ?? "").replace(/\n+/g, " ").slice(0, 300);
+      const title = titleLine?.[1]?.trim() ?? f.replace(/\.md$/, "");
+      const status = statusLine?.[1]?.trim() ?? "unknown";
+      summaries.push(`- **${title}** (${status}): ${snippet}`);
+    }
+    if (summaries.length === 0) return "";
+    return "ARCHITECTURAL DECISIONS (ADRs) — key constraints:\n" + summaries.join("\n");
+  } catch {
+    return "";
+  }
+}
+
+// Run `ke recall <request>` and return top entries as a compact string.
+// Falls back to empty string on any error — never blocks the plan.
+// ke recall output is human-readable (not JSON):
+//   - [SCORE%] Title
+//     → path
+// We extract title + path for each hit and present them as grounding.
+// Injected directly into the prompt via buildEnrichedContext() so the planner has prior
+// decisions and precedent before its first tool call — avoids re-litigating settled ground.
+export function keRecallFor(request: string): string {
+  try {
+    const recallBin = Bun.which("ke") ?? join(import.meta.dir, "..", "..", "..", "ke", "bin", "ke-tool.ts");
+    const args: string[] = ["recall", clamp(request, 200), "--limit", "5"];
+    const r = spawnSync(
+      recallBin.endsWith(".ts") ? process.execPath : recallBin,
+      recallBin.endsWith(".ts") ? [recallBin, ...args] : args,
+      { encoding: "utf8", timeout: 15_000 },
+    );
+    if (r.status !== 0 || !r.stdout) return "";
+    // Parse the human-readable ke recall output: pairs of lines (title-line + path-line)
+    // Example:
+    //   - [42.7%] Title text here
+    //     → path/to/entry.md
+    const entries: string[] = [];
+    const lines = r.stdout.trim().split("\n");
+    for (let i = 0; i < lines.length; i++) {
+      const titleMatch = lines[i]?.match(/^-\s+\[\d+\.?\d*%\]\s+(.+)$/);
+      if (titleMatch) {
+        const pathMatch = lines[i + 1]?.match(/^\s+→\s+(.+)$/);
+        const title = (titleMatch[1] ?? "").trim();
+        const rawPath = (pathMatch?.[1] ?? "").trim();
+        // Normalise to a ke/ prefixed path. ke recall returns paths relative to
+        // the ke repo root (e.g. "topics/foo.md", "learn/bar.md"). If the path
+        // doesn't already contain "ke/", prepend "ke/" for a canonical reference.
+        // If it's an absolute path containing "ke/", extract the ke/ suffix.
+        const path = rawPath && !rawPath.includes("ke/")
+          ? "ke/" + rawPath
+          : rawPath.replace(/^.*\/ke\//, "ke/");
+        if (title) entries.push(`- ${path ? `**${path}** — ` : ""}${title}`);
+      }
+    }
+    if (entries.length === 0) return "";
+    return "\nPRIOR KNOWLEDGE (ke recall) — relevant precedent & decisions:\n" + entries.slice(0, 5).join("\n");
+  } catch {
+    return "";
+  }
+}
 
 function clamp(s: string, n: number): string {
   return s.length > n ? s.slice(0, n - 3) + "..." : s;
@@ -81,16 +163,31 @@ function clamp(s: string, n: number): string {
 // Per-project grounding for the planner prompt. Prefer the target repo's own
 // CONTEXT.md glossary (proven richer plans); fall back to the baked arc-webui
 // context, or a neutral reversible-first context for an unknown project.
-// ponytail: repo is a sibling of arc-agents (../<project>); a missing file just
-// degrades to the fallback, never throws.
+// NOTE: ADR and ke recall enrichment is handled by buildEnrichedContext() (via
+// adrGroundingFor/keRecallFor), not this function. This function only reads CONTEXT.md.
+// The model is still instructed to research via tools, so missing data degrades
+// to the same model-driven research as before, never a blind spot.
 export function groundingFor(project: string): string {
   try {
-    const root = join(import.meta.dir, "..", "..");
-    const ctx = readFileSync(join(root, project, "CONTEXT.md"), "utf8").trim();
+    const repo = resolveProjectRepo(project);
+    if (!repo) throw new Error("no repo for " + project);
+    const ctx = readFileSync(join(repo, "CONTEXT.md"), "utf8").trim();
     if (ctx) return `PROJECT CONTEXT (${project}) — ubiquitous language + constraints:\n${clamp(ctx, 4000)}`;
   } catch {}
   if (project === "arc-webui") return ARCH_CONTEXT;
   return `PROJECT CONTEXT: ${project}. Respect the project's existing architecture, language, and conventions. Keep every change small and independently reversible.`;
+}
+
+// Build the full enriched context block: CONTEXT.md grounding + ADR summaries + ke recall.
+// Each source is best-effort; failures produce empty sections, never a hard failure.
+// The gate (fallbackPlan) keeps any thin draft harmless.
+export function buildEnrichedContext(request: string, project: string): string {
+  const parts: string[] = [groundingFor(project)];
+  const adr = adrGroundingFor(project);
+  if (adr) parts.push(adr);
+  const ke = keRecallFor(request);
+  if (ke) parts.push(ke);
+  return parts.join("\n\n");
 }
 
 // The prompt describes the JSON shape in WORDS. A literal json template or a code
@@ -311,7 +408,8 @@ async function main(): Promise<void> {
   // to classify against (pairwise relationships).
   const existingPrdIds = listExistingPrdIds(project);
 
-  const prompt = buildPlanningPrompt(request, groundingFor(project), project, existingPrdIds);
+  const enriched = buildEnrichedContext(request, project);
+  const prompt = buildPlanningPrompt(request, enriched, project, existingPrdIds);
   const plan = generatePlan(prompt, project);
   if (!plan) {
     // No bare-request fallback: minting the prompt itself as a PRD polluted the

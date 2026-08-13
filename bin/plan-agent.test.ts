@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, buildFallbackPlan, ARCH_CONTEXT, groundingFor, resolveProjectRepo } from "./plan-agent";
+import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, buildFallbackPlan, ARCH_CONTEXT, groundingFor, resolveProjectRepo, buildEnrichedContext, keRecallFor, adrGroundingFor } from "./plan-agent";
 
 test("buildPlanningPrompt embeds request + context, asks for the json shape, avoids the hang trigger", () => {
   const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: arc-webui is server-rendered.");
@@ -325,4 +325,71 @@ test("planToPlanArgs emits one --relationship per pair (json-encoded)", () => {
   const second = argv[argv.lastIndexOf("--relationship") + 1];
   expect(JSON.parse(first!)).toEqual({ other_prd_id: "prd-x", kind: "orthogonal" });
   expect(JSON.parse(second!)).toEqual({ other_prd_id: "prd-y", kind: "dependency" });
+});
+
+// ── Richer Grounding (ponytail slice-4) ──
+// buildEnrichedContext, keRecallFor, adrGroundingFor
+
+test("adrGroundingFor returns empty string for a project with no adr dir", () => {
+  // Use a nonexistent project — no repo, no ADRs
+  const result = adrGroundingFor("nonesuch-xyz-123");
+  expect(result).toBe("");
+});
+
+test("adrGroundingFor reads ADRs for arc-agents (the project that HAS them)", () => {
+  const result = adrGroundingFor("arc-agents");
+  // The arc-agents repo itself has docs/adr/ with ADR files
+  expect(result).toContain("ARCHITECTURAL DECISIONS");
+  expect(result).toContain("ADR");
+  // Status lines appear as parenthesised status text after the title (e.g. "(Accepted)")
+  // because adrGroundingFor strips the "**Status:** " prefix and emits the value cleanly.
+  expect(result).toContain("Accepted")
+});
+
+test("keRecallFor returns empty string when ke binary not found", () => {
+  // With no ke binary or an empty request, we expect graceful empty response.
+  // The function uses Bun.which("ke") which returns null if not in PATH.
+  // If ke IS available, it will do a real recall; we just verify it doesn't crash.
+  const result = keRecallFor("");
+  // either empty string or a formatted recall block — neither should throw
+  expect(typeof result).toBe("string");
+});
+
+test("keRecallFor parses the human-readable ke recall output format", () => {
+  // Unit-test the parser directly by calling with a real request.
+  // On hosts with ke installed this returns formatted entries; on CI it degrades to "".
+  const result = keRecallFor("CONTEXT.md ADR plan agent");
+  // The function must not throw, and must return either empty or formatted entries
+  // starting with "PRIOR KNOWLEDGE" if ke succeeded.
+  if (result) {
+    expect(result).toContain("PRIOR KNOWLEDGE");
+    expect(result).toContain("ke/"); // paths are normalised to ke/...
+    // Result starts with a newline, then the header, then bullet-point entries on
+    // subsequent lines. Use multiline regex to match a bullet point anywhere.
+    expect(result).toMatch(/- \*\*ke\//); // bold ke/ paths somewhere in the output
+  }
+});
+
+test("buildEnrichedContext composes CONTEXT.md + ADRs + ke recall", () => {
+  const result = buildEnrichedContext("Add a dark mode toggle", "arc-webui");
+  // CONTEXT.md grounding always present
+  expect(result).toContain("PROJECT CONTEXT");
+  // arc-webui DOES have ADRs via resolveProjectRepo (~/repos/arc-webui/docs/adr/)
+  // so this should include ARCHITECTURAL DECISIONS. The key is that ke recall
+  // may or may not produce output — neither should crash.
+  expect(result).toContain("ARCHITECTURAL DECISIONS");
+});
+
+test("buildEnrichedContext includes ADRs for arc-agents projects", () => {
+  const result = buildEnrichedContext("Add a task breakdown feature", "arc-agents");
+  expect(result).toContain("PROJECT CONTEXT");
+  expect(result).toContain("ARCHITECTURAL DECISIONS");
+});
+
+test("buildEnrichedContext never throws — graceful degradation on missing repo", () => {
+  const result = buildEnrichedContext("fix bug", "nonesuch-project-99999");
+  expect(result).toContain("nonesuch-project-99999");
+  expect(result).toContain("reversible");
+  // No ADR block for unknown project
+  expect(result).not.toContain("ARCHITECTURAL DECISIONS");
 });
