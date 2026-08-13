@@ -48,7 +48,8 @@ export type FeedbackRow = {
   source: string;
   submitter?: string | null;
   // ponytail: webui-side stamping of mode/author_trust lands in the arc-webui repo;
-  // here we only READ author_trust (null = legacy unstamped row → channel fallback).
+  // here we only READ author_trust (mode is not SELECTed — it is webui-only semantics
+  // for now). NULL author_trust = legacy unstamped row → channel fallback.
   author_trust?: string | null;
 };
 type DB = ReturnType<typeof openWithMigrate>;
