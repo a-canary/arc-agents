@@ -19,7 +19,7 @@ All entry via `bun bin/ledger.ts <verb> [flags]`.
 | `list [--state S] [--kind K] [--limit N]` | List issues | |
 | `show <id>` | Full row + event history | |
 | `decompose <parent-id>` | Decompose into task children | Atomic; parent → `blocked`; children inherit parent `type`/`pool`/`tier` |
-| `join-status <id>` | Pure read of dependency barrier | `{id, state, unblocked, success, pending, failed}`; exit 0 unblocked / 1 pending / 2 on missing id |
+| `join-status <id>` | Pure read of dependency barrier | JSON `{id, state, unblocked, success, pending, failed[, missing]}`. Success is strict: all blockers must be `merged` AND none missing. Exit 0 unblocked / 1 pending-or-missing (stderr has hint) / 2 if `<id>` itself is not found in the ledger. See CONTEXT.md `Join` entry. |
 | `tick` | Cascade unblock + reclaim stale claims | Run by factory; also a backstop |
 | `spawn-ready [--pool X]` | List claimable tasks | |
 | `hitl emit` | Emit a HITL prompt | See HITL verbs below |
@@ -379,3 +379,37 @@ export type Relationship = { other_prd_id: string; kind: RelationshipKind }
 `project` is a free-form string on every issue row. Workers use `project=ke`
 to indicate work scoped to the KE (Knowledge Engine) subsystem within the
 broader arc-agents repo. The ledger does not enforce project values.
+
+---
+
+## Environment Variables
+
+### `VASTAI_BIN`
+
+Path to the `vastai` CLI binary. Used by `bin/vast-billing.ts` to invoke `vastai
+show invoices --raw` for spend reconciliation.
+
+- **Purpose:** Override the default binary path. If unset, falls back to
+  `~/.local/bin/vastai` (the pipx install location).
+- **Why explicit:** systemd/cron PATH typically does not include
+  `~/.local/bin`, so the auto-detection fallback fails in automated contexts.
+  Same env contract as `vast-lease.ts` and the vast-cli skill.
+- **Resolution order (first non-empty wins):** `$VASTAI_BIN` →
+  `~/.local/bin/vastai` → null (fail-open: skip reconcile with exit 0).
+
+### `VAULT_DIR`
+
+Base directory for vast leases and billing state. Used by `bin/vast-lease.ts`
+and `bin/vast-billing.ts`.
+
+- **Resolution order:** `$VAULT_DIR` → `$ARC_VAULT_HOME/vast` →
+  `$HOME/vault/vast`.
+- **Note:** `VAULT_DIR` is the legacy name; `ARC_VAULT_HOME` (with `/vast`
+  subdirectory appended) is the canonical XDG path per
+  [CHOICES.md](CHOICES.md#i-0012-cross-repo-env-var-naming-for-vaultdata-directories).
+
+### `ARC_LEDGER_DB`
+
+Path to the SQLite ledger database. See
+[CHOICES.md](CHOICES.md#i-0013-ledger-db-xdg-path) for resolution and XDG
+migration details.

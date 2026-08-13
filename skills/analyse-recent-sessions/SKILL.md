@@ -62,28 +62,32 @@ Stage it in vault (never push vault). The report path is passed to `--body` in S
 
 **Step 2 — File follow-up rows via `hygiene-emit` (delegated to bookie via Agent tool).**
 
-Parse the follow-up table from the report (columns: `#`, `Title (slug)`, `Type`, `Notes`, `LOC`) and call `hygiene-emit` for each row:
+Workers must NOT write to the ledger directly — all writes route through bookie. Do not invoke `bin/ledger.ts hygiene-emit` yourself. Instead:
+
+1. **Parse** the follow-up table in bash to extract titles.
+2. **Delegate** each row to the bookie subagent (at the worker orchestration level, not inside bash).
+
+The bookie subagent will invoke: `bin/ledger.ts hygiene-emit --skill analyse-recent-sessions --title "<title>" --body "$REPORT_PATH" --observed-in-task "<CURRENT_TASK>"`
+
+Extract titles from the follow-up table (columns: `#`, `Title (slug)`, `Type`, `Notes`, `LOC`):
 
 ```bash
-# ponytail: hygiene-emit is a ledger CLI write; workers delegate all writes to bookie.
-LEDGER="bun ~/repos/arc-agents/bin/ledger.ts"
 CURRENT_TASK="<current ledger row id>"
 
 # Extract table rows after the "## Recommended follow-up rows" heading.
 # Skip the markdown header delimiter line (|---|...).
 FOLLOWUP_BLOCK=$(awk '/^## Recommended follow-up rows/,0' "$REPORT_PATH" | awk 'NR>2 && /\| [A-Z0-9]/ {print}')
 echo "$FOLLOWUP_BLOCK" | while IFS='|' read -r _ num title notes loc; do
-  # Design: awk over jq for stdlib portability — jq may not be available on all factory worker shells.
-  title=$(echo "$title" | xargs)  # trim whitespace
+  # Design: awk over jq for stdlib portability — jq may not be available on all factory worker shells. See §"awk over jq for stdlib portability" in Design notes below.
+  title=$(echo "$title" | xargs)
   if [ -z "$title" ]; then continue; fi
-  echo "Filing: $title"
-  $LEDGER hygiene-emit \
-    --skill analyse-recent-sessions \
-    --title "$title" \
-    --body "$REPORT_PATH" \
-    --observed-in-task "$CURRENT_TASK"
+  echo "$title"
 done
 ```
+
+For each extracted title, delegate `hygiene-emit` to the bookie subagent (one call per title).
+
+Bookie handles dedup automatically against ready/blocked/wip/claimed hygiene rows with the same skill and a similar title.
 
 **Valid skills for `--skill`:** `clarify-docs`, `improve-architecture`, `trash-retired-files`, `analyse-recent-sessions`. All hygiene-emit rows are created as `type=quality tier=hygiene`. Dedup is automatic against ready/blocked/wip/claimed rows with the same skill + similar title.
 
@@ -91,28 +95,26 @@ done
 
 **Step 3 — Annotate evidence rows with `note` events (delegated to bookie via Agent tool).**
 
-For each pattern, row-id evidence appears under `**Evidence — primary source: <source>**`. Call `event` for each:
+Workers must NOT write to the ledger directly — all writes route through bookie. Do not invoke `bin/ledger.ts event` yourself. Collect row IDs in bash, then delegate event writes to the bookie subagent:
 
 ```bash
-echo "Annotating evidence rows..."
-# Design: awk + while is stdlib; no jq dependency (same rationale as Step 2 above).
-awk '/^## Pattern [0-9]/,/^## / { if (/row-[a-z]|^`[a-z0-9-]+`$/ || /`[a-z0-9-]{10,}`/) print }' \
-  "$REPORT_PATH" | grep -oE '`[a-z0-9-]{10,}`' | tr -d '`' | sort -u | while read -r row_id; do
-  $LEDGER event "$row_id" note "Analysis in $REPORT_PATH"
-done
+echo "Collecting evidence row IDs..."
+# Design: awk + while is stdlib; no jq dependency (same rationale as Step 2 above). See §"awk over jq for stdlib portability" in Design notes below.
+ROW_IDS=$(awk '/^## Pattern [0-9]/,/^## / { if (/row-[a-z]|^`[a-z0-9-]+`$/ || /`[a-z0-9-]{10,}`/) print }' \
+  "$REPORT_PATH" | grep -oE '`[a-z0-9-]{10,}`' | tr -d '`' | sort -u)
+echo "Rows to annotate: $ROW_IDS"
 ```
+
+For each row ID, delegate `kind=note` to the bookie subagent (not inside bash — at the worker orchestration level).
 
 **Step 4 — Update parent row to merged via bookie (Agent tool).**
 
-After all hygiene-emit + event calls succeed, delegate to bookie:
+After all hygiene-emit + event calls succeed, delegate to bookie (workers must NOT write to the ledger directly):
 ```
-update --state merged --evidence "<one-liner summary>" --pr <url-or-branch>
+Agent tool → bookie subagent: update --state merged --evidence "<one-liner summary>" --pr <url-or-branch>
 ```
 
-**Merge gate:** merged state is accepted only when `hygiene_complete=1` on the row. `hygiene-emit` sets this atomically. If the follow-up table was empty, manually set it:
-```bash
-$LEDGER update "$CURRENT_TASK" --hygiene-complete
-```
+**Merge gate:** merged state is accepted only when `hygiene_complete=1` on the row. `hygiene-emit` sets this atomically. If the follow-up table was empty, delegate `--hygiene-complete` to bookie via Agent tool (workers must NOT write to the ledger directly).
 
 **PR (if any):** file a PR, get an independent reviewer to return no blockers, then merge to main.
 
@@ -132,8 +134,9 @@ All inline data extraction in this skill uses `awk` (POSIX stdlib) rather than `
 Rationale: `jq` is not guaranteed to be available on all factory worker shells,
 especially container-based or minimal environments. `awk` is part of POSIX and
 present on virtually every Unix-like system. The two locations annotated with
-this design note are the follow-up row extraction loop (Step 2) and the
-evidence row annotation loop (Step 3).
+this design note are:
+- Follow-up row extraction loop (Step 2, line 81 — inline `# Design: awk over jq...` comment).
+- Evidence row annotation loop (Step 3, line 102 — inline `# Design: awk + while...` comment).
 
 ## Pattern shortlist (already documented — point future analyses here)
 

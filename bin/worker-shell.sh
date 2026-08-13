@@ -40,11 +40,23 @@ reconcile_decision() {
 # `"kind":"salvage"` marker in the payload.
 #   $1=base $2=head $3=commits $4=branch $5=exit_code $6=pr_url
 salvage_payload_json() {
-  local pr="$6"
-  local pr_json="null"
-  [[ -n "$pr" ]] && pr_json="\"$pr\""
-  printf '{"kind":"salvage","base":"%s","head":"%s","commits":%d,"branch":"%s","exit_code":%d,"pr_url":%s,"reason":"commits present, no terminal self-report"}' \
-    "$1" "$2" "$3" "$4" "$5" "$pr_json"
+  jq -nc \
+    --arg base "$1" \
+    --arg head "$2" \
+    --argjson commits "$3" \
+    --arg branch "$4" \
+    --argjson exit_code "$5" \
+    --arg pr "${6:-}" \
+    '{
+      kind: "salvage",
+      base: $base,
+      head: $head,
+      commits: $commits,
+      branch: $branch,
+      exit_code: $exit_code,
+      pr_url: (if $pr == "" then null else $pr end),
+      reason: "commits present, no terminal self-report"
+    }'
 }
 
 # Per-worker logfile for the headless child's stdout/stderr (Gap 1: M-0002
@@ -303,11 +315,15 @@ ensure_cli_agent_on_path() {
 # not fatal). No-op when origin/<default> is already reachable from the local
 # default branch.
 #
-# ponytail: cheap `fetch + merge --ff-only`; a real merge conflict is
-# impossible here because local default was at-or-behind origin/default by
-# construction (we're racing only the cron-pushed merges). If conflict ever
-# appears, the helper returns non-zero and the worker boots on the stale-but-
-# known default — same as today, just with one fewer race window.
+# ponytail: guarded `fetch + merge --ff-only` — checks remote existence,
+# confirms local default is at-or-behind origin/default via ancestry check
+# before merging. When local default is ahead of or diverged from
+# origin/default, merge is skipped entirely (return 0). A real merge
+# conflict is impossible because local default was at-or-behind origin/default
+# by construction (we're racing only the cron-pushed merges). If conflict
+# ever appears (e.g. origin moves between fetch and merge), the helper
+# returns non-zero and the worker boots on the stale-but-known default —
+# same as today, just with one fewer race window.
 fast_forward_main() {
   local repo="$1"
   [ -d "${repo}/.git" ] || return 1
@@ -320,7 +336,8 @@ fast_forward_main() {
   # Fast-forward only when there's actually something to ff: local default
   # must be an ancestor of origin/<default> (i.e., origin has commits we
   # don't). If they're equal or local is ahead, `merge --ff-only` would
-  # refuse — skip.
+  # refuse — skip. This ancestry pre-check also covers the diverged case
+  # (local is not an ancestor of origin), where merge --ff-only would fail.
   git -C "$repo" fetch -q origin "$default_branch" 2>/dev/null || return 1
   if git -C "$repo" merge-base --is-ancestor "$default_branch" "origin/$default_branch" 2>/dev/null; then
     git -C "$repo" merge --ff-only "origin/$default_branch" 2>/dev/null || return 1
@@ -654,9 +671,7 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
     EVIDENCE="headless reconcile: candidate ${ATTEMPT}/${#CMD_CANDIDATES[@]} (${CMD_PARTS[0]}) exited ${AGENT_RC} with ${COMMITS_AHEAD} commit(s) on ${WT_BRANCH} (HEAD ${HEAD_SHA}) but did not self-report; advanced to review (commits salvageable regardless of exit code)."
     bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state review --evidence "$EVIDENCE" >/dev/null 2>&1 || true
     # Structured handoff for the recovery worker/gate (Pattern 1, analysis-1783935600).
-    # ponytail: base/head/branch/pr_url interpolated raw — all are git SHAs/refnames
-    # or a github URL (no `"`/`\`), so JSON stays valid; add jq-escaping only if a
-    # value ever carries those chars. base+head both full SHAs so recovery joins cleanly.
+    # ponytail: base/head/branch/pr_url escaped via jq --arg, safe for any content.
     SALVAGE_JSON="$(salvage_payload_json "$BASELINE_SHA" "$HEAD_FULL" "$COMMITS_AHEAD" "$WT_BRANCH" "$AGENT_RC" "$DISCOVERED_PR")"
     bun "$LEDGER_BIN" event "$CLAIM_ID" note "$SALVAGE_JSON" "${DB_FLAG[@]}" --agent "$WORKER" >/dev/null 2>&1 || true
     capture_scrollback_to_log "$WORKER" "$LOG_FILE"

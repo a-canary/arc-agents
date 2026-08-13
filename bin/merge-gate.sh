@@ -76,7 +76,7 @@ gate_typecheck() {
     skip "typecheck" "no typecheck script in package.json"
     return 0
   fi
-  # ponytail: heal missing node_modules in a fresh worktree; slice=clarify-docs-merge-gate-should-bun-insta
+  # auto-heal: run bun install if node_modules missing in a fresh worktree
   if [ ! -d "$PROJECT/node_modules" ] && ! run_cmd "cd '$PROJECT' && bun install" 180; then
     fail "typecheck" "bun install failed (node_modules missing)"
     return 1

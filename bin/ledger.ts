@@ -798,9 +798,9 @@ switch (cmd) {
     //   pending    blockers whose state is not merged|failed|cancelled
     //   failed     blockers whose state is failed|cancelled
     // A parent with no blocked_by is trivially unblocked+success.
-    // Exit: 0 unblocked / 1 pending / 2 missing-id. Distinct codes let a
-    //   script distinguish "keep waiting" from "id does not exist"; a
-    //   missing id is not a state to wait on.
+    // Exit: 0 unblocked / 1 pending-or-missing-blocker / 2 if <id> itself not found.
+    //   Distinct codes let a script distinguish "keep waiting" from "id does not
+    //   exist"; a missing parent id is not a state to wait on.
     const id = positionalAfterVerb()[0];
     if (!id) {
       process.stderr.write("id required\n");
@@ -2025,7 +2025,7 @@ function printHelp(): void {
   show <id>
   join-status <id>                pure read: is <id> past the dependency barrier?
                                        {id, state, unblocked, success, pending, failed}
-                                       exit 0 unblocked / 1 pending / 2 missing id
+                                       exit 0 unblocked / 1 pending-or-missing-blocker / 2 <id> not found
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue

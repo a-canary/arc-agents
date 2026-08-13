@@ -107,7 +107,19 @@ A parent task creates N child tasks in one atomic write (`ledger decompose <pare
 The Git hard-merge lane. A child worker ships a PR; `.claude/agents/merger.md` runs the gate stack and `gh pr merge --squash --delete-branch` is the canonical land step. Workers do not `gh pr merge` directly. Land is the only path that advances a child to `state=merged` via GitHub's state machine. Distinct from [Join](#join), which is the ledger-side barrier release.
 
 ## Join
-The release of the parent's dependency barrier. A parent is unblocked when every blocker reaches a terminal state: `kind=task` parents require every blocker to be `merged`; `kind=sprint` parents requeue when every blocker is `merged|failed|cancelled`. The work is done by the SQL triggers `unblock_dependents` and `unblock_sprint_parents` (see `src/ledger/migrate.ts:1043-1080`); `ledger tick` is the polling backstop. `ledger join-status <parent>` is the read-only check. Exit 0 means unblocked; 1 means still pending; 2 means missing id. Distinct from [Land](#land), which is the Git merge that changes a child to `state=merged`.
+The release of the parent's dependency barrier. `ledger join-status <parent>` is the read-only check. Returns JSON `{id, state, unblocked, success, pending, failed[, missing]}`.
+
+**Unblocked** (barrier cleared): parent is not `blocked` AND no blockers are pending (ready/claimed/wip/review/blocked) AND no blockers are missing from the database. A parent with zero blockers is unblocked if parent.state !== "blocked" — the barrier is trivially clear, but an explicit `blocked` state still blocks.
+
+**Success** (strict — see `bin/ledger.ts:831` ponytail): all blockers are `merged` AND none are missing AND none failed/cancelled. Strictly stronger than unblocked. A parent with zero blockers: success = unblocked (parent not blocked). A parent blocked by 3 children where 2 merged and 1 failed is *unblocked* (barrier cleared) but NOT *success*. The integration step (parent's merge) is where partial success is handled — refuse, re-claim, or decompose; not in the success computation.
+
+**Missing** blockers: blocker IDs not found in the issues table at all. Prevents both unblocked and success. Catches the case where a blocker was deleted or never created.
+
+Trigger work: the SQL triggers `unblock_dependents` and `unblock_sprint_parents` (see `src/ledger/migrate.ts:1043-1080`) cascade when a child reaches a terminal state; `ledger tick` is the polling backstop.
+
+Exit code: 0 = unblocked; 1 = still pending or missing (stderr includes hint); 2 = parent id itself not found.
+
+Distinct from [Land](#land), which is the Git merge that changes a child to `state=merged`.
 
 ## AXI
 Agent Execution Interface — the `ledger` CLI as a delegation surface arc-skills' `/director` binds to (`task-delegation: arc-agents`) without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render). Full principles and the TOON deviation are documented in [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `docs/AXI.md`, adapted from the published [axi.md](https://axi.md) framework. **Flagged for re-analysis** — the full verb surface (what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then.
@@ -131,17 +143,7 @@ The AXI verb `ledger director-brief --project <P>`: a plain status utility parti
 A plain utility (`src/director/mission-gap.ts`, pure `gaps()`) that diffs a set of goals against ledger state and proposes capped, uncovered-goal gaps. Called by an external driver (`/director`'s gap-analysis step); arc-agents does not run this autonomously itself.
 
 ## Governor
-A standalone token/activity guard (`bin/director-governor.ts`) bound into a caller's loop via the caller's own `AGENTS.md` — knows nothing about "Director" or any owning agent. Gates on `KILL`/`PAUSE` sentinel files (path supplied by the caller, e.g. `<parent-repo>/.arc/director/`) and a **per-repo** weekly token budget (`repoBudget`, also caller-supplied — different repos can declare different budgets).
-
-### Sentinel-file flags
-Sentinel-file flags are the simplest reactive control: `existsSync` of a named file under a caller-supplied directory (`sentinelDir`). No history — they cannot record who set the flag, when, or why. If stateful control (who/when/why provenance) is needed, upgrade to a ledger row instead. Precedence, most severe first:
-1. **KILL** — caller must not run at all (`allowCaller: false`).
-2. **PAUSE** — caller may run but must not spawn ordinary new work (`allowSpawn: false`), except critical-only work (see budget rule below).
-3. **Over budget** — ordinary spawns blocked, but `restrictTo: "critical-only"` lets production-stability/security work continue.
-4. **OK** — run and spawn freely.
-
-### Budget behavior
-Over-budget no longer hard-stops: `restrictTo: "critical-only"` lets production-stability/security work continue while ordinary spawns pause. **Known gap:** the spend figure compared against `repoBudget` is still a host-wide codeburn sum — there is no per-repo token *attribution* yet, only a per-repo *threshold*. Never fails fatally — the shell always exits 0.
+A standalone token/activity guard (`bin/director-governor.ts`) bound into a caller's loop via the caller's own `AGENTS.md` — knows nothing about "Director" or any owning agent. Gates on `KILL`/`PAUSE` sentinel files (path supplied by the caller, e.g. `<parent-repo>/.arc/director/`) and a **per-repo** weekly token budget (`repoBudget`, also caller-supplied — different repos can declare different budgets). Over-budget no longer hard-stops: `restrictTo: "critical-only"` lets production-stability/security work continue while ordinary spawns pause. **Per-repo tracking:** each sentinel dir houses a `WEEKLY_TOKENS` file maintained by the caller with that repo's cumulative weekly spend — the caller increments it via `writeWeeklyTokens()` (or `--record-spend N` on the CLI) after each session, replacing the old host-wide codeburn export. The governor reads the tally via `readWeeklyTokens()` when checking budget before spawning new work. **Per-Director tracking** via `--director-name <name>` (optional): when passed, the governor uses `WEEKLY_TOKENS_<name>` files instead of `WEEKLY_TOKENS`, enabling multiple callers sharing a sentinel dir to track spend independently. The caller writes via `writeWeeklyTokensForDirector()` or `--record-spend N --director-name <name>`. Never fails fatally — the shell always exits 0.
 
 ## Parent repo (mission-driver construct)
 The repo where `/director`'s own state lives (`.arc/director/`) and whose `AGENTS.md` declares which other repos it manages and how (bindings: `task-delegation`, `workspace`, `budget`, etc. — see arc-skills' `/director` SKILL.md). Replaces the earlier vault-rooted "Director Group" (`~/vault/agents/directors/<group>/`) — that path and `directorGroupFromCwd()` were removed; see [ADR-0012](docs/adr/0012-director-agent-axi.md).
