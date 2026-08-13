@@ -118,6 +118,9 @@ The `mode` of a feedback row: `imperative` (an order — fires a direct verb now
 ## author_trust
 The trust class of a feedback row's author: `operator` (trusted — a single row acts) or `product` (untrusted — three distinct submitters needed to corroborate). Keyed on the *author*, not the channel; closes the `source='direct'` degeneracy where any single product row could mint a PRD.
 
+## Feedback Collector
+The grouping tier of the feedback-aggregate pipeline (`collectCategories` in `bin/feedback-aggregate.ts`). A single no-tools MiniMax call that groups a batch of unaggregated feedback rows into thematic categories (label/pattern/ids). On any failure (timeout, unparseable JSON, model crash) it degrades to a single `"general"` category covering all rows — the old batch-level behaviour — so no feedback batch is dropped. See [docs/decisions/feedback-collector-single-minimax-call.md](docs/decisions/feedback-collector-single-minimax-call.md).
+
 ## director-brief
 The AXI verb `ledger director-brief --project <P>`: a plain status utility partitioning git-log, project ledger rows, and open feedback into `done` / `current` / `next` buckets with size hints. Pure module `brief()` in `src/director/director-brief.ts` behind a thin CLI shell. Consumed by [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `/director` — the actual instantiated, event-driven mission-owning agent (12hr cron backstop). arc-agents exposes the data; it does not run the loop.
 
