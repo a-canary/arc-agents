@@ -107,7 +107,19 @@ A parent task creates N child tasks in one atomic write (`ledger decompose <pare
 The Git hard-merge lane. A child worker ships a PR; `.claude/agents/merger.md` runs the gate stack and `gh pr merge --squash --delete-branch` is the canonical land step. Workers do not `gh pr merge` directly. Land is the only path that advances a child to `state=merged` via GitHub's state machine. Distinct from [Join](#join), which is the ledger-side barrier release.
 
 ## Join
-The release of the parent's dependency barrier. A parent is unblocked when every blocker reaches a terminal state: `kind=task` parents require every blocker to be `merged`; `kind=sprint` parents requeue when every blocker is `merged|failed|cancelled`. The work is done by the SQL triggers `unblock_dependents` and `unblock_sprint_parents` (see `src/ledger/migrate.ts:1043-1080`); `ledger tick` is the polling backstop. `ledger join-status <parent>` is the read-only check. Exit 0 means unblocked; 1 means still pending; 2 means missing id. Distinct from [Land](#land), which is the Git merge that changes a child to `state=merged`.
+The release of the parent's dependency barrier. `ledger join-status <parent>` is the read-only check. Returns JSON `{id, state, unblocked, success, pending, failed[, missing]}`.
+
+**Unblocked** (barrier cleared): parent is not `blocked` AND no blockers are pending (ready/claimed/wip/review/blocked) AND no blockers are missing from the database. A parent with zero blockers is trivially unblocked.
+
+**Success** (strict — see `bin/ledger.ts:831` ponytail): all blockers are `merged` AND none are missing AND none failed/cancelled. Strictly stronger than unblocked. A parent blocked by 3 children where 2 merged and 1 failed is *unblocked* (barrier cleared) but NOT *success*. The integration step (parent's merge) is where partial success is handled — refuse, re-claim, or decompose; not in the success computation.
+
+**Missing** blockers: blocker IDs not found in the issues table at all. Prevents both unblocked and success. Catches the case where a blocker was deleted or never created.
+
+Trigger work: the SQL triggers `unblock_dependents` and `unblock_sprint_parents` (see `src/ledger/migrate.ts:1043-1080`) cascade when a child reaches a terminal state; `ledger tick` is the polling backstop.
+
+Exit code: 0 = unblocked; 1 = still pending or missing (stderr includes hint); 2 = parent id itself not found.
+
+Distinct from [Land](#land), which is the Git merge that changes a child to `state=merged`.
 
 ## AXI
 Agent Execution Interface — the `ledger` CLI as a delegation surface arc-skills' `/director` binds to (`task-delegation: arc-agents`) without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render). Full principles and the TOON deviation are documented in [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `docs/AXI.md`, adapted from the published [axi.md](https://axi.md) framework. **Flagged for re-analysis** — the full verb surface (what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then.
