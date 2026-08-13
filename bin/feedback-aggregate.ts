@@ -12,6 +12,10 @@
 // category). Below the threshold the planner is never spawned and that category's
 // feedback stays 'new' for a future run. Trust tier is binary (isTrusted); see fb-qupj.
 //
+// Design note: a null submitter counts as its own distinct source (keyed by `id:${r.id}`)
+// so anonymous public feedback can still corroborate. Anti-spam ceiling is rate-limiting
+// at the /feedback intake boundary, not here — 3 anonymous rows could be one person.
+//
 //   feedback-aggregate.ts [--project P] [--limit N] [--validate-stale]
 //
 // Two-pass stale/superseded flow (this slice):
@@ -111,9 +115,10 @@ export function isTrusted(source: string, author_trust?: string | null): boolean
 // The Proposal Generator only drafts when a theme is corroborated: 1 trusted voice,
 // or 3 DISTINCT untrusted submitters. Distinct-by-submitter stops one untrusted voice
 // spamming N rows to fake confirmation.
-// ponytail: a null submitter counts as its own distinct source so anonymous public
-// feedback can still corroborate; the anti-spam ceiling is rate-limiting at intake,
-// not here (3 anonymous rows could be one person — tighten at the /feedback boundary).
+//
+// Design note: a null submitter counts as its own distinct source (keyed by `id:${r.id}`)
+// so anonymous public feedback can still corroborate. Anti-spam ceiling is rate-limiting
+// at the /feedback intake boundary, not here — 3 anonymous rows could be one person.
 export function confirmsProposal(rows: FeedbackRow[]): {
   confirmed: boolean;
   trusted: number;
