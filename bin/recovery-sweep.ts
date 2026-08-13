@@ -15,7 +15,10 @@ export function commandFor(alias: string): string {
   const r = spawnSync(["bun", `${REPO}bin/ledger.ts`, "alias-cmd", alias]);
   const first = new TextDecoder().decode(r.stdout).split("\n").find((l) => l.trim());
   if (r.exitCode !== 0 || !first) throw new Error(`alias-cmd failed for '${alias}'`);
-  // ponytail: probe only the first candidate — one candidate alive = alias produces work
+  // Probe only the first alias-cmd candidate: if one engine responds, the alias
+  // produces work and all blocked rows for this alias flip to ready. Skipping
+  // remaining candidates avoids redundant probing per row. See the module-level
+  // doc in src/ledger/recovery-sweep.ts (Probe strategy design note).
   return first.replace("{prompt}", "'reply with exactly: ok'");
 }
 
