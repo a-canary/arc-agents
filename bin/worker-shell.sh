@@ -315,11 +315,15 @@ ensure_cli_agent_on_path() {
 # not fatal). No-op when origin/<default> is already reachable from the local
 # default branch.
 #
-# ponytail: cheap `fetch + merge --ff-only`; a real merge conflict is
-# impossible here because local default was at-or-behind origin/default by
-# construction (we're racing only the cron-pushed merges). If conflict ever
-# appears, the helper returns non-zero and the worker boots on the stale-but-
-# known default — same as today, just with one fewer race window.
+# ponytail: guarded `fetch + merge --ff-only` — checks remote existence,
+# confirms local default is at-or-behind origin/default via ancestry check
+# before merging. When local default is ahead of or diverged from
+# origin/default, merge is skipped entirely (return 0). A real merge
+# conflict is impossible because local default was at-or-behind origin/default
+# by construction (we're racing only the cron-pushed merges). If conflict
+# ever appears (e.g. origin moves between fetch and merge), the helper
+# returns non-zero and the worker boots on the stale-but-known default —
+# same as today, just with one fewer race window.
 fast_forward_main() {
   local repo="$1"
   [ -d "${repo}/.git" ] || return 1
@@ -332,7 +336,8 @@ fast_forward_main() {
   # Fast-forward only when there's actually something to ff: local default
   # must be an ancestor of origin/<default> (i.e., origin has commits we
   # don't). If they're equal or local is ahead, `merge --ff-only` would
-  # refuse — skip.
+  # refuse — skip. This ancestry pre-check also covers the diverged case
+  # (local is not an ancestor of origin), where merge --ff-only would fail.
   git -C "$repo" fetch -q origin "$default_branch" 2>/dev/null || return 1
   if git -C "$repo" merge-base --is-ancestor "$default_branch" "origin/$default_branch" 2>/dev/null; then
     git -C "$repo" merge --ff-only "origin/$default_branch" 2>/dev/null || return 1
