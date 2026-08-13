@@ -80,10 +80,9 @@ If rebase aborts with conflicts:
 
 ### Step 4 — Run hard pre-merge gate
 
-If the worktree was just created or hasn't been touched in >24h, run `bun install` first. Without it, `merge-gate.sh` may produce phantom typecheck failures (`tsc: command not found`) and stale test results — making a clean diff look broken when the cause is purely environmental.
+`merge-gate.sh` auto-heals missing `node_modules` during the typecheck gate (runs `bun install` if `node_modules` is absent). Manual `bun install` before the gate is an optional pre-warm, not a hard requirement. If you run it, the typecheck gate skips the install step.
 
 ```bash
-bun install
 bin/pre-merge.sh --base origin/main --pr <num>
 ```
 
