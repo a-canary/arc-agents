@@ -9,23 +9,15 @@
 // never-fatal CLI shell that always `process.exit(0)` — a governor must not
 // crash the thing it guards.
 //
-// KNOWN GAP: codeburn exposes only a HOST-WIDE weekly token sum — there is no
-// per-repo attribution today. So `repoBudget` below is a real per-repo
-// threshold, but `tokensThisWeek` is still the host-wide spend compared
-// against it. Two repos with different budgets will trip at different
-// thresholds, but neither sees its own isolated spend yet. Fix requires
-// tagging spend by repo/session at the source — tracked as a follow-up, not
-// solved here.
+// Per-repo attribution: each sentinel dir houses a WEEKLY_TOKENS file (or
+// WEEKLY_TOKENS_<director-name> file when --director-name is passed) that
+// the caller (e.g. a Director binding) maintains with that repo's cumulative
+// weekly spend. The caller increments the tally after each session based on
+// its own token accounting — this file knows nothing about how tokens are
+// counted, only how to read the tally. Per-Director naming enables multiple
+// callers sharing a sentinel dir to track spend independently.
 
-import { spawnSync } from "node:child_process";
-import {
-  existsSync,
-  writeFileSync,
-  readFileSync,
-  unlinkSync,
-  mkdtempSync,
-} from "node:fs";
-import { tmpdir } from "node:os";
+import { existsSync, readFileSync, writeFileSync } from "node:fs";
 import { join } from "node:path";
 
 // ── Shape types ──────────────────────────────────────────────────────────────
@@ -33,7 +25,7 @@ import { join } from "node:path";
 export interface GovernorState {
   killed: boolean; // kill flag present
   paused: boolean; // pause flag present
-  tokensThisWeek: number; // host-wide spend in the current week (see KNOWN GAP above)
+  tokensThisWeek: number; // per-repo weekly spend (read from WEEKLY_TOKENS under sentinelDir)
   repoBudget: number; // this repo's weekly cap, supplied by the caller's AGENTS.md binding
 }
 
@@ -78,17 +70,32 @@ export function governor(state: GovernorState): GovernorVerdict {
 export interface ResolveOpts {
   sentinelDir: string; // caller-supplied dir for KILL/PAUSE files (e.g. <parent-repo>/.arc/director/)
   repoBudget: number;
-  tokensThisWeek: number;
+  directorName?: string; // optional director name for per-Director token attribution
+  /**
+   * @deprecated Use directorName instead. resolveState now resolves tokens itself.
+   * If provided, this value is used literally and directorName-based per-director
+   * resolution is skipped.
+   */
+  tokensThisWeek?: number;
 }
 
 // ponytail: sentinel-file flags are the simplest reactive control — `existsSync`
 // of a file under a caller-supplied directory. Upgrade to a ledger row if you
 // need history (who set it, when, why).
 export function resolveState(opts: ResolveOpts): GovernorState {
+  // Resolve token tally: explicit tokensThisWeek override, per-director file,
+  // or shared WEEKLY_TOKENS file. This makes per-director tracking automatic
+  // — callers need only pass directorName, not pre-resolve the token path.
+  const tokensThisWeek =
+    opts.tokensThisWeek !== undefined
+      ? opts.tokensThisWeek
+      : opts.directorName
+        ? readWeeklyTokensForDirectorImpl(opts.sentinelDir, opts.directorName)
+        : readWeeklyTokens(opts.sentinelDir);
   return {
     killed: existsSync(join(opts.sentinelDir, "KILL")),
     paused: existsSync(join(opts.sentinelDir, "PAUSE")),
-    tokensThisWeek: opts.tokensThisWeek,
+    tokensThisWeek,
     repoBudget: opts.repoBudget,
   };
 }
@@ -96,113 +103,152 @@ export function resolveState(opts: ResolveOpts): GovernorState {
 // Sensible default per-repo weekly cap (tokens) when --weekly-budget absent.
 export const DEFAULT_WEEKLY_BUDGET = 50_000_000;
 
-// ── codeburn weekly token sum (best-effort; never fatal) ──────────────────────
+// ── Per-repo / per-Director weekly token tally (file-based; never fatal) ────
+// The caller maintains a WEEKLY_TOKENS file (or WEEKLY_TOKENS_<director-name>
+// when --director-name is passed) under the sentinel dir with the cumulative
+// token spend for that repo / director this week. This replaces the old
+// host-wide codeburn export — each repo now tracks its own spend independently,
+// and optionally per-Director for attribution within a shared sentinel dir.
+//
+// The caller can record spend via `writeWeeklyTokens()` / `writeWeeklyTokensForDirector()`
+// (or `--record-spend N` on the CLI) after each session. The governor reads
+// the tally via `readWeeklyTokens()` / `readWeeklyTokensForDirector()` when
+// checking budget before spawning new work.
 
-interface ModelRow {
-  "Input Tokens"?: number;
-  "Output Tokens"?: number;
-  "Cache Read Tokens"?: number;
-  "Cache Write Tokens"?: number;
-}
-interface PeriodEntry {
-  label?: string;
-  Period?: string;
-  models?: ModelRow[];
-}
-interface CodeburnExport {
-  periods?: PeriodEntry[];
-}
-
-// ponytail: per-Director attribution is hard — tokens aren't tagged by director.
-// This uses the HOST-WIDE weekly token sum as the bound. Upgrade to per-Director
-// attribution if/when tokens carry a director tag.
-export function computeWeeklyTokens(exportJson: unknown): number {
-  const safe = exportJson as CodeburnExport | null | undefined;
-  if (!safe || !Array.isArray(safe.periods)) return 0;
-  const week = safe.periods.find((p) => (p.label ?? p.Period) === "7 Days");
-  if (!week || !Array.isArray(week.models)) return 0;
-  return week.models.reduce(
-    (acc, r) =>
-      acc +
-      (r["Input Tokens"] ?? 0) +
-      (r["Output Tokens"] ?? 0) +
-      (r["Cache Read Tokens"] ?? 0) +
-      (r["Cache Write Tokens"] ?? 0),
-    0,
-  );
+// Returns the token-filename (base name) for a given sentinel dir, optionally
+// scoped to a director name. Internal helper, exported for testing.
+export function weeklyTokensFileName(directorName?: string): string {
+  return directorName ? `WEEKLY_TOKENS_${directorName}` : "WEEKLY_TOKENS";
 }
 
-// Shell out to codeburn for the weekly token sum. Returns 0 on any failure —
-// codeburn-unavailable must never block the Director.
-function readWeeklyTokens(): number {
-  const tmpDir = process.env.CLAUDE_JOB_DIR ?? mkdtempSync(join(tmpdir(), "director-governor-"));
-  const outFile = join(tmpDir, `codeburn-export-${Date.now()}.json`);
-  const codeburnBin = "/usr/local/lib/node_modules/node/bin/codeburn";
-
-  let exportText: string | null = null;
-  for (const bin of ["codeburn", codeburnBin]) {
-    const result = spawnSync(
-      bin,
-      ["export", "--format", "json", "--output", outFile],
-      { encoding: "utf8" },
-    );
-    if (result.status === 0) {
-      try {
-        exportText = readFileSync(outFile, "utf8");
-      } catch {
-        // File not written despite exit 0 — treat as no data.
-      }
-      break;
-    }
-  }
+export function readWeeklyTokens(sentinelDir: string): number {
+  const tokenFile = join(sentinelDir, "WEEKLY_TOKENS");
   try {
-    unlinkSync(outFile);
+    const content = readFileSync(tokenFile, "utf8").trim();
+    if (content === "") return 0;
+    const n = Number(content);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
   } catch {
-    // Best-effort cleanup.
+    // File absent or unreadable — no spend recorded yet. Never fatal.
+    return 0;
   }
+}
 
-  if (!exportText || exportText.trim() === "") return 0;
+// Record additional token spend to the per-repo WEEKLY_TOKENS tally.
+// Reads the current value (0 if absent), adds `tokens`, and writes back.
+// Returns the new cumulative total, or NaN on failure (caller should treat
+// as non-fatal).
+export function writeWeeklyTokens(sentinelDir: string, tokens: number): number {
+  if (!Number.isFinite(tokens) || tokens < 0) return NaN;
+  const current = readWeeklyTokens(sentinelDir);
+  const next = current + Math.floor(tokens);
   try {
-    return computeWeeklyTokens(JSON.parse(exportText));
+    writeFileSync(join(sentinelDir, "WEEKLY_TOKENS"), String(next), "utf8");
+    return next;
+  } catch {
+    return NaN;
+  }
+}
+
+// ── Per-Director token tracking ──────────────────────────────────────────────
+// ponytail: per-Director attribution via WEEKLY_TOKENS_<name> files. Each
+// director caller supplies --director-name <name> and gets an independent
+// token tally within the shared sentinel dir. The governor reads THAT tally
+// when checking budget, enabling per-Director accounting within a repo.
+
+// Internal: read per-Director token tally from file. Returns 0 if absent/unreadable.
+function readWeeklyTokensForDirectorImpl(sentinelDir: string, directorName: string): number {
+  const tokenFile = join(sentinelDir, weeklyTokensFileName(directorName));
+  try {
+    const content = readFileSync(tokenFile, "utf8").trim();
+    if (content === "") return 0;
+    const n = Number(content);
+    return Number.isFinite(n) && n >= 0 ? Math.floor(n) : 0;
   } catch {
     return 0;
   }
 }
 
+// Read a per-Director token tally. Returns 0 if file absent or unreadable.
+// Falls back to shared WEEKLY_TOKENS when directorName is empty.
+export function readWeeklyTokensForDirector(sentinelDir: string, directorName: string): number {
+  if (!directorName) return readWeeklyTokens(sentinelDir);
+  return readWeeklyTokensForDirectorImpl(sentinelDir, directorName);
+}
+
+// Record additional token spend to a per-Director WEEKLY_TOKENS_<name> tally.
+// Returns the new cumulative total, or NaN on failure.
+export function writeWeeklyTokensForDirector(sentinelDir: string, directorName: string, tokens: number): number {
+  if (!directorName) return writeWeeklyTokens(sentinelDir, tokens);
+  if (!Number.isFinite(tokens) || tokens < 0) return NaN;
+  const current = readWeeklyTokensForDirector(sentinelDir, directorName);
+  const next = current + Math.floor(tokens);
+  try {
+    writeFileSync(join(sentinelDir, weeklyTokensFileName(directorName)), String(next), "utf8");
+    return next;
+  } catch {
+    return NaN;
+  }
+}
+
 // ── Flag parsing ──────────────────────────────────────────────────────────────
 
-function parseArgs(argv: string[]): { sentinelDir: string; weeklyBudget: number } {
+function parseArgs(argv: string[]): { sentinelDir: string; weeklyBudget: number; recordSpend: number; directorName: string } {
   let sentinelDir = "";
   let weeklyBudget = DEFAULT_WEEKLY_BUDGET;
+  let recordSpend = -1;
+  let directorName = "";
   for (let i = 0; i < argv.length; i++) {
     if (argv[i] === "--sentinel-dir") sentinelDir = argv[++i] ?? "";
     else if (argv[i] === "--weekly-budget") {
       const n = Number(argv[++i]);
       if (Number.isFinite(n)) weeklyBudget = n;
+    } else if (argv[i] === "--record-spend") {
+      const n = Number(argv[++i]);
+      if (Number.isFinite(n) && n >= 0) recordSpend = n;
+    } else if (argv[i] === "--director-name") {
+      directorName = argv[++i] ?? "";
     }
   }
-  return { sentinelDir, weeklyBudget };
+  return { sentinelDir, weeklyBudget, recordSpend, directorName };
 }
 
 // ── Main (thin, never-fatal) ──────────────────────────────────────────────────
 
 if (import.meta.main) {
   try {
-    const { sentinelDir, weeklyBudget } = parseArgs(process.argv.slice(2));
+    const { sentinelDir, weeklyBudget, recordSpend, directorName } = parseArgs(process.argv.slice(2));
     if (!sentinelDir) {
       console.log(
-        "[governor] usage: director-governor --sentinel-dir <path> [--weekly-budget N]",
+        "[governor] usage: director-governor --sentinel-dir <path> [--weekly-budget N] [--record-spend N] [--director-name <name>]",
       );
+      process.exit(0);
+    }
+    // Record-only mode: write spend and exit without checking budget.
+    if (recordSpend >= 0) {
+      if (directorName) {
+        const total = writeWeeklyTokensForDirector(sentinelDir, directorName, recordSpend);
+        const tokenFile = weeklyTokensFileName(directorName);
+        if (Number.isFinite(total)) {
+          console.log(`[governor] recorded ${recordSpend} tokens to ${sentinelDir}/${tokenFile} (cumulative ${total})`);
+        }
+      } else {
+        const total = writeWeeklyTokens(sentinelDir, recordSpend);
+        if (Number.isFinite(total)) {
+          console.log(`[governor] recorded ${recordSpend} tokens to ${sentinelDir}/WEEKLY_TOKENS (cumulative ${total})`);
+        }
+      }
       process.exit(0);
     }
     const state = resolveState({
       sentinelDir,
       repoBudget: weeklyBudget,
-      tokensThisWeek: readWeeklyTokens(),
+      directorName: directorName || undefined,
     });
     const verdict = governor(state);
+    const tag = directorName ? `${sentinelDir} (director=${directorName})` : sentinelDir;
     console.log(
-      `[governor] ${sentinelDir}: caller=${verdict.allowCaller} spawn=${verdict.allowSpawn}` +
+      `[governor] ${tag}: caller=${verdict.allowCaller} spawn=${verdict.allowSpawn}` +
         `${verdict.restrictTo ? ` restrict=${verdict.restrictTo}` : ""} (${verdict.reason})`,
     );
   } catch {

@@ -143,17 +143,7 @@ The AXI verb `ledger director-brief --project <P>`: a plain status utility parti
 A plain utility (`src/director/mission-gap.ts`, pure `gaps()`) that diffs a set of goals against ledger state and proposes capped, uncovered-goal gaps. Called by an external driver (`/director`'s gap-analysis step); arc-agents does not run this autonomously itself.
 
 ## Governor
-A standalone token/activity guard (`bin/director-governor.ts`) bound into a caller's loop via the caller's own `AGENTS.md` — knows nothing about "Director" or any owning agent. Gates on `KILL`/`PAUSE` sentinel files (path supplied by the caller, e.g. `<parent-repo>/.arc/director/`) and a **per-repo** weekly token budget (`repoBudget`, also caller-supplied — different repos can declare different budgets).
-
-### Sentinel-file flags
-Sentinel-file flags are the simplest reactive control: `existsSync` of a named file under a caller-supplied directory (`sentinelDir`). No history — they cannot record who set the flag, when, or why. If stateful control (who/when/why provenance) is needed, upgrade to a ledger row instead. Precedence, most severe first:
-1. **KILL** — caller must not run at all (`allowCaller: false`).
-2. **PAUSE** — caller may run but must not spawn ordinary new work (`allowSpawn: false`), except critical-only work (see budget rule below).
-3. **Over budget** — ordinary spawns blocked, but `restrictTo: "critical-only"` lets production-stability/security work continue.
-4. **OK** — run and spawn freely.
-
-### Budget behavior
-Over-budget no longer hard-stops: `restrictTo: "critical-only"` lets production-stability/security work continue while ordinary spawns pause. **Known gap:** the spend figure compared against `repoBudget` is still a host-wide codeburn sum — there is no per-repo token *attribution* yet, only a per-repo *threshold*. Never fails fatally — the shell always exits 0.
+A standalone token/activity guard (`bin/director-governor.ts`) bound into a caller's loop via the caller's own `AGENTS.md` — knows nothing about "Director" or any owning agent. Gates on `KILL`/`PAUSE` sentinel files (path supplied by the caller, e.g. `<parent-repo>/.arc/director/`) and a **per-repo** weekly token budget (`repoBudget`, also caller-supplied — different repos can declare different budgets). Over-budget no longer hard-stops: `restrictTo: "critical-only"` lets production-stability/security work continue while ordinary spawns pause. **Per-repo tracking:** each sentinel dir houses a `WEEKLY_TOKENS` file maintained by the caller with that repo's cumulative weekly spend — the caller increments it via `writeWeeklyTokens()` (or `--record-spend N` on the CLI) after each session, replacing the old host-wide codeburn export. The governor reads the tally via `readWeeklyTokens()` when checking budget before spawning new work. **Per-Director tracking** via `--director-name <name>` (optional): when passed, the governor uses `WEEKLY_TOKENS_<name>` files instead of `WEEKLY_TOKENS`, enabling multiple callers sharing a sentinel dir to track spend independently. The caller writes via `writeWeeklyTokensForDirector()` or `--record-spend N --director-name <name>`. Never fails fatally — the shell always exits 0.
 
 ## Parent repo (mission-driver construct)
 The repo where `/director`'s own state lives (`.arc/director/`) and whose `AGENTS.md` declares which other repos it manages and how (bindings: `task-delegation`, `workspace`, `budget`, etc. — see arc-skills' `/director` SKILL.md). Replaces the earlier vault-rooted "Director Group" (`~/vault/agents/directors/<group>/`) — that path and `directorGroupFromCwd()` were removed; see [ADR-0012](docs/adr/0012-director-agent-axi.md).
