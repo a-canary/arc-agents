@@ -109,9 +109,9 @@ The Git hard-merge lane. A child worker ships a PR; `.claude/agents/merger.md` r
 ## Join
 The release of the parent's dependency barrier. `ledger join-status <parent>` is the read-only check. Returns JSON `{id, state, unblocked, success, pending, failed[, missing]}`.
 
-**Unblocked** (barrier cleared): parent is not `blocked` AND no blockers are pending (ready/claimed/wip/review/blocked) AND no blockers are missing from the database. A parent with zero blockers is trivially unblocked.
+**Unblocked** (barrier cleared): parent is not `blocked` AND no blockers are pending (ready/claimed/wip/review/blocked) AND no blockers are missing from the database. A parent with zero blockers is unblocked if parent.state !== "blocked" — the barrier is trivially clear, but an explicit `blocked` state still blocks.
 
-**Success** (strict — see `bin/ledger.ts:831` ponytail): all blockers are `merged` AND none are missing AND none failed/cancelled. Strictly stronger than unblocked. A parent blocked by 3 children where 2 merged and 1 failed is *unblocked* (barrier cleared) but NOT *success*. The integration step (parent's merge) is where partial success is handled — refuse, re-claim, or decompose; not in the success computation.
+**Success** (strict — see `bin/ledger.ts:831` ponytail): all blockers are `merged` AND none are missing AND none failed/cancelled. Strictly stronger than unblocked. A parent with zero blockers: success = unblocked (parent not blocked). A parent blocked by 3 children where 2 merged and 1 failed is *unblocked* (barrier cleared) but NOT *success*. The integration step (parent's merge) is where partial success is handled — refuse, re-claim, or decompose; not in the success computation.
 
 **Missing** blockers: blocker IDs not found in the issues table at all. Prevents both unblocked and success. Catches the case where a blocker was deleted or never created.
 
