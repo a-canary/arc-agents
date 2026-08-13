@@ -122,10 +122,13 @@ Path: `~/agents/skills/governance/choose-wisely/SKILL.md`. Purpose: iterate `CHO
 ### D-0002: Knowledge Engine
 `~/vault/ke/` — FTS5 + Qdrant. Deprecated `~/kb/`.
 
-### D-0003: Per-Role State
+### D-0003: Stdlib-Only Parsing (No jq/Python Dependencies)
+All shell-level data extraction in skills and scripts MUST use POSIX stdlib tools (awk, sed, grep, tr, sort, cut). Do NOT introduce jq, python, or other non-stdlib dependencies. Rationale: awk is available on every Unix without additional packages — no npm install, no pip install, no apt-get. This eliminates a class of "command not found" failures at factory scale. Violations should be flagged in review. See `skills/analyse-recent-sessions/SKILL.md` for two approved awk instances.
+
+### D-0004: Per-Role State
 `~/vault/agents/<role>/` — memory.md, inbox/, journal/, outbox/.
 
-### D-0004: Scratch
+### D-0005: Scratch
 `~/vault/scratch/<slug>/` — prototype outputs. Not in `~/repos/` or `~/worktrees/`.
 
 ---
