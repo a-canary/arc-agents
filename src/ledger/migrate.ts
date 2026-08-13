@@ -1133,14 +1133,11 @@ export const migrations: Migration[] = [
     // Idempotent: CREATE for fresh DBs, then ALTER-ADD any column a prior writer's
     // table lacked (arc-webui bootstraps its own subset via CREATE IF NOT EXISTS, so
     // this table may pre-exist with fewer columns).
-    // ponytail: source is a free string, not CHECK'd. The CONTEXT.md domain model says
-    // source == trust tier (end-user-untrusted|...|mission) but arc-webui's form writes
-    // channels (direct|public|github). Unifying that vocabulary is the gated L1 domain
-    // migration — add a CHECK (and/or a separate channel column) once it's decided.
-    // fb-qupj RESOLVED (2026-06-22): the Proposal confirmation gate maps the channel to
-    // a binary trust tier in code (feedback-aggregate.ts isTrusted — direct/mission/
-    // operator = trusted, rest = untrusted). The schema CHECK / separate channel column
-    // stays deferred: the gate reads the free-string source directly, no migration needed.
+    // ponytail: source is a free string, not CHECK'd. It is a free-string channel
+    // identifier (direct|public|github|ai-agent or whatever the writer emits). See
+    // CONTEXT.md §Feedback. The trust tier is a separate column: author_trust (025).
+    // Adding a CHECK or a separate channel column is the gated L1 domain migration;
+    // stays deferred: the code reads the free-string source directly, no migration needed.
     up: (db) => {
       db.exec(`
         CREATE TABLE IF NOT EXISTS feedback (

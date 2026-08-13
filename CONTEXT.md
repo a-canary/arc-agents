@@ -112,6 +112,9 @@ The release of the parent's dependency barrier. A parent is unblocked when every
 ## AXI
 Agent Execution Interface — the `ledger` CLI as a delegation surface arc-skills' `/director` binds to (`task-delegation: arc-agents`) without depending on this repo being operational. Workers and any UI read and write work only through `ledger <verb>`; non-TTY output is JSON by default (`--csv`/`--md` opt-in render). Full principles and the TOON deviation are documented in [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `docs/AXI.md`, adapted from the published [axi.md](https://axi.md) framework. **Flagged for re-analysis** — the full verb surface (what's stable-contract vs internal) needs its own PRD pass; treat as provisional until then.
 
+## Feedback
+A row in the `feedback` table representing user-submitted intake for the self-guided portal. Written by two sources: arc-webui's */feedback* form and the agent friction CLI. Columns shared across writers include `source` (free-string channel identifier — `direct`, `public`, `github`, `ai-agent`, or arbitrary values; no CHECK constraint, preserving the union of what both writers emit), `submitter`, `body_md`, `theme_id`, and `project`. The trust tier of a feedback row is *not* `source` — it is the `author_trust` column (see below). See migration `022_feedback_table` and `025_feedback_mode_author_trust` in `src/ledger/migrate.ts`.
+
 ## Steering Mode
 The `mode` of a feedback row: `imperative` (an order — fires a direct verb now) or `hypothesis` (a guess — validated on one concrete case before any scale). NULL is unstamped and treated as a hypothesis. Classified from the input by the pure `parse()` (a leading `!` ⇒ imperative).
 
