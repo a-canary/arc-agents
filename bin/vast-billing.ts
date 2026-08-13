@@ -99,14 +99,18 @@ function readSpend(instance: string): Spend | null {
   if (!existsSync(p)) return null;
   try { return JSON.parse(readFileSync(p, "utf8")) as Spend; } catch { return null; }
 }
+// Write spend.json via atomic temp+rename (not a lock).
+//  1. Write to a PID-unique .tmp file on the same filesystem.
+//  2. renameSync(tmp, target) is atomic per POSIX: zero-risk of partial read.
+//  3. No lock needed — one writer per instance is the contract.
+//     - cmdRecordEstimate: runs once at acquire time, per instance.
+//     - reconcileForInstance: low-freq (periodic audit), serialized at that level.
+//  Cf. overwriteLease() in vast-lease.ts — same idiom, same assumptions.
+// ponytail: temp+rename, not lock — justified by single-writer-per-instance premise.
 function writeSpend(s: Spend): void {
   const p = spendPath(s.instance);
   const tmp = `${p}.${process.pid}.${Date.now()}.tmp`;
   writeFileSync(tmp, JSON.stringify(s, null, 2));
-  // Atomic-ish: rename (same filesystem), then write-through.
-  // ponytail: temp+rename, not lock — same idiom as vast-lease; one writer per
-  // instance is the contract (reconcile is low-freq, record-estimate is at
-  // acquire time only).
   const fs = require("fs") as typeof import("fs");
   fs.renameSync(tmp, p);
 }
