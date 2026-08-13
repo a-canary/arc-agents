@@ -103,6 +103,9 @@ A worker's escalation of a decision outside its scope, a risky action, or a bloc
 ## Fanout
 A parent task creates N child tasks in one atomic write (`ledger decompose <parent> --child ...`). The children run in parallel; the parent re-claims once every blocker reaches a terminal state. The fanout cap is 5 children per call; for more, decompose recursively. Children inherit the parent's `type` and `pool` (with per-child override available via JSON `--child`).
 
+## Gate Stamp
+The metadata block appended to `body_md` by `bin/gate-triage.ts` when it classifies a PRD or task as human-gate or auto-approve. The stamp is an HTML comment marker (`<!-- gate-triage -->`) followed by a Markdown block quoting the opus verdict, allowed-tools list (for auto), and a risky-move escalation rule (for auto). Stamped rows are skipped on re-triage (the SELECT arm excludes rows whose `body_md` matches the stamp marker). No schema column exists for the verdict — it lives in `body_md` by design, avoiding a schema migration for a purely operational annotation. See the ponytail at `bin/gate-triage.ts:15`. Contrast: [Ponytail](#ponytail) is the debt marker; Gate Stamp is the mechanism.
+
 ## Land
 The Git hard-merge lane. A child worker ships a PR; `.claude/agents/merger.md` runs the gate stack and `gh pr merge --squash --delete-branch` is the canonical land step. Workers do not `gh pr merge` directly. Land is the only path that advances a child to `state=merged` via GitHub's state machine. Distinct from [Join](#join), which is the ledger-side barrier release.
 
