@@ -121,6 +121,9 @@ The trust class of a feedback row's author: `operator` (trusted — a single row
 ## Feedback Collector
 The grouping tier of the feedback-aggregate pipeline (`collectCategories` in `bin/feedback-aggregate.ts`). A single no-tools MiniMax call that groups a batch of unaggregated feedback rows into thematic categories (label/pattern/ids). On any failure (timeout, unparseable JSON, model crash) it degrades to a single `"general"` category covering all rows — the old batch-level behaviour — so no feedback batch is dropped. See [docs/decisions/feedback-collector-single-minimax-call.md](docs/decisions/feedback-collector-single-minimax-call.md).
 
+## Proposal Corroboration
+The gate that determines whether a candidate theme has enough evidence to trigger the Proposal Generator (`confirmsProposal` in `bin/feedback-aggregate.ts`). One trusted voice (author_trust=operator) or three distinct untrusted submitters are required. Distinctness is computed on the submitter field: a null submitter counts as its own distinct key (formatted as `id:<row-id>`), so anonymous public feedback can still corroborate. The anti-spam ceiling is rate-limiting at intake, not here — three anonymous rows could be one person, but the aggregation tier defers that check to the /feedback boundary. See `isTrusted()` and `confirmsProposal()` in `bin/feedback-aggregate.ts`.
+
 ## director-brief
 The AXI verb `ledger director-brief --project <P>`: a plain status utility partitioning git-log, project ledger rows, and open feedback into `done` / `current` / `next` buckets with size hints. Pure module `brief()` in `src/director/director-brief.ts` behind a thin CLI shell. Consumed by [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `/director` — the actual instantiated, event-driven mission-owning agent (12hr cron backstop). arc-agents exposes the data; it does not run the loop.
 
