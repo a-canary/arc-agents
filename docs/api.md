@@ -289,6 +289,91 @@ the agent session.
 
 ---
 
+## CLI Entry Points
+
+### `bin/n.ts` (plan-agent)
+
+The L6 Planning Agent (ADR-0010). Spawned as a detached subprocess by
+arc-webui `/chat`. Turns a free-text developer request into a structured PRD
+with decomposed tracer slices, emitted through the deterministic `plan.ts`
+gate-writer.
+
+```sh
+bun bin/n.ts --request "<text>" [--thread T] [--project P]
+```
+
+**Project sibling convention.** The planning agent resolves target repos as
+siblings of arc-agents (i.e., `../<project>/` relative to the arc-agents root).
+`groundingFor()` reads `../<project>/CONTEXT.md` for per-project glossary
+context. If the file is missing (repo not checked out, wrong name, etc.) the
+function degrades gracefully to a baked fallback context — it never throws.
+This soft-degrade design keeps the planner resilient: a missing repo directory
+produces a thinner but still functional plan rather than failing the whole
+request.
+
+**Resolve chain.** `resolveProjectRepo()` (in `src/project-repo-map.ts`)
+follows: `ARC_PROJECT_REPO_<UPPER>` env override → `PROJECT_REPO_MAP` →
+`~/repos/<project>` → null. The sibling `../<project>` path is only used by
+`groundingFor()` in the prompt-building hot path, not by the repo resolver.
+
+---
+
+## TypeScript Exported Functions
+
+### `bin/n.ts`
+
+```ts
+export function groundingFor(project: string): string
+```
+Per-project grounding for the planner prompt. Resolves `../<project>/CONTEXT.md`
+as a sibling directory of arc-agents. Falls back to a baked arc-webui context
+or a neutral reversible-first context. Missing file degrades gracefully (never
+throws — the `catch {}` absorbs ENOENT/EISDIR/etc.).
+
+```ts
+export function resolveProjectRepo(project: string | null | undefined): string | null
+```
+Resolve a project name to an absolute local repo path. Precedence: env override
+→ `PROJECT_REPO_MAP` → `~/repos/<project>` → null. Returns null if no candidate
+exists on disk; callers fall back to `process.cwd()`.
+
+```ts
+export function buildPlanningPrompt(
+  request: string,
+  context: string,
+  project?: string,
+  existingPrdIds?: readonly string[],
+): string
+```
+Build the full planning prompt sent to the headless Claude. Embeds the
+`groundingFor()` context, lists in-flight PRDs for relationship classification,
+and describes the JSON output shape in prose (never as a code fence or JSON
+template — literal JSON in the prompt causes MiniMax to loop to timeout).
+
+```ts
+export function parsePlanJson(raw: string): Plan
+export function planToPlanArgs(plan: Plan): string[]
+export function buildFallbackPlan(request: string, project: string): Plan
+```
+- `parsePlanJson`: Parse the model's JSON output. Defensive: strips markdown
+  fences if present, uses `JSON5.parse` for trailing commas, tries a brace
+  scan if all else fails.
+- `planToPlanArgs`: Serialize a `Plan` into argv for `plan.ts` gate-writer.
+- `buildFallbackPlan`: Deterministic fallback when the LLM call fails or
+  produces unparseable output. Produces the same shape as a successful parse
+  so downstream consumers never branch on failure mode.
+
+```ts
+export function serializeObjective(o: ProposedObjective): string
+export const ARCH_CONTEXT: string
+export type Plan = { title: string; body_md: string; tracers: string[]; ... }
+export type ProposedObjective = { goal: string; metric?: string; gate?: string }
+export type RelationshipKind = "orthogonal" | "replace" | "dependency" | "fork"
+export type Relationship = { other_prd_id: string; kind: RelationshipKind }
+```
+
+---
+
 ## Project Column
 
 `project` is a free-form string on every issue row. Workers use `project=ke`
