@@ -141,7 +141,7 @@ Run the merge gate:
 ## Project layout
 
 ```
-bin/          CLI entrypoints (ledger, factory, arc-chat, arc-ux, arc-tui, …)
+bin/          CLI entrypoints (ledger, factory, arc-chat, arc-ux, arc-tui, estate-secret-inventory, …)
 src/          library code (ledger/, profiles/)
 profiles/     role JSON (developer, director, admin) — context, boot skills, model
 skills/       skill definitions (bookie, ke-recall, ke-learn, spawn, …)

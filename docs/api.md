@@ -291,6 +291,20 @@ the agent session.
 
 ## CLI Entry Points
 
+### `bin/estate-secret-inventory.ts` (secret-scanner)
+
+Scans every repo under a root directory (working tree + full git history) for
+leaked secrets by wrapping gitleaks (already installed, already the estate's
+chosen scanner in `secret-scan-gate.sh`). Read-only: no rotation, no history
+rewrite. Emits a JSON findings list of `{repo, commit, file, ruleId,
+fingerprint}` per match. Exits with code 1 if any finding is present.
+
+```sh
+bun bin/estate-secret-inventory.ts [root]
+```
+
+Default root: `~/repos/`. Requires `gitleaks` on PATH.
+
 ### `bin/n.ts` (plan-agent)
 
 The L6 Planning Agent (ADR-0010). Spawned as a detached subprocess by
