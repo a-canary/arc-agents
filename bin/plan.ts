@@ -87,10 +87,34 @@ const title = getFlag("title");
 const body = getFlag("body") ?? "";
 const thread = getFlag("thread");
 const tracers = getAll("tracer");
+const tracerDepRaw = getAll("tracer-dep");
 const relationships = parseRelationships(getAll("relationship"));
 
 if (!title) die("usage: plan.ts --title T [--body MD] [--project P] --tracer S [--tracer ...]", 2);
 if (tracers.length === 0) die("at least one --tracer is required", 2);
+
+// Parse --tracer-dep as JSON arrays of tracer indices. When present, must have
+// exactly one entry per tracer; each entry is a JSON array of 0-based indices
+// that the tracer depends on (referencing earlier tracers only). Absent or
+// partial defaults to sequential chain (each i depends on i-1).
+function parseTracerDepends(raw: string[], n: number): number[][] {
+  if (raw.length === 0) return Array.from({ length: n }, (_, i) => (i === 0 ? [] : [i - 1]));
+  if (raw.length !== n) die(`expected ${n} --tracer-dep entries, got ${raw.length}`, 2);
+  return raw.map((s, i) => {
+    let deps: unknown;
+    try { deps = JSON.parse(s); } catch { die(`--tracer-dep[${i}] not valid JSON: ${s}`, 2); }
+    if (!Array.isArray(deps)) die(`--tracer-dep[${i}] not an array: ${s}`, 2);
+    const out: number[] = [];
+    for (const d of deps) {
+      if (typeof d !== "number" || !Number.isInteger(d) || d < 0 || d >= i) {
+        die(`--tracer-dep[${i}] invalid index ${d}: must be int < ${i}`, 2);
+      }
+      if (!out.includes(d)) out.push(d);
+    }
+    return out;
+  });
+}
+const tracerDepends = parseTracerDepends(tracerDepRaw, tracers.length);
 
 // 1. mint the PRD, then park it at the human approval gate.
 const prdId = ledger("create", [
@@ -102,26 +126,24 @@ const prdId = ledger("create", [
 ledger("update", [prdId, "--state", "review"]);
 
 // 2. one tracer-bullet task per slice, each blocked on the PRD so it stays out
-//    of the worker pool until the human approves at the gate. Slices are
-//    tracer bullets — smallest first, each building on the spine of the last —
-//    so tracer i is ALSO blocked on tracer i-1 (improve-architecture-planner-
-//    chain-imple-zrnx: parallel dispatch of structurally dependent siblings
-//    wasted worker slots). The unblock_dependents trigger releases a tracer
-//    only when every blocker is merged: tracer 1 on PRD approval, each later
-//    tracer when its predecessor merges.
+//    of the worker pool until the human approves at the gate. Per-slice
+//    dependency edges (tracerDepends) define which earlier tracers each slice
+//    depends on — empty array means depends only on the PRD (parallel siblings).
+//    The unblock_dependents trigger releases a tracer only when every blocker
+//    is merged: first-tier tracers on PRD approval, each later tracer when all
+//    its true dependencies merge.
 // The Sequential Tracer Chain pattern is documented in CONTEXT.md (glossary entry).
-// per-slice dependency edges from plan-agent if genuinely parallel slices ever matter.
 // Known ceiling: unblock_dependents releases only on blockers *merged*, so a
 // cancelled tracer strands its successors (a failed one is recoverable with
 // `ledger update <tracer> --state ready`). Recovery for the cancelled case needs
 // the repoint-blocked-by gap in CHOICES I-0010 closed; chains are <=3 long.
 const tracerIds: string[] = [];
-for (const t of tracers) {
-  const prev = tracerIds[tracerIds.length - 1];
+for (const [i, t] of tracers.entries()) {
+  const blockers = [prdId, ...tracerDepends[i].map((idx) => tracerIds[idx])];
   tracerIds.push(
     ledger("create", [
       "--kind", "task", "--type", "mvp", "--project", project,
-      "--title", t, "--blocked-by", JSON.stringify(prev ? [prdId, prev] : [prdId]),
+      "--title", t, "--blocked-by", JSON.stringify(blockers),
       "--agent", "developer", "--tier", "mvp", "--pool", "build",
       "--source-module", "plan",
     ]).id as string,

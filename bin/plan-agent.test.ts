@@ -53,9 +53,9 @@ test("parsePlanJson returns null on garbage, missing keys, or empty tracers", ()
 // null and main() exits non-zero rather than minting the prompt as a PRD. The null
 // contract is covered by "parsePlanJson returns null on garbage" above.
 
-test("planToPlanArgs maps a plan to plan.ts argv, one --tracer per slice, title clamped", () => {
+test("planToPlanArgs maps a plan to plan.ts argv, one --tracer and --tracer-dep per slice, title clamped", () => {
   const argv = planToPlanArgs(
-    { title: "y".repeat(200), body_md: "BODY", tracers: ["s1", "s2"], relationships: [] },
+    { title: "y".repeat(200), body_md: "BODY", tracers: ["s1", "s2"], relationships: [], tracer_depends_on: [[], [0]] },
     "arc-webui",
     "t-abc",
   );
@@ -65,6 +65,63 @@ test("planToPlanArgs maps a plan to plan.ts argv, one --tracer per slice, title 
   expect(flag("body")).toBe("BODY");
   expect(flag("title")!.length).toBeLessThanOrEqual(80);
   expect(argv.filter((a) => a === "--tracer").length).toBe(2);
+  // --tracer-dep for sequential chain
+  const depIdx = argv.findIndex((a) => a === "--tracer-dep");
+  expect(depIdx).not.toBe(-1);
+  expect(argv[depIdx + 1]).toBe("[]");
+  expect(argv[depIdx + 3]).toBe("[0]");
+});
+
+test("planToPlanArgs emits --tracer-dep even when tracer_depends_on is absent (defaults to sequential)", () => {
+  const argv = planToPlanArgs(
+    { title: "T", body_md: "B", tracers: ["a", "b", "c"], relationships: [] },
+    "arc-webui",
+    "t-abc",
+  );
+  // Missing tracer_depends_on defaults to sequential: [[], [0], [1]]
+  const depFlags = argv.filter((a) => a === "--tracer-dep");
+  expect(depFlags.length).toBe(3);
+});
+
+test("parsePlanJson parses tracer_depends_on from model output", () => {
+  const out = JSON.stringify({
+    title: "Parallel slices",
+    body_md: "## Problem",
+    tracers: ["auth", "ui", "api"],
+    tracer_depends_on: [[], [], [0]],
+  });
+  const plan = parsePlanJson(out);
+  expect(plan?.tracer_depends_on).toEqual([[], [], [0]]);
+});
+
+test("parsePlanJson defaults to sequential when tracer_depends_on is missing", () => {
+  const out = JSON.stringify({ title: "T", body_md: "B", tracers: ["a", "b", "c"] });
+  const plan = parsePlanJson(out);
+  expect(plan?.tracer_depends_on).toEqual([[], [0], [1]]);
+});
+
+test("parsePlanJson defaults to sequential on invalid tracer_depends_on (wrong length)", () => {
+  const out = JSON.stringify({
+    title: "T", body_md: "B", tracers: ["a", "b"],
+    tracer_depends_on: [[], [], []],
+  });
+  const plan = parsePlanJson(out);
+  expect(plan?.tracer_depends_on).toEqual([[], [0]]);
+});
+
+test("parsePlanJson defaults to sequential on invalid tracer_depends_on (self-reference)", () => {
+  const out = JSON.stringify({
+    title: "T", body_md: "B", tracers: ["a"],
+    tracer_depends_on: [[0]],
+  });
+  const plan = parsePlanJson(out);
+  expect(plan?.tracer_depends_on).toEqual([[]]);
+});
+
+test("buildFallbackPlan includes tracer_depends_on for the single tracer", () => {
+  const plan = buildFallbackPlan("Add feature X");
+  expect(plan.tracer_depends_on).toEqual([[]]);
+  expect(plan.relationships).toEqual([]);
 });
 
 test("ARCH_CONTEXT names the arc-webui architecture so plans respect the no-build-step constraint", () => {
