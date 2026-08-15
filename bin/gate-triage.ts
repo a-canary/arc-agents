@@ -12,7 +12,7 @@
 //
 // Idempotent: a PRD whose body already carries the gate-triage stamp is skipped.
 // Fail-safe: opus unavailable / unparseable → row untouched (stays human-gated
-// by default in review). ponytail: no schema change — the stamp lives in body_md.
+// by default in review). Stamp lives in body_md — no schema change needed.
 
 import { Database } from "bun:sqlite";
 import { spawnSync } from "bun";

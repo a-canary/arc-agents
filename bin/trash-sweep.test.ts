@@ -46,7 +46,7 @@ sweep_after: 20260501
 reason: dead
 `;
 
-// ponytail: sweep_after must stay ahead of wall-clock or this fixture rots.
+// sweep_after is dynamically computed from now + 5y — fixture never rots with wall-clock.
 const FUTURE_SWEEP_AFTER = (() => {
   const d = new Date();
   d.setUTCFullYear(d.getUTCFullYear() + 5);
