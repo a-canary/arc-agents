@@ -277,3 +277,132 @@ describe("plan.ts — pairwise PRD relationships (parent PRD #18, migration 028)
     expect(r.err.toLowerCase()).toMatch(/prd_relationships/);
   });
 });
+
+// ── Per-slice dependency edges (--tracer-dep) ──────────────────────────────────
+//
+// Replaces the sequential chain with explicit per-tracer dependency edges.
+// Missing --tracer-dep defaults to sequential (backward compat).
+
+describe("plan.ts — per-slice dependency edges (--tracer-dep)", () => {
+  it("no --tracer-dep defaults to sequential chain (backward compat)", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Sequential default", "--body", "b",
+      "--tracer", "s1", "--tracer", "s2", "--tracer", "s3",
+    ]);
+    expect(r.code).toBe(0);
+    const { prdId, tracerIds } = JSON.parse(r.out.trim());
+    expect(tracerIds.length).toBe(3);
+    // Sequential: [[], [0], [1]]
+    const expected = [
+      [prdId],
+      [prdId, tracerIds[0]],
+      [prdId, tracerIds[1]],
+    ];
+    for (const [i, tid] of tracerIds.entries()) {
+      const t = show(tid);
+      expect(JSON.parse(t.blocked_by as string)).toEqual(expected[i]);
+    }
+  });
+
+  it("explicit --tracer-dep with parallel siblings (both depend only on PRD)", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Parallel slices", "--body", "b",
+      "--tracer", "slice A", "--tracer", "slice B",
+      "--tracer-dep", "[]", "--tracer-dep", "[]",
+    ]);
+    expect(r.code).toBe(0);
+    const { prdId, tracerIds } = JSON.parse(r.out.trim());
+    expect(tracerIds.length).toBe(2);
+    // Both blocked only on PRD — no tracer dependency
+    for (const tid of tracerIds) {
+      const t = show(tid);
+      expect(JSON.parse(t.blocked_by as string)).toEqual([prdId]);
+    }
+  });
+
+  it("explicit --tracer-dep with sparse dependencies (tracer 2 depends on 0, not 1)", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Sparse deps", "--body", "b",
+      "--tracer", "foundation", "--tracer", "independent-ui", "--tracer", "build-on-foundation",
+      "--tracer-dep", "[]", "--tracer-dep", "[]", "--tracer-dep", "[0]",
+    ]);
+    expect(r.code).toBe(0);
+    const { prdId, tracerIds } = JSON.parse(r.out.trim());
+    expect(tracerIds.length).toBe(3);
+    // Tracer 0: blocked on PRD only
+    expect(JSON.parse(show(tracerIds[0]).blocked_by as string)).toEqual([prdId]);
+    // Tracer 1: blocked on PRD only (parallel to tracer 0)
+    expect(JSON.parse(show(tracerIds[1]).blocked_by as string)).toEqual([prdId]);
+    // Tracer 2: blocked on PRD + tracer 0
+    expect(JSON.parse(show(tracerIds[2]).blocked_by as string)).toEqual([prdId, tracerIds[0]]);
+  });
+
+  it("parallel siblings release simultaneously on PRD approval", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Parallel release test", "--body", "b",
+      "--tracer", "s1", "--tracer", "s2",
+      "--tracer-dep", "[]", "--tracer-dep", "[]",
+    ]);
+    expect(r.code).toBe(0);
+    const { prdId, tracerIds } = JSON.parse(r.out.trim());
+    expect(show(tracerIds[0]).state).toBe("blocked");
+    expect(show(tracerIds[1]).state).toBe("blocked");
+
+    const db = new Database(DB);
+    db.run("UPDATE issues SET state='merged' WHERE id=?", [prdId]);
+    // Both release simultaneously — not sequential
+    expect(show(tracerIds[0]).state).toBe("ready");
+    expect(show(tracerIds[1]).state).toBe("ready");
+    db.close();
+  });
+
+  it("rejects --tracer-dep with wrong count", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Bad dep count", "--body", "b",
+      "--tracer", "s1", "--tracer", "s2",
+      "--tracer-dep", "[]",
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/expected.*2.*tracer-dep.*got 1/i);
+  });
+
+  it("rejects --tracer-dep with self-reference", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Self dep", "--body", "b",
+      "--tracer", "s1",
+      "--tracer-dep", "[0]",
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/invalid index/i);
+  });
+
+  it("rejects --tracer-dep with forward reference", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Forward dep", "--body", "b",
+      "--tracer", "s1", "--tracer", "s2",
+      "--tracer-dep", "[1]", "--tracer-dep", "[]",
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/invalid index/i);
+  });
+
+  it("rejects --tracer-dep with non-array JSON", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Not array", "--body", "b",
+      "--tracer", "s1",
+      "--tracer-dep", '"string"',
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/not an array/i);
+  });
+
+  it("rejects --tracer-dep with non-integer index", () => {
+    const r = run(PLAN, [
+      "--project", "arc-webui", "--title", "Float dep", "--body", "b",
+      "--tracer", "s1", "--tracer", "s2",
+      "--tracer-dep", "[]", "--tracer-dep", "[0.5]",
+    ]);
+    expect(r.code).not.toBe(0);
+    expect(r.err).toMatch(/invalid index/i);
+  });
+});

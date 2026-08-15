@@ -43,6 +43,13 @@ export type Plan = {
   // restate it; parsePlanJson / buildFallbackPlan always populate it, and
   // planToPlanArgs treats a missing value as [] (never silently drops a pair).
   relationships?: Relationship[];
+  // Per-tracer dependency indices: for each tracer (by 0-based index in the
+  // tracers array), which earlier tracers this one depends on. Empty array
+  // means depends only on the PRD (nothing before it). Default sequential chain
+  // is [[], [0], [1], [2], ...]. When the model identifies genuinely parallel
+  // slices, this can be sparser — e.g. [[], [], [0]] means tracer 0 and 1 are
+  // parallel, tracer 2 waits for tracer 0 only.
+  tracer_depends_on?: number[][];
 };
 
 // serializeObjective — the slice-B writer. Turns a proposed objective into the exact
@@ -221,7 +228,8 @@ export function buildPlanningPrompt(
     "Then output a single JSON object and nothing else — no prose, no code fences. Use exactly these keys:",
     "- title: a concise plan title, a string under 80 characters",
     "- body_md: a markdown PRD body, as a string, with these sections in order: Problem (from the user's perspective); Solution (from the user's perspective); User Stories (a long numbered list, each line of the form 'As an <actor>, I want <feature>, so that <benefit>', covering every aspect of the feature); Implementation Decisions (modules to build or modify, their interfaces, schema and contract changes — prose only, no file paths or code snippets); Testing Decisions (which modules to test and what a good behavioural test looks like); Out of Scope.",
-    "- tracers: an array of 1 to 3 strings; each a small vertical slice, smallest first, each shippable on its own; slices run sequentially and each may build on the previous one",
+    "- tracers: an array of 1 to 3 strings; each a small vertical slice, smallest first, each shippable on its own",
+    "- tracer_depends_on: parallel array, one entry per tracer, listing the 0-based indices of earlier tracers this one depends on. Empty array means depends only on the PRD. Default sequential chain: [[], [0], [1], [2]] for 4 tracers. Use sparser for parallel slices: e.g. [[], [], [0]] means tracers 0 and 1 run in parallel after PRD, tracer 2 waits for tracer 0. Every index must reference an earlier tracer. Omit or use sequential defaults when unsure.",
     "- objective (OPTIONAL): only if this request implies a NEW, measurable mission-level outcome the project should track, propose ONE candidate objective as an object with keys goal (a short outcome statement), metric (a short machine-readable metric name), and gate (a numeric target like '100-300' or '8', NOT prose). Omit this key entirely when the request is a plain feature with no measurable mission outcome — do not invent one. It will be recorded as an inferred proposal a human reviews and promotes; never mark it directed.",
     "- relationships: an array; one entry per in-flight or recently-proposed PRD (every existing PRD whose state is not cancelled or failed). Each entry is an object with two fields: other_prd_id (the existing PRD's slug) and kind (exactly one of: orthogonal, replace, dependency, fork). orthogonal means no relationship — both can proceed. replace means the new PRD cancels and hides the existing one. dependency means the new PRD cannot be approved until the referenced PRD is approved; if the dependency is cancelled the new PRD is also cancelled. fork means both PRDs are mutually exclusive candidates — approval of one cancels the others. Use orthogonal for any pair you cannot confidently classify; do not omit a pair.",
   ].join("\n");
@@ -277,7 +285,33 @@ export function parsePlanJson(stdout: string): Plan | null {
     tracers: tracers.slice(0, 5),
     objective: parseObjective(obj.objective),
     relationships,
+    tracer_depends_on: parseTracerDependsOn(obj.tracer_depends_on, tracers.length),
   };
+}
+
+// Parse the optional tracer_depends_on field. Must be an array of arrays, each
+// containing 0-based indices referencing earlier tracers only. When missing or
+// invalid, default to the sequential chain [[], [0], [1], ...].
+function parseTracerDependsOn(raw: unknown, n: number): number[][] {
+  if (!Array.isArray(raw) || raw.length !== n) return defaultSequential(n);
+  const out: number[][] = [];
+  for (let i = 0; i < n; i++) {
+    const entry = raw[i];
+    if (!Array.isArray(entry)) return defaultSequential(n);
+    const deps: number[] = [];
+    for (const d of entry) {
+      if (typeof d !== "number" || !Number.isInteger(d) || d < 0 || d >= i) {
+        return defaultSequential(n);
+      }
+      if (!deps.includes(d)) deps.push(d);
+    }
+    out.push(deps);
+  }
+  return out;
+}
+
+function defaultSequential(n: number): number[][] {
+  return Array.from({ length: n }, (_, i) => (i === 0 ? [] : [i - 1]));
 }
 
 // A proposed objective is optional and must not sink the whole plan: a missing key, a
@@ -302,7 +336,8 @@ export function buildFallbackPlan(request: string, existingPrdIds: readonly stri
     other_prd_id,
     kind: "orthogonal",
   }));
-  return { title, body_md: request, tracers: [`Implement: ${title}`], relationships };
+  const tracerDependsOn: number[][] = [[]]; // single tracer, depends only on PRD
+  return { title, body_md: request, tracers: [`Implement: ${title}`], relationships, tracer_depends_on: tracerDependsOn };
 }
 
 export function planToPlanArgs(plan: Plan, project: string, thread: string): string[] {
@@ -313,6 +348,11 @@ export function planToPlanArgs(plan: Plan, project: string, thread: string): str
     "--body", withProposedObjective(plan.body_md, plan.objective),
   ];
   for (const t of plan.tracers) argv.push("--tracer", t);
+  // Emit per-tracer dependency edges. Default sequential (missing key) derives
+  // from plan.tracers.length: each i depends on i-1. planToPlanArgs always
+  // serializes explicitly so plan.ts never guesses.
+  const depends = plan.tracer_depends_on ?? defaultSequential(plan.tracers.length);
+  for (const d of depends) argv.push("--tracer-dep", JSON.stringify(d));
   for (const r of plan.relationships ?? []) argv.push("--relationship", JSON.stringify(r));
   return argv;
 }
@@ -360,10 +400,11 @@ function generatePlan(prompt: string, project: string): Plan | null {
 // Pull the slugs of every in-flight / recently-proposed PRD so the prompt can
 // hand the planner a concrete list to classify itself against. Cancelled /
 // failed PRDs are excluded (no relationship possible — they're gone).
-// ponytail: a glob over `ledger list --kind prd` is cheaper than wiring a new
-// SQL query into the bookie for this read-only lookup; the list path already
-// supports the --kind filter and returns JSON. We parse stdout and filter in
-// memory — at ~hundreds of PRDs the cost is trivial vs. the LLM call.
+// ponytail: a glob over `ledger list --kind prd --project <p>` is cheaper than
+// wiring a new SQL query into the bookie for this read-only lookup; the list
+// path already supports --kind and --project filters and returns JSON. We parse
+// stdout and filter in memory — at ~hundreds of PRDs the cost is trivial vs.
+// the LLM call.
 export function listExistingPrdIds(project: string): string[] {
   const ledger = join(import.meta.dir, "ledger.ts");
   const r = spawnSync(process.execPath, [ledger, "list", "--kind", "prd", "--all", "--project", project], { encoding: "utf8" });
