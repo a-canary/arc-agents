@@ -357,6 +357,19 @@ fi
 command -v bun >/dev/null 2>&1 || export PATH="${HOME}/.bun/bin:${PATH}"
 command -v claude >/dev/null 2>&1 || export PATH="${HOME}/.local/bin:${PATH}"
 
+# The spawned `bash worker-shell.sh` is non-interactive, so ~/.bashrc never
+# runs and pass-sourced keys are absent. The tmux server env doesn't carry
+# them either. Pull from pass (canonical store) when unset:
+# - CLAUDE_CODE_OAUTH_TOKEN: headless `claude` auth (credentials.json can be
+#   wiped; inference-only token, no refresh).
+# - MINIMAX_API_KEY: bench SOLVE arms run `pi -p --model minimax-m3`.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && command -v pass >/dev/null 2>&1; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(pass show api/claude/oauth-token 2>/dev/null || true)"
+fi
+if [ -z "${MINIMAX_API_KEY:-}" ] && command -v pass >/dev/null 2>&1; then
+  export MINIMAX_API_KEY="$(pass show api/minimax/api-key 2>/dev/null || true)"
+fi
+
 # Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
 # has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.
 # `cli-agent` is the post-2026-07-10 successor for alias→cmdline resolution —
