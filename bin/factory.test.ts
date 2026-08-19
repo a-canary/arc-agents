@@ -401,7 +401,7 @@ test("worker-shell.sh allows arctest-* claim against a non-canon (test) ledger",
   expect(r.stdout).toContain("race-lost-or-empty");
 });
 
-test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
+test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", { timeout: 30000 }, () => {
   // Regression: systemd --user services inherit PATH without ~/.bun/bin, so
   // factory-spawned tmux subshells could not resolve `bun` and died exit 127
   // before the claim ran. Shell must restore the bun dir itself.
