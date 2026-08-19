@@ -106,6 +106,59 @@ test("show works when --db precedes the verb/id", async () => {
   }
 });
 
+test("update works when --db precedes the verb/id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+      id: string;
+    };
+    // update/render-prompt/repoint-blocked-by read args[1] directly for the
+    // id positional instead of positionalAfterVerb() — same misparse class
+    // as #392/#395, but those two call sites weren't covered.
+    const r = await $`bun ${cli} --db ${db} update ${c.id} --state ready`.env(testEnv).quiet();
+    const updated = JSON.parse(r.stdout.toString()) as { id: string; updated: boolean };
+    expect(updated.id).toBe(c.id);
+    expect(updated.updated).toBe(true);
+  } finally {
+    cleanup();
+  }
+});
+
+test("render-prompt works when --db precedes the verb/id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+      id: string;
+    };
+    const r = await $`bun ${cli} --db ${db} render-prompt ${c.id}`.env(testEnv).quiet();
+    expect(r.exitCode).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
+test("repoint-blocked-by works when --db precedes the verb/id", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as {
+      id: string;
+    };
+    await run(db, "decompose", c.id, "--child", "sibling-blocker");
+    const blocker2 = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "b2")) as {
+      id: string;
+    };
+    const r = await $`bun ${cli} --db ${db} repoint-blocked-by ${c.id} ${blocker2.id}`.env(testEnv).quiet();
+    const result = JSON.parse(r.stdout.toString()) as { id: string; blocked_by: string[] };
+    expect(result.id).toBe(c.id);
+    expect(result.blocked_by).toEqual([blocker2.id]);
+  } finally {
+    cleanup();
+  }
+});
+
 test("update --state + show events", async () => {
   const { db, cleanup } = freshDb();
   try {
