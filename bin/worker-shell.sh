@@ -353,9 +353,8 @@ fi
 
 # systemd --user services inherit a stripped PATH (no ~/.bun/bin or ~/.local/bin),
 # so the spawned tmux subshell cannot resolve `bun` or `claude` and dies before
-# exec. Restore both install dirs if missing.
-command -v bun >/dev/null 2>&1 || export PATH="${HOME}/.bun/bin:${PATH}"
-command -v claude >/dev/null 2>&1 || export PATH="${HOME}/.local/bin:${PATH}"
+# exec. Unconditionally prepend install dirs so user installs take precedence.
+export PATH="${HOME}/.bun/bin:${HOME}/.local/bin:${PATH}"
 
 # The spawned `bash worker-shell.sh` is non-interactive, so ~/.bashrc never
 # runs and pass-sourced keys are absent. The tmux server env doesn't carry
