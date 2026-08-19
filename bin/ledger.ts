@@ -158,6 +158,7 @@ switch (cmd) {
       project: getFlag("project"),
       tier: getFlag("tier") ?? getFlag("class"),     // accept both old --class and new --tier
       pool: getFlag("pool") ?? getFlag("urgency"),    // accept both old --urgency and new --pool
+      label: getFlag("label") ?? null,
     };
     const errs = validateCreate(input, positionalAfterVerb());
     if (errs.length > 0) {
@@ -182,32 +183,33 @@ switch (cmd) {
     // (tier_unset / pool_unset) so unchanged callers stay compatible.
     const tier = input.tier ?? null;
     const pool = input.pool ?? null;
+    const label = input.label ?? null;
 
     const db = openWithMigrate(getFlag("db"));
     const id = mintId(db, title);
     if (tier !== null && pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, pool)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, pool],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, pool, label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, pool, label],
       );
     } else if (tier !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, label],
       );
     } else if (pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, pool)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, pool],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, pool, label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, pool, label],
       );
     } else {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, label)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, label],
       );
     }
     db.run(
@@ -754,7 +756,7 @@ switch (cmd) {
       where.push("project=?");
       vals.push(project);
     }
-    const sql = `SELECT id, state, kind, type, title FROM issues ${
+    const sql = `SELECT id, state, kind, type, title, label FROM issues ${
       where.length ? "WHERE " + where.join(" AND ") : ""
     } ORDER BY ${SORT_KEY_SQL} LIMIT ?`;
     vals.push(limit);

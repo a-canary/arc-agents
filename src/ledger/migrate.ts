@@ -1386,6 +1386,23 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "031_issues_label",
+    // Add nullable label column to issues for wayfinder skill operations mapping.
+    // Follows the 029_blog_pr_url pattern: additive + idempotent via PRAGMA table_info.
+    // Label is free-form text for human-readable categorization (e.g. "bug", "feature", "docs").
+    up: (db) => {
+      const cols = new Set(
+        db
+          .query<{ name: string }, []>("PRAGMA table_info(issues)")
+          .all()
+          .map((r) => r.name),
+      );
+      if (!cols.has("label")) {
+        db.exec(`ALTER TABLE issues ADD COLUMN label TEXT`);
+      }
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {

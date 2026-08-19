@@ -57,6 +57,8 @@ export type CreateInput = {
   // Migration 017: tier/pool replace class/urgency
   tier?: string;
   pool?: string;
+  // Migration 031: label for wayfinder operations
+  label?: string | null;
   // Legacy aliases (still accepted for backwards compat; ledger.ts maps them)
   class?: string;
   urgency?: string;
