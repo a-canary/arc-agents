@@ -112,6 +112,18 @@ beforeEach(() => {
   );
   chmodSync(fakeAgent, 0o755);
 
+  // Fake `claude` and `claude-afk` shimmed in fakeBinDir. worker-shell.sh does
+  // `command -v claude || export PATH="$HOME/.local/bin:$PATH"`, which would
+  // prepend ~/.local/bin (where the REAL cli-agent lives) before our fake bins
+  // if claude isn't found. This shadows the fake pi/cli-agent, causing the real
+  // agents to run and fail when they try to authenticate. Shimming claude/
+  // claude-afk ensures the guard passes and PATH ordering stays correct.
+  for (const name of ["claude", "claude-afk"]) {
+    const p = join(fakeBinDir, name);
+    writeFileSync(p, "#!/bin/sh\nexit 0\n");
+    chmodSync(p, 0o755);
+  }
+
   prefix = `arctest-${Math.random().toString(36).slice(2, 8)}`;
 
   // Init ledger
