@@ -412,6 +412,11 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
     // absent on CI runners — the worker would die "project repo not found"
     // after claiming and strand the row at `claimed`.
     ARC_PROJECT_REPO_ARC_AGENTS: REPO,
+    // Prevent pass(1) from blocking on auth token/API key retrieval in the test.
+    // The shell checks these env vars before attempting `pass show`, so setting
+    // them to dummy values bypasses the potentially-blocking pass lookup entirely.
+    CLAUDE_CODE_OAUTH_TOKEN: "test-token",
+    MINIMAX_API_KEY: "test-key",
   };
   const r = spawnSync("bash", [shell, "w-stripped"], { encoding: "utf8", env });
   expect(r.status).toBe(0);
