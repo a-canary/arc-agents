@@ -513,10 +513,12 @@ if [ ! -d "$WT_DIR" ]; then
   # -B resets the branch to the default's tip if a stale branch lingers from
   # a prior reaped attempt; --force overrides a leftover claude-agent
   # worktree lock.
-  if ! git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" "$WT_DEFAULT" 2>/dev/null; then
+  # ponytail: timeout 5s on git worktree add — can hang when nesting worktrees.
+  if ! timeout 5 git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" "$WT_DEFAULT" 2>/dev/null; then
     # Branch may be checked out elsewhere; fall back to a detached worktree so
     # the worker still isolates rather than silently running in prod root.
-    git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" "$WT_DEFAULT"
+    # Apply timeout here too to survive nested-worktree hangs.
+    timeout 5 git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" "$WT_DEFAULT" 2>/dev/null
   fi
 fi
 cd "$WT_DIR"
