@@ -657,8 +657,14 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
     PIPE_READY=1
   fi
   set +e
-  timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
+  # ponytail: run agent in new process group via setsid, kill group on exit
+  # to prevent orphaned child processes. AGENT_PID tracked for cleanup.
+  setsid timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1 &
+  AGENT_PID=$!
+  trap "kill -TERM -${AGENT_PID} 2>/dev/null || true; wait ${AGENT_PID} 2>/dev/null || true" EXIT
+  wait "$AGENT_PID"
   AGENT_RC=$?
+  trap - EXIT
   set -e
   LAST_RC=$AGENT_RC
 
