@@ -112,6 +112,18 @@ beforeEach(() => {
   );
   chmodSync(fakeAgent, 0o755);
 
+  // Fake `claude` and `claude-afk` shimmed in fakeBinDir. worker-shell.sh does
+  // `command -v claude || export PATH="$HOME/.local/bin:$PATH"`, which would
+  // prepend ~/.local/bin (where the REAL cli-agent lives) before our fake bins
+  // if claude isn't found. This shadows the fake pi/cli-agent, causing the real
+  // agents to run and fail when they try to authenticate. Shimming claude/
+  // claude-afk ensures the guard passes and PATH ordering stays correct.
+  for (const name of ["claude", "claude-afk"]) {
+    const p = join(fakeBinDir, name);
+    writeFileSync(p, "#!/bin/sh\nexit 0\n");
+    chmodSync(p, 0o755);
+  }
+
   prefix = `arctest-${Math.random().toString(36).slice(2, 8)}`;
 
   // Init ledger
@@ -389,7 +401,7 @@ test("worker-shell.sh allows arctest-* claim against a non-canon (test) ledger",
   expect(r.stdout).toContain("race-lost-or-empty");
 });
 
-test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
+test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", { timeout: 30000 }, () => {
   // Regression: systemd --user services inherit PATH without ~/.bun/bin, so
   // factory-spawned tmux subshells could not resolve `bun` and died exit 127
   // before the claim ran. Shell must restore the bun dir itself.
@@ -412,6 +424,11 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
     // absent on CI runners — the worker would die "project repo not found"
     // after claiming and strand the row at `claimed`.
     ARC_PROJECT_REPO_ARC_AGENTS: REPO,
+    // Prevent pass(1) from blocking on auth token/API key retrieval in the test.
+    // The shell checks these env vars before attempting `pass show`, so setting
+    // them to dummy values bypasses the potentially-blocking pass lookup entirely.
+    CLAUDE_CODE_OAUTH_TOKEN: "test-token",
+    MINIMAX_API_KEY: "test-key",
   };
   const r = spawnSync("bash", [shell, "w-stripped"], { encoding: "utf8", env });
   expect(r.status).toBe(0);

@@ -353,9 +353,21 @@ fi
 
 # systemd --user services inherit a stripped PATH (no ~/.bun/bin or ~/.local/bin),
 # so the spawned tmux subshell cannot resolve `bun` or `claude` and dies before
-# exec. Restore both install dirs if missing.
-command -v bun >/dev/null 2>&1 || export PATH="${HOME}/.bun/bin:${PATH}"
-command -v claude >/dev/null 2>&1 || export PATH="${HOME}/.local/bin:${PATH}"
+# exec. Unconditionally prepend install dirs so user installs take precedence.
+export PATH="${HOME}/.bun/bin:${HOME}/.local/bin:${PATH}"
+
+# The spawned `bash worker-shell.sh` is non-interactive, so ~/.bashrc never
+# runs and pass-sourced keys are absent. The tmux server env doesn't carry
+# them either. Pull from pass (canonical store) when unset:
+# - CLAUDE_CODE_OAUTH_TOKEN: headless `claude` auth (credentials.json can be
+#   wiped; inference-only token, no refresh).
+# - MINIMAX_API_KEY: bench SOLVE arms run `pi -p --model minimax-m3`.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && command -v pass >/dev/null 2>&1; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(pass show api/claude/oauth-token 2>/dev/null || true)"
+fi
+if [ -z "${MINIMAX_API_KEY:-}" ] && command -v pass >/dev/null 2>&1; then
+  export MINIMAX_API_KEY="$(pass show api/minimax/api-key 2>/dev/null || true)"
+fi
 
 # Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
 # has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.
@@ -501,10 +513,12 @@ if [ ! -d "$WT_DIR" ]; then
   # -B resets the branch to the default's tip if a stale branch lingers from
   # a prior reaped attempt; --force overrides a leftover claude-agent
   # worktree lock.
-  if ! git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" "$WT_DEFAULT" 2>/dev/null; then
+  # ponytail: timeout 5s on git worktree add — can hang when nesting worktrees.
+  if ! timeout 5 git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" "$WT_DEFAULT" 2>/dev/null; then
     # Branch may be checked out elsewhere; fall back to a detached worktree so
     # the worker still isolates rather than silently running in prod root.
-    git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" "$WT_DEFAULT"
+    # Apply timeout here too to survive nested-worktree hangs.
+    timeout 5 git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" "$WT_DEFAULT" 2>/dev/null
   fi
 fi
 cd "$WT_DIR"
@@ -643,8 +657,14 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
     PIPE_READY=1
   fi
   set +e
-  timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
+  # ponytail: run agent in new process group via setsid, kill group on exit
+  # to prevent orphaned child processes. AGENT_PID tracked for cleanup.
+  setsid timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1 &
+  AGENT_PID=$!
+  trap "kill -TERM -${AGENT_PID} 2>/dev/null || true; wait ${AGENT_PID} 2>/dev/null || true" EXIT
+  wait "$AGENT_PID"
   AGENT_RC=$?
+  trap - EXIT
   set -e
   LAST_RC=$AGENT_RC
 
