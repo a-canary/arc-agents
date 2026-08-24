@@ -1,21 +1,27 @@
 {
+  "_note": "Aliases route through arc-llm-proxy (http://127.0.0.1:8091/v1, provider 'arc-proxy' in ~/.pi/agent/models.json). The alias set is defined in /home/aaron/repos/arc-llm-proxy/aliases.default.json — when aliases change there, update: this file, ~/.pi/agent/models.json, and the arc-skills slow-lane skill. Cron/worker traffic must not require claude — see AGENTS.md model-routing rules.",
   "exec_cli_alias": {
-    "fast": ["cli-agent --pool fast {prompt}"],
-    "smart": [
-      "cli-agent --pool smart {prompt}",
-      "claude-afk --model opus -p {prompt}"
+    "planning": [
+      "pi --model arc-proxy/planning -p {prompt}"
     ],
-    "opus-max": [
-      "cli-agent --pool smart {prompt}",
-      "claude-afk --model opus -p {prompt}"
+    "hard": [
+      "pi --model arc-proxy/hard -p {prompt}"
     ],
-    "minimax-build": [
-      "cli-agent --pool fast {prompt}",
-      "cli-agent --pool smart {prompt}"
+    "easy": [
+      "pi --model arc-proxy/easy -p {prompt}"
+    ],
+    "bench": [
+      "pi --model arc-proxy/bench -p {prompt}"
+    ],
+    "driver": [
+      "pi --model arc-proxy/driver -p {prompt}"
+    ],
+    "hygiene": [
+      "pi --model arc-proxy/hygiene -p {prompt}"
     ]
   },
   "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },
-  "default_alias": "fast",
-  "fast_alias": "fast",
-  "smart_alias": "smart"
+  "default_alias": "planning",
+  "fast_alias": "easy",
+  "smart_alias": "planning"
 }
