@@ -6,6 +6,7 @@ export function open(path?: string): Database {
   const p = path ?? resolveLedgerDb();
   const db = new Database(p);
   db.exec("PRAGMA journal_mode=WAL;");
+  db.exec("PRAGMA busy_timeout=5000;"); // ponytail: 5s timeout on contended ledger, fail fast on lock
   return db;
 }
 

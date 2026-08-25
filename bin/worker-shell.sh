@@ -433,7 +433,21 @@ fi
 POOL_FLAG=()
 CLAIM_POOL="${ARC_CLAIM_POOL:-${ARC_CLAIM_TYPE:-}}"
 [ -n "$CLAIM_POOL" ] && POOL_FLAG=(--pool "$CLAIM_POOL")
-CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${POOL_FLAG[@]}")"
+# ponytail: timeout 10s on claim — matches guard pattern for npm/git worktree;
+# timeout exit 124 means ledger was contended/spinning, leave for reapOrphanClaims.
+set +e
+CLAIM_JSON="$(timeout 10 bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${POOL_FLAG[@]}")"
+CLAIM_RC=$?
+set -e
+if [ $CLAIM_RC -ne 0 ]; then
+  if [ $CLAIM_RC -eq 124 ]; then
+    echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"claim-timeout\"}" >&2
+    exit 1
+  fi
+  # Non-timeout error (exit code != 124) → ledger unavailable, leave for retry
+  echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"claim-exec-error\"}" >&2
+  exit 1
+fi
 CLAIM_ID="$(echo "$CLAIM_JSON" | grep -oE '"claimed":[[:space:]]*"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/' || true)"
 
 if [ -z "$CLAIM_ID" ]; then
