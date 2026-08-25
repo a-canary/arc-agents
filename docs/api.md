@@ -271,7 +271,7 @@ the agent session.
 | Skill | Description |
 |---|---|
 | `bookie` | Ledger write authority (create, update, decompose, event, hitl emit) |
-| `ke-recall` | FTS5 search over `~/vault/ke/` knowledge entries |
+| `ke-recall` | Semantic (sqlite-vec cosine) search over `~/vault/ke/` knowledge entries |
 | `ke-learn` | Write a knowledge entry to `~/vault/ke/<scope>/` |
 | `claude-afk` | Headless-shaped `claude` invocation in a live tmux pane |
 | `to-ledger` | Walk owner through filing a ledger row |

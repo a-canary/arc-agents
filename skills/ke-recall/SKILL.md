@@ -1,11 +1,11 @@
 ---
 name: ke-recall
-description: "FTS5 search over ~/vault/ke/ knowledge entries. Returns top-N markdown excerpts ranked by BM25, with file paths and headings."
+description: "Semantic (sqlite-vec cosine) search over ~/vault/ke/ knowledge entries. Local all-MiniLM-L6-v2 embeddings, no API key. Returns ranked title + path hits."
 ---
 
 # ke-recall — Knowledge Entry Recall
 
-Read-only search over the KE vault (`~/vault/ke/`). FTS5-indexed at `~/vault/ke.fts.db`.
+Read-only semantic search over the KE vault (`~/vault/ke/`). Index is a sqlite-vec store at `~/vault/ke/_index/vec` (384-dim local all-MiniLM-L6-v2 embeddings). No FTS5, no external service.
 
 ## When to use
 
@@ -15,19 +15,19 @@ Read-only search over the KE vault (`~/vault/ke/`). FTS5-indexed at `~/vault/ke.
 
 ## How
 
-1. `bun ~/repos/ke/bin/ke-tool.ts recall "<query>" [--limit 5] [--scope decisions|failures|fixes|facts|concepts|*]` (or `ke recall …` if installed on PATH).
-2. CLI runs `SELECT path, snippet(ke, …), bm25(ke) FROM ke WHERE ke MATCH ? ORDER BY bm25(ke) LIMIT ?`.
-3. Output is JSON lines: `{path, score, excerpt, headings}`.
+1. Interactive: `bun ~/repos/ke/bin/ke-tool.ts search "<query>" [--limit 10] [--tag T] [--not-tag T] [--diverse] [--full]` (or `ke search …` if installed on PATH).
+2. CLI embeds the query locally, runs a sqlite-vec cosine search, prints ranked hits: `[NN%] title`, optional summary gist, `→ path`, tags.
+3. Hook surface (not for manual use): `ke recall <prompt> [--transcript <path>]` — builds a full-context query from the conversation tail, applies the calibrated gate (inject iff top1 cosine ≥ 33%, `KE_RECALL_THRESHOLD` overrides), prints top 1–3 hits or nothing. Fail-silent by contract: errors and misses exit 0 with no output.
 
 ## Index refresh
 
-If a recall returns stale paths, run `bun ~/repos/ke/bin/ke-tool.ts compile`. Cheap (<5s for typical vault).
+If a search returns stale paths, run `bun ~/repos/ke/bin/ke-tool.ts compile`. Cheap (<5s for typical vault).
 
 ## Scopes
 
-`~/vault/ke/` subdirs: agents, benchmark, comparisons, concepts, decisions, dev, distilled, facts, failures, fixes. Pass `--scope <name>` to restrict.
+`~/vault/ke/` subdirs (non-exhaustive): agents, benchmark, comparisons, concepts, decisions, dev, distilled, facts, failures, fixes, learn, notes, research, … There is no `--scope` flag — restrict results with `--tag <t>` / `--not-tag <t>`.
 
 ## Output handling
 
 - Top result usually answers the question. If top 3 scores tie within ~10%, surface all three.
-- If best score < threshold (BM25 > -2), report "no precedent" — don't fabricate one.
+- If best score < gate threshold (cosine % < 33), report "no precedent" — don't fabricate one.
