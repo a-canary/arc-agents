@@ -109,10 +109,11 @@ For each row ID, delegate `kind=note` to the bookie subagent (not inside bash �
 
 **Step 4 — Update parent row to merged via bookie (Agent tool).**
 
-After all hygiene-emit + event calls succeed, delegate to bookie (workers must NOT write to the ledger directly):
+After all hygiene-emit + event calls succeed, delegate to bookie (workers must NOT write to the ledger directly). The report lives in vault (never pushed), so analysis-only rows are **zero-diff** — this is the normal case:
 ```
-Agent tool → bookie subagent: update --state merged --evidence "<one-liner summary>" --pr <url-or-branch>
+Agent tool → bookie subagent: update <id> --state merged --no-diff --in-place --evidence "<one-liner summary + $REPORT_PATH>"   # evidence ≤280 chars
 ```
+Only use `--pr <url-or-branch>` when the row also shipped a real diff (then emit exactly **one** `diff_review` event for that sha — re-emitting 3–5× is ledger noise, pipeliner rows 000229/000256). Never open an empty PR to satisfy the merge guard.
 
 **Merge gate:** merged state is accepted only when `hygiene_complete=1` on the row. `hygiene-emit` sets this atomically. If the follow-up table was empty, delegate `--hygiene-complete` to bookie via Agent tool (workers must NOT write to the ledger directly).
 

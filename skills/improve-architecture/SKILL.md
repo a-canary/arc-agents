@@ -53,5 +53,6 @@ Over budget → stop, decompose into smaller refactors (or file as a real refact
 ## Termination
 
 - **merged** — PR opened, merge-gate green, evidence cites before/after structure + the test-still-green run.
+- **merged (no diff)** — investigation found no actionable rot (duplication already resolved at head, or smell below threshold): `update <id> --state merged --no-diff --in-place --evidence "<negative result + where verified>"` (evidence ≤280 chars). Never open an empty PR to satisfy the merge guard; `--no-diff` skips the diff_review requirement. For a non-zero diff, emit exactly **one** `diff_review` event per sha.
 - **failed** — refactor revealed a latent bug or contract ambiguity that needs a real design decision; record the finding in evidence, file a follow-up task, and exit failed (do not paper over).
 - **blocked** — refactor depends on an unmerged ADR / sibling slice; decompose into a HITL child that asks the human to sequence the work.

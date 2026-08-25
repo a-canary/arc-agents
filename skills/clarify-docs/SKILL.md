@@ -87,3 +87,11 @@ Before merge:
 ## Termination
 
 Drive to `merged` via bookie with `--evidence "doc/code drift fixed in <files>"` and `--pr <branch-or-url>`. If the observation turned out to be a false alarm (no actual drift), `update --state cancelled --evidence "no drift found; closing"`.
+
+**Zero-diff outcome.** Investigation confirmed but nothing left to change (drift already fixed at head, or the fix is a no-op): merge in place with no PR —
+
+```
+update <id> --state merged --no-diff --in-place --evidence "<negative result + where verified>"   # evidence ≤280 chars
+```
+
+Never open an empty PR to satisfy the merge guard. `--no-diff` skips the diff_review requirement; for a non-zero diff, emit exactly **one** `diff_review` event per sha (re-emitting 3–5× is ledger noise — pipeliner rows 000229/000256).
