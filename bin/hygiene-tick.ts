@@ -2,6 +2,10 @@
 // hygiene-tick — round-robin hygiene cron. See plan: 6hr cron picks one repo
 // from a preset list, creates a `type=cron` task that invokes a hygiene skill.
 // Skip-not-stack: skips a repo that already has an OPEN hygiene cron task.
+// Activity gate: skips a repo with no non-hygiene worker events since its
+// last rotation (low-activity repos otherwise get repeated zero-deliverable
+// rows — see analysis-1787696763.md Pattern 3). Never-rotated repos stay
+// eligible (baseline run).
 //
 // Config: $ARC_HYGIENE_CONFIG (yaml) or ~/.config/arc/hygiene.yaml
 //   skills: [improve-codebase-architecture, ...]
@@ -151,11 +155,36 @@ function alreadyNoted(failedId: string): boolean {
   return (row?.n ?? 0) > 0;
 }
 
+// Activity gate (analysis-1787696763.md Pattern 3): a repo is eligible only
+// if a worker (agent 'arc-worker-*') touched a non-hygiene row of that repo
+// since the last rotation. Non-hygiene = not a cron row and not tier='hygiene'
+// (hygiene workers' own events must not keep a quiet repo eligible). System
+// agents (sweeper, triage, recovery) do not count — reclaim churn on a stuck
+// row is exactly the zero-deliverable pattern this gate exists to stop.
+function hasWorkerActivity(repo: string, since: number): boolean {
+  const row = db
+    .query<{ n: number }, [string, number]>(
+      `SELECT COUNT(*) AS n FROM issue_events e
+       JOIN issues i ON i.id = e.issue_id
+       WHERE i.project=? AND i.type!='cron' AND i.tier!='hygiene'
+         AND e.agent LIKE 'arc-worker%' AND e.ts >= ?`,
+    )
+    .get(repo, since);
+  return (row?.n ?? 0) > 0;
+}
+
 let pick: { repo: string; skill: string } | null = null;
 const now = Math.floor(Date.now() / 1000);
+// Repos filtered out by the activity gate, reported when nothing is emitted.
+const quiet: string[] = [];
 const candidates = repos
   .map((repo, idx) => ({ repo, idx, last: lastCreatedFor(repo) }))
   .filter((c) => !hasOpenHygiene(c.repo))
+  .filter((c) => {
+    if (c.last === null || hasWorkerActivity(c.repo, c.last)) return true;
+    quiet.push(c.repo);
+    return false;
+  })
   .sort((a, b) => {
     if (a.last === null && b.last !== null) return -1;
     if (a.last !== null && b.last === null) return 1;
@@ -206,6 +235,8 @@ if (!pick) {
         existingId: firstDedup.existingId,
       }) + "\n",
     );
+  } else if (quiet.length > 0) {
+    process.stdout.write(JSON.stringify({ skipped: "no-activity", repos: quiet }) + "\n");
   } else {
     process.stdout.write(JSON.stringify({ skipped: true }) + "\n");
   }
