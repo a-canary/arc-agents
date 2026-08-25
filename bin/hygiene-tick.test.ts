@@ -131,12 +131,17 @@ test("successive ticks rotate through the repo list", async () => {
 
 test("rotation wraps around after exhausting the list", async () => {
   // Merge each task between ticks so skip-not-stack doesn't apply — we want to
-  // exercise the wraparound, not the open-task-skip path.
+  // exercise the wraparound, not the open-task-skip path. Keep every repo
+  // active (worker events on non-hygiene rows) so the activity gate stays open.
   for (let i = 0; i < 4; i++) {
-    await tick();
     const d = new Database(dbPath);
-    d.run(`UPDATE issues SET state='merged' WHERE type='cron' AND state!='merged'`);
+    const now = Math.floor(Date.now() / 1000);
+    for (const repo of ["ke", "arc-agents", "arc-webui"]) seedActivityRows(d, repo, `wrap-${i}`, now);
     d.close();
+    await tick();
+    const m = new Database(dbPath);
+    m.run(`UPDATE issues SET state='merged' WHERE type='cron' AND state!='merged'`);
+    m.close();
   }
   const rows = listCron();
   expect(rows.map((r) => r.project)).toEqual(["ke", "arc-agents", "arc-webui", "ke"]);
@@ -208,14 +213,33 @@ test("inserted row carries migration-017 tier='hygiene' + pool='ops' (not tier_u
 // `trash-retired-files` produce "still clean" reports) while keeping the
 // high-signal `analyse-recent-sessions` skill at the natural rotation rate.
 
-function seedCron(repo: string, skill: string, createdAt: number, state = "merged") {
+// `active` (default true) also seeds a non-hygiene worker event shortly
+// after the cron row so the activity gate treats the repo as active — the
+// pre-gate tests model repos that have real work, which is the cadence and
+// failed-dedup scenario they exercise.
+function seedCron(repo: string, skill: string, createdAt: number, state = "merged", active = true) {
   const db = new Database(dbPath);
   db.run(
     `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, created_at)
      VALUES (?, ?, ?, '', 'cron', ?, 'task', 'hygiene', 'ops', ?)`,
     [`seed-${repo}-${skill}`, repo, `hygiene: ${repo} — /${skill}`, state, createdAt],
   );
+  if (active) seedActivityRows(db, repo, skill, createdAt + 3600);
   db.close();
+}
+
+function seedActivityRows(db: Database, repo: string, tag: string, ts: number) {
+  const id = `act-${repo}-${tag}-${ts}`;
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, created_at)
+     VALUES (?, ?, 'real work', '', 'mvp', 'ready', 'task', 'mvp', 'build', ?)`,
+    [id, repo, ts],
+  );
+  db.run(
+    `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts)
+     VALUES (?, 'claimed', 'arc-worker-test', 'worker claimed', ?)`,
+    [id, ts],
+  );
 }
 
 test("cadence: skips a (repo, skill) combo that fired within the cooldown window and picks the next eligible", async () => {
@@ -443,6 +467,7 @@ function seedFailedCron(repo: string, skill: string, createdAt: number, id?: str
      VALUES (?, ?, ?, '', 'cron', 'failed', 'task', 'hygiene', 'ops', ?)`,
     [id ?? `failed-${repo}-${skill}-${createdAt}`, repo, `hygiene: ${repo} — /${skill}`, createdAt],
   );
+  seedActivityRows(db, repo, "failed", createdAt + 3600);
   db.close();
 }
 
@@ -545,6 +570,139 @@ repos: [ke]
   expect(out.skipped).toBeUndefined();
   expect(out.skill).toBe("improve-codebase-architecture");
   expect(listCron().length).toBe(2); // merged + new ready
+});
+
+// ── activity gate ────────────────────────────────────────────────────────
+//
+// analysis-1787696763.md Pattern 3: low-activity repos get repeated
+// zero-deliverable hygiene rows that hold a claim slot and feed the
+// claim-stale-sweeper reclaim loop. Gate emission on per-repo activity:
+// skip repos with no non-hygiene worker events (agent 'arc-worker-*' on a
+// non-cron, non-tier-hygiene row) since the last rotation. Never-rotated
+// repos stay eligible (baseline run).
+
+test("activity gate: skips a quiet repo and picks the active one instead", async () => {
+  writeFileSync(
+    cfgPath,
+    `skills: [improve-architecture]\nrepos: [ke, arc-agents]\n`,
+  );
+  // ke rotated 5 days ago with no worker activity since → quiet.
+  // arc-agents rotated 4 days ago with activity after → active.
+  // Without the gate, ke (older last rotation) sorts first and would be picked.
+  const keLast = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", keLast, "merged", /*active=*/ false);
+  const aaLast = Math.floor(Date.now() / 1000) - 86400 * 4;
+  seedCron("arc-agents", "improve-architecture", aaLast); // active by default
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("arc-agents");
+});
+
+test("activity gate: emits for a repo with worker events since the last rotation", async () => {
+  writeFileSync(
+    cfgPath,
+    `skills: [improve-architecture]\nrepos: [ke, arc-agents]\n`,
+  );
+  // ke rotated 5 days ago but had worker activity after → active.
+  // arc-agents rotated 4 days ago with no activity since → quiet.
+  const keLast = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", keLast); // active by default
+  const aaLast = Math.floor(Date.now() / 1000) - 86400 * 4;
+  seedCron("arc-agents", "improve-architecture", aaLast, "merged", /*active=*/ false);
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.repo).toBe("ke");
+});
+
+test("activity gate: worker events on cron and tier-hygiene rows do not count as activity", async () => {
+  writeFileSync(
+    cfgPath,
+    `skills: [improve-architecture]\nrepos: [ke]\n`,
+  );
+  const last = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", last, "merged", /*active=*/ false);
+
+  // A worker claiming the cron row itself…
+  const db = new Database(dbPath);
+  db.run(
+    `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts)
+     VALUES ('seed-ke-improve-architecture', 'claimed', 'arc-worker-test', 'worker claimed', ?)`,
+    [last + 3600],
+  );
+  // …and a worker event on a recent tier='hygiene' (non-cron) row…
+  const hygId = "act-ke-hygiene-row";
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, created_at)
+     VALUES (?, 'ke', 'hygiene followup', '', 'mvp', 'ready', 'task', 'hygiene', 'ops', ?)`,
+    [hygId, last + 3600],
+  );
+  db.run(
+    `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts)
+     VALUES (?, 'claimed', 'arc-worker-test', 'worker claimed', ?)`,
+    [hygId, last + 3600],
+  );
+  db.close();
+
+  // None of it counts → ke is quiet and the whole rotation skips.
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBe("no-activity");
+  expect(out.repos).toEqual(["ke"]);
+  // No new cron row was created.
+  expect(listCron().length).toBe(1);
+});
+
+test("activity gate: worker events before the last rotation do not count", async () => {
+  writeFileSync(
+    cfgPath,
+    `skills: [improve-architecture]\nrepos: [ke]\n`,
+  );
+  // Activity 10 days ago, rotation 5 days ago → nothing since → quiet.
+  const last = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", last, "merged", /*active=*/ false);
+  const db = new Database(dbPath);
+  seedActivityRows(db, "ke", "old", last - 86400 * 5);
+  db.close();
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBe("no-activity");
+});
+
+test("activity gate: non-worker agents (sweeper, triage) do not count as activity", async () => {
+  writeFileSync(
+    cfgPath,
+    `skills: [improve-architecture]\nrepos: [ke]\n`,
+  );
+  const last = Math.floor(Date.now() / 1000) - 86400 * 5;
+  seedCron("ke", "improve-architecture", last, "merged", /*active=*/ false);
+
+  // System churn on a non-hygiene row (reclaim-loop shape) must not keep the
+  // repo eligible — that is exactly the zero-deliverable pattern we gate.
+  const db = new Database(dbPath);
+  const id = "act-ke-churn";
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, tier, pool, created_at)
+     VALUES (?, 'ke', 'stuck row', '', 'mvp', 'blocked', 'task', 'mvp', 'build', ?)`,
+    [id, last - 86400],
+  );
+  db.run(
+    `INSERT INTO issue_events (issue_id, kind, agent, payload_md, ts)
+     VALUES (?, 'reclaimed', 'claim-stale-sweeper', 'orphan claim reset', ?)`,
+    [id, last + 3600],
+  );
+  db.close();
+
+  const r = await tick();
+  expect(r.exitCode).toBe(0);
+  const out = JSON.parse(r.stdout.toString());
+  expect(out.skipped).toBe("no-activity");
 });
 
 test("failed-dedup: a second tick within 48h is idempotent (single note per failed row)", async () => {
