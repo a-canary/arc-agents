@@ -120,7 +120,7 @@ Path: `~/agents/skills/governance/choose-wisely/SKILL.md`. Purpose: iterate `CHO
 `~/vault/ledger.db` — SQLite WAL.
 
 ### D-0002: Knowledge Engine
-`~/vault/ke/` — FTS5 + Qdrant. Deprecated `~/kb/`.
+`~/vault/ke/` — sqlite-vec semantic index over local all-MiniLM-L6-v2 embeddings (`~/vault/ke/_index/vec`). No FTS5, no external service. Deprecated `~/kb/`.
 
 ### D-0003: Per-Role State
 `~/vault/agents/<role>/` — memory.md, inbox/, journal/, outbox/.

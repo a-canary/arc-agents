@@ -12,7 +12,7 @@ Universal agent harness. Ledger-dispatched, interactive-pane runtime. Replaces `
 
 **M-3.** Runtime is **always-on interactive claude panes**, not headless `claude -p` subprocesses. Primary reason: transparency and observability — every worker is a live tmux pane you can attach to, watch tool use in real time, intervene mid-flight, and inspect after the fact via scrollback. Side benefit: interactive panes bill against the Max plan's Claude-Code bucket rather than the extra-usage/API bucket, which matters if Max with extra-usage off is the subscription shape in play.
 
-**M-4.** Every session does **ke-recall** on start and **ke-learn** on stop. Knowledge compounds in `~/vault/ke/` (FTS5 + Qdrant). Deprecated `~/kb/`.
+**M-4.** Every session does **ke-recall** on start and **ke-learn** on stop. Knowledge compounds in `~/vault/ke/` (sqlite-vec semantic index over local all-MiniLM-L6-v2 embeddings). Deprecated `~/kb/`.
 
 ---
 
@@ -174,7 +174,7 @@ Two-tier model policy: Opus 4.7 for synthesis (cap $10/day); minimax-m2.7 for bu
 
 ## 7. Skills (mandatory)
 
-1. `ke-recall` — session start, FTS5+Qdrant search against `~/vault/ke/`
+1. `ke-recall` — session start, sqlite-vec semantic search against `~/vault/ke/`
 2. `ke-learn` — session stop, queue distilled learnings
 3. `spawn` — write task row via bookie (no direct process spawn)
 

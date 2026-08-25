@@ -152,7 +152,7 @@ External state — not in the repo:
 
 ```
 ~/vault/ledger.db     ← the ledger
-~/vault/ke/           ← knowledge engine (FTS5 + Qdrant)
+~/vault/ke/           ← knowledge engine (sqlite-vec semantic index, local all-MiniLM-L6-v2)
 ~/vault/agents/<role>/  ← per-role memory, inbox, journal, outbox
 ~/worktrees/<repo>-<slug>/  ← worker scratch (one per task)
 ~/.config/arc/       ← UX module config
