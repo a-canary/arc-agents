@@ -1,6 +1,6 @@
 ---
 name: ke-learn
-description: "Write a new knowledge entry to ~/vault/ke/<scope>/ and update the FTS5 index. One file per insight. Stop-hook on dev/director sessions."
+description: "Write a new atomic-claim note via `ke learn` into ~/vault/ke/topics/ and index it in the sqlite-vec store. One note per insight. Stop-hook on dev/director sessions."
 ---
 
 # ke-learn — Knowledge Entry Write
@@ -19,30 +19,34 @@ If the session produced nothing surprising, write nothing.
 
 ## File format
 
-Path: `~/vault/ke/<scope>/<YYYY-MM-DD>-<kebab-slug>.md`
+The CLI writes the note itself — you supply raw material, not a rendered file.
+
+Path: `~/vault/ke/topics/<slug>.md` (slug derived from the distilled summary).
 
 ```
 ---
-date: 2026-05-14
-scope: fixes
-tags: [ledger, sqlite, fts5]
-source: session-<short-id>
+title: "<summary, first 80 chars>"
+created: "YYYY-MM-DD"
+updated: "YYYY-MM-DD"
+tags: ["ke-generated", "ke-learn"]
+sources: ["<source-label>"]
+src: "learn"
+parent_topic: "<topic or empty>"
 ---
 
-# <one-line headline>
+# <summary>
 
-**Context:** what was happening.
-
-**Insight:** the durable lesson.
-
-**Refs:** commit shas, slice ids, file paths.
+- [high|medium|low] <atomic claim> [src:<label>]( <ref>)?
 ```
+
+Each fact is one atomic-claim line; the `( ref)` suffix appears only when the
+resource was a file or URL.
 
 ## Procedure
 
-1. `bun ~/repos/ke/bin/ke-tool.ts learn --scope <scope> --title "<headline>" --body "<md>" [--tags "a,b"]` (or `ke learn …` if installed on PATH).
-2. CLI writes file, then runs `INSERT INTO ke(path, body) VALUES(?, ?)` to update the FTS index at `~/vault/ke/_index/vec/ke.sqlite`.
-3. Returns the new file path.
+1. `bun ~/repos/ke/bin/ke-tool.ts learn "<fact or text>" [--topic <topic>]` (or `ke learn …` if installed on PATH). The resource may also be `@path/to/file.md` or an http(s) URL — fetched once.
+2. CLI runs LLM distill over the material, atomizes it into atomic claims, writes the note to `~/vault/ke/topics/<slug>.md`, then embeds + upserts it in the sqlite-vec store so it is immediately searchable via ke-recall.
+3. Prints `Written: <relPath>` and `Indexed: <relPath>` on success.
 
 ## Anti-patterns
 
