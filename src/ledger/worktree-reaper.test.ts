@@ -8,11 +8,11 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrate } from "./migrate";
-import { reapWorktrees, backstopPurgeWorktrees } from "./worktree-reaper";
+import { reapWorktrees, backstopPurgeWorktrees, sweepTmpFixtures } from "./worktree-reaper";
 
 let workDir: string;
 let repoDir: string;
@@ -663,4 +663,74 @@ test("(c) backstop PRESERVES an ahead-of-main orphan when gh is unavailable (nul
   const mine = res.find((r) => r.worktree_path === dir);
   expect(mine?.outcome).toBe("kept-has-commits");
   expect(existsSync(dir)).toBe(true);
+});
+
+// --- (d) tmp-fixture sweep -------------------------------------------------
+// A hung/SIGKILLed test run never reaches its afterEach, so its $TMPDIR scratch
+// dir survives — and with it any worktree it registered against a real repo
+// (2026-08-20: 52 dirs, ~51 prunable registrations). The sweep is the backstop.
+// tmpRoot is a throwaway dir under workDir, never the real /tmp.
+
+function fixtureRoot(): string {
+  const root = join(workDir, "tmp");
+  mkdirSync(root, { recursive: true });
+  return root;
+}
+
+test("sweepTmpFixtures removes an aged fixture dir and prunes the worktree it registered", () => {
+  const tmpRoot = fixtureRoot();
+  const home = join(tmpRoot, "arc-pi-home-abc123");
+  const leaked = join(home, "worktrees", "arc-agents-hung-task");
+  mkdirSync(home, { recursive: true });
+  const add = git(repoDir, ["worktree", "add", "-q", "--detach", leaked, "HEAD"]);
+  if (!add.ok) throw new Error(`worktree add failed: ${add.out}`);
+  expect(git(repoDir, ["worktree", "list"]).out).toContain(leaked);
+
+  const r = sweepTmpFixtures({
+    tmpRoot,
+    parentRepo: repoDir,
+    maxAgeSec: 6 * 3600,
+    now: Math.floor(Date.now() / 1000) + 7 * 3600,
+  });
+
+  expect(r).toEqual([{ path: home, outcome: "removed" }]);
+  expect(existsSync(home)).toBe(false);
+  // Registration gone too — otherwise it lingers as a prunable orphan forever.
+  expect(git(repoDir, ["worktree", "list"]).out).not.toContain(leaked);
+});
+
+test("sweepTmpFixtures keeps a fixture younger than maxAgeSec (a live suite is not yanked)", () => {
+  const tmpRoot = fixtureRoot();
+  const dir = join(tmpRoot, "arc-factory-test-Xy12Ab");
+  mkdirSync(dir, { recursive: true });
+
+  const r = sweepTmpFixtures({ tmpRoot, parentRepo: repoDir, maxAgeSec: 6 * 3600 });
+
+  expect(r).toEqual([{ path: dir, outcome: "kept-too-young" }]);
+  expect(existsSync(dir)).toBe(true);
+});
+
+test("sweepTmpFixtures ignores non-fixture arc- dirs and non-arc dirs", () => {
+  const tmpRoot = fixtureRoot();
+  for (const name of ["arc-bench", "arc-cache.d", "vscode-arc-test-abc123"]) {
+    mkdirSync(join(tmpRoot, name), { recursive: true });
+  }
+  writeFileSync(join(tmpRoot, "arc-factory-test-file01"), "not a dir\n");
+
+  const r = sweepTmpFixtures({
+    tmpRoot,
+    parentRepo: repoDir,
+    maxAgeSec: 0,
+    now: Math.floor(Date.now() / 1000) + 7 * 3600,
+  });
+
+  expect(r).toEqual([]);
+  for (const name of ["arc-bench", "arc-cache.d", "vscode-arc-test-abc123"]) {
+    expect(existsSync(join(tmpRoot, name))).toBe(true);
+  }
+  expect(existsSync(join(tmpRoot, "arc-factory-test-file01"))).toBe(true);
+});
+
+test("sweepTmpFixtures on a missing tmpRoot is a no-op, not a throw", () => {
+  expect(sweepTmpFixtures({ tmpRoot: join(workDir, "nope"), parentRepo: repoDir, maxAgeSec: 0 })).toEqual([]);
 });

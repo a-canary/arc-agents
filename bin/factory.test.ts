@@ -131,11 +131,41 @@ beforeEach(() => {
   if (r.status !== 0) throw new Error(`init failed: ${r.stderr}`);
 });
 
-afterEach(() => {
+// Teardown is a named function, not an inline afterEach body, so the
+// leaves-no-litter test below can drive it directly. bun runs afterEach after a
+// PASSING and a FAILING test alike, so every fixture this file creates must be
+// reachable from here — i.e. rooted under `workDir`. Never mkdtemp straight
+// into tmpdir() outside beforeEach: a test that throws mid-body skips its own
+// cleanup line and the dir leaks (2026-08-20 incident, 52 dirs left behind).
+function teardown() {
   // Kill any test tmux sessions
   for (const s of listWorkers()) tmux(["kill-session", "-t", s]);
   rmSync(workDir, { recursive: true, force: true });
-});
+  // Boot tests run worker-shell.sh with HOME pointed inside workDir, so it
+  // registers its worktree against REPO at a path we just deleted. `prune`
+  // drops only registrations whose directory is gone — a live worker's
+  // worktree still exists on disk and is never touched.
+  spawnSync("git", ["-C", REPO, "worktree", "prune"], { encoding: "utf8" });
+}
+
+afterEach(teardown);
+
+// Direct children of tmpdir() matching this file's fixture prefix. Callers diff
+// two snapshots so a concurrent test run's dirs never register as our litter.
+function tmpArcDirs(): string[] {
+  const r = spawnSync("find", [tmpdir(), "-maxdepth", "1", "-type", "d", "-name", "arc-*"], {
+    encoding: "utf8",
+  });
+  return r.stdout.split("\n").filter(Boolean).sort();
+}
+
+function registeredWorktrees(): string[] {
+  const r = spawnSync("git", ["-C", REPO, "worktree", "list", "--porcelain"], { encoding: "utf8" });
+  return r.stdout
+    .split("\n")
+    .filter((l) => l.startsWith("worktree "))
+    .map((l) => l.slice("worktree ".length));
+}
 
 function createTask(title: string, type = "mvp") {
   const r = bun([LEDGER, "create", "--kind", "task", "--type", type, "--title", title]);
@@ -459,7 +489,10 @@ test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a strippe
   // want in a unit test). Prepend the real `~/.bun/bin` + `~/.local/bin` to
   // PATH so the bun/claude guards are no-ops; the only candidate that resolves
   // `pi` is the new ~/node_modules/.bin one.
-  const fakeHome = mkdtempSync(join(tmpdir(), "arc-pi-home-"));
+  // Rooted under workDir so `teardown` reclaims it even if an expect below
+  // throws — this fixture used to mkdtemp into tmpdir() and rm at the end of
+  // the body, which leaked on every failure/timeout.
+  const fakeHome = mkdtempSync(join(workDir, "pi-home-"));
   const fakePiHomeDir = join(fakeHome, "node_modules", ".bin");
   mkdirSync(fakePiHomeDir, { recursive: true });
   // Fake `pi` that records its invocation AND exercises the same self-report
@@ -537,8 +570,6 @@ test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a strippe
   const issue = JSON.parse(show.stdout).issue;
   expect(issue.claimed_by).toBe("w-pi-strip");
   expect(issue.state).toBe("review");
-
-  rmSync(fakeHome, { recursive: true, force: true });
 });
 
 test("worker-shell.sh restores the node-global bin dir so the real `pi` resolves on systemd's stripped PATH", () => {
@@ -764,7 +795,7 @@ test("worker-shell.sh claims atomically: only one of two parallel shells wins fo
 import { existsSync } from "node:fs";
 
 function setupMergeableRepo(): { parent: string; wt: string; branch: string } {
-  const root = mkdtempSync(join(tmpdir(), "arc-prune-test-"));
+  const root = mkdtempSync(join(workDir, "prune-test-"));
   const parent = join(root, "parent");
   spawnSync("git", ["init", "-q", "-b", "main", parent], { encoding: "utf8" });
   spawnSync("git", ["-C", parent, "config", "user.email", "t@t"], { encoding: "utf8" });
@@ -888,4 +919,32 @@ test("printMergeablePruned emits expected JSON shape on stdout", async () => {
   expect(j.pruned).toEqual([{ path: "/w/foo", branch: "foo" }]);
   expect(j.skipped).toEqual([{ path: "/w/bar", branch: null, reason: "dirty-worktree" }]);
   expect(typeof j.ts).toBe("string");
+});
+
+// Acceptance for the 2026-08-20 litter incident: a test that dies mid-body must
+// still leave zero /tmp/arc-* dirs and zero worktree registrations of its own.
+// The failure is simulated by never running any in-body cleanup — exactly what
+// a thrown expect(), a timeout, or a reaped tmux session produces — and then
+// driving `teardown` (which bun's afterEach runs on pass and fail alike).
+test("teardown reclaims fixtures and worktree registrations left by a mid-run failure", () => {
+  const tmpBefore = new Set(tmpArcDirs());
+  const wtBefore = new Set(registeredWorktrees());
+
+  // Litter the way the pi-strip boot test does: a fake HOME plus a worktree
+  // registered against REPO at a path inside it.
+  const fakeHome = mkdtempSync(join(workDir, "pi-home-"));
+  const wt = join(fakeHome, "worktrees", `arc-agents-${prefix}`);
+  const add = spawnSync("git", ["-C", REPO, "worktree", "add", "--force", "--detach", wt, "HEAD"], {
+    encoding: "utf8",
+  });
+  if (add.status !== 0) throw new Error(`worktree add failed: ${add.stderr}`);
+  expect(registeredWorktrees()).toContain(wt);
+
+  // ...and the test "fails" here: no rmSync, no worktree remove.
+  teardown();
+
+  expect(existsSync(workDir)).toBe(false);
+  expect(existsSync(fakeHome)).toBe(false);
+  expect(registeredWorktrees().filter((p) => !wtBefore.has(p))).toEqual([]);
+  expect(tmpArcDirs().filter((p) => !tmpBefore.has(p))).toEqual([]);
 });
