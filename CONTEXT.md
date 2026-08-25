@@ -139,6 +139,9 @@ The grouping tier of the feedback-aggregate pipeline (`collectCategories` in `bi
 ## Proposal Corroboration
 The gate that determines whether a candidate theme has enough evidence to trigger the Proposal Generator (`confirmsProposal` in `bin/feedback-aggregate.ts`). One trusted voice (author_trust=operator) or three distinct untrusted submitters are required. Distinctness is computed on the submitter field: a null submitter counts as its own distinct key (formatted as `id:<row-id>`), so anonymous public feedback can still corroborate. The anti-spam ceiling is rate-limiting at intake, not here — three anonymous rows could be one person, but the aggregation tier defers that check to the /feedback boundary. See `isTrusted()` and `confirmsProposal()` in `bin/feedback-aggregate.ts`.
 
+## Cross-Repo Gate
+A factory-tick sweep (`sweepCrossRepoGate` in `src/ledger/cross-repo-gate.ts`) that detects ready tasks mis-routed to the wrong project's worktree. Uses a mention-based heuristic scanning for `a-canary/<repo>` slugs and `<project>:` title prefixes. Parks flagged rows `hitl=1` with a `cross-repo-gate` event; the gate-triage arm (opus judge) adjudicates. Does not re-route — deterministic text heuristics cannot distinguish "work in repo X" from "work about repo X". See [docs/decisions/cross-repo-gate-mention-based-heuristic.md](docs/decisions/cross-repo-gate-mention-based-heuristic.md).
+
 ## director-brief
 The AXI verb `ledger director-brief --project <P>`: a plain status utility partitioning git-log, project ledger rows, and open feedback into `done` / `current` / `next` buckets with size hints. Pure module `brief()` in `src/director/director-brief.ts` behind a thin CLI shell. Consumed by [a-canary/arc-skills](https://github.com/a-canary/arc-skills)'s `/director` — the actual instantiated, event-driven mission-owning agent (12hr cron backstop). arc-agents exposes the data; it does not run the loop.
 
