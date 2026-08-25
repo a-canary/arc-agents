@@ -12,7 +12,10 @@ const DB = process.argv[2] ?? `${process.env.HOME}/vault/ledger.db`;
 const REPO = new URL("..", import.meta.url).pathname;
 
 export function commandFor(alias: string): string {
-  const r = spawnSync(["bun", `${REPO}bin/ledger.ts`, "alias-cmd", alias]);
+  // process.execPath is the bun binary itself (this script runs under bun).
+  // Bare "bun" ENOENTs under cron, whose PATH has no ~/.bun/bin — the sweep
+  // then logged ENOENT every 5-min tick and no row ever recovered.
+  const r = spawnSync([process.execPath, `${REPO}bin/ledger.ts`, "alias-cmd", alias]);
   const first = new TextDecoder().decode(r.stdout).split("\n").find((l) => l.trim());
   if (r.exitCode !== 0 || !first) throw new Error(`alias-cmd failed for '${alias}'`);
   // Probe only the first alias-cmd candidate: if one engine responds, the alias

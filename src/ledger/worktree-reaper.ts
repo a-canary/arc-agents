@@ -3,9 +3,11 @@
 //
 // Three triggers (Aaron's reap policy, 2026-05-27):
 //   (a) prune-after-merge   — state=merged rows: work is in main, worktree is
-//       scratch, safe to remove. The worktree's branch is the feature branch;
-//       its unpushed commits would be lost on worktree remove. Workers must
-//       push the feature branch to origin BEFORE merging the ledger row:
+//       scratch, safe to remove. `git worktree remove` never deletes the
+//       branch — the loss path is the reaper's best-effort `git branch -D`
+//       right after removal, which destroys UNPUSHED commits (a commit on an
+//       in-sync upstream survives: origin still holds it). Workers must push
+//       the feature branch to origin BEFORE merging the ledger row:
 //       `git push -u origin <branch> && git checkout main && git merge <branch>`.
 //       Observed loss (2026-06): iter20 write-child committed df29124 to a
 //       worktree branch that was reaped before the branch was pushed — commit
@@ -13,9 +15,10 @@
 //       lifecycle expectation.
 //   (b) prune-after-triage  — state IN (failed,cancelled) rows: the triage/
 //       reconcile flow has finished with them. Remove ONLY if the worktree has
-//       zero commits ahead of main (nothing to salvage). A failed/cancelled
-//       row WITH commits is PRESERVED (outcome=has-commits) so the human can
-//       decide salvage. blocked is still excluded — decomposition parents need
+//       no at-risk commits — unpushed when the branch has an upstream, or
+//       ahead of main otherwise (nothing to salvage). A failed/cancelled
+//       row WITH at-risk commits is PRESERVED (outcome=has-commits) so the
+//       human can decide salvage. blocked is still excluded — decomposition parents need
 //       their worktree until children resolve.
 //   (c) 7-day backstop      — backstopPurgeWorktrees() below: a disk-scan for
 //       orphan worktrees that no live row references (the pre-startup sweep
@@ -47,8 +50,9 @@ export type ReapedWorktree = {
   issue_id: string;
   worktree_path: string | null;
   branch: string | null;
-  // has-commits: a failed/cancelled row whose worktree has unmerged commits —
-  // preserved for human salvage, row untouched.
+  // has-commits: a failed/cancelled row whose worktree has at-risk commits
+  // (unpushed vs upstream, or ahead of main when upstream-less) — preserved
+  // for human salvage, row untouched.
   // main-working-tree: worktree_path points at a repo's MAIN checkout (not a
   // linked worktree). `git worktree remove` can never delete a main tree, so
   // retrying every tick is a hot loop. We null the columns instead (the work
@@ -103,13 +107,19 @@ function isMainWorktree(path: string): boolean {
   return gitDir.out === commonDir.out;
 }
 
-// Count commits on the worktree's HEAD that are NOT reachable from main —
-// i.e. unmerged work. 0 means the branch is fully merged (or never diverged):
-// nothing to salvage. Any git failure (detached, no main, corrupt) is treated
-// as "has commits" (return >0) so we err on the side of PRESERVING — we never
-// remove a worktree we can't prove is safe.
-function commitsAheadOfMain(worktreePath: string): number {
-  const r = git(worktreePath, ["rev-list", "--count", "main..HEAD"]);
+// Count commits on the worktree's HEAD that would be lost if the local branch
+// were deleted — i.e. at-risk work. When the branch has an upstream, count
+// against it (`@{u}..HEAD`): a pushed commit survives `branch -D` because
+// origin still holds it, so counting against main (the old behavior) mislabeled
+// fully-pushed branches like deploy/host-p600 as at-risk. Only upstream-less
+// branches fall back to `main..HEAD`. 0 means nothing at risk. Any git failure
+// (detached HEAD, no main, corrupt) is treated as "has commits" (return >0)
+// so we err on the side of PRESERVING — we never remove a worktree we can't
+// prove is safe.
+function unpushedCommits(worktreePath: string): number {
+  const hasUpstream = git(worktreePath, ["rev-parse", "--verify", "--quiet", "@{u}"]).ok;
+  const base = hasUpstream ? "@{u}" : "main";
+  const r = git(worktreePath, ["rev-list", "--count", `${base}..HEAD`]);
   if (!r.ok) return 1;
   const n = parseInt(r.out.trim(), 10);
   return Number.isFinite(n) ? n : 1;
@@ -159,7 +169,8 @@ export const defaultGhRunner: GhRunner = (args) => {
 // True when `branch` has a merged PR on `slug` (owner/repo). Returns null
 // when we can't determine (gh missing, no auth, no origin remote) — the
 // reaper then falls through to the conservative kept-has-commits outcome.
-// Squash-merged branches show commitsAheadOfMain==1 but are dead; the PR
+// Squash-merged branches show unpushedCommits==1 (no upstream, ahead of main)
+// but are dead; the PR
 // state on origin is the authoritative answer that branch ancestry can't give.
 function ghPrMerged(branch: string, slug: string | null, runner: GhRunner): boolean | null {
   if (!slug) return null;
@@ -194,12 +205,13 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
     const wt = row.worktree_path;
     const br = row.branch;
 
-    // (b) commit-guard: a failed/cancelled worktree with unmerged commits is
+    // (b) commit-guard: a failed/cancelled worktree with at-risk commits
+    // (unpushed vs upstream, or ahead of main when upstream-less) is
     // preserved for human salvage. merged rows skip this — their work is
     // already in main, so the worktree is scratch regardless of "ahead" count.
-    // The guard runs only when the dir still exists (commitsAheadOfMain needs
+    // The guard runs only when the dir still exists (unpushedCommits needs
     // a live worktree); a missing dir falls through to the cleanup below.
-    if (row.state !== "merged" && existsSync(wt) && commitsAheadOfMain(wt) > 0) {
+    if (row.state !== "merged" && existsSync(wt) && unpushedCommits(wt) > 0) {
       reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "has-commits" });
       continue;
     }
@@ -299,9 +311,9 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
 // provably safe:
 //   - branch fully merged to main (0 commits ahead) → pure scratch, removed
 //     regardless of age; OR
-//   - aged past maxAgeSec AND no live ledger row references it AND 0 commits
-//     ahead of main.
-// It NEVER removes a dir with unmerged commits (Aaron: "delete nothing" for
+//   - aged past maxAgeSec AND no live ledger row references it AND 0 at-risk
+//     commits (unpushed vs upstream, or ahead of main when upstream-less).
+// It NEVER removes a dir with at-risk commits (Aaron: "delete nothing" for
 // commit-bearing orphans), and NEVER removes a dir a live ledger row still
 // references (the row-driven reaper owns those).
 //
@@ -382,13 +394,14 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
       continue;
     }
 
-    // Unmerged commits → never auto-remove (preserve for salvage) UNLESS the
+    // At-risk commits (unpushed vs upstream, or ahead of main when
+    // upstream-less) → never auto-remove (preserve for salvage) UNLESS the
     // branch has a merged PR on origin: squash-merge rewrites history so the
     // branch tip is NOT an ancestor of post-squash origin/main, but the work
     // IS in main. The PR state on origin is the only authoritative answer
     // branch ancestry can't give. ghPrMerged=null means we can't tell → keep.
     // `integrated` is also set true when behindMain > 0 (regular merge).
-    const ahead = commitsAheadOfMain(dir);
+    const ahead = unpushedCommits(dir);
     const behind = behindMain(dir);
     let integrated = behind > 0;
     if (ahead > 0 && !integrated) {

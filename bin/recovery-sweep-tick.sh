@@ -27,6 +27,12 @@ set -euo pipefail
 
 REPO="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 BUN="${BUN:-/home/aaron/.bun/bin/bun}"
+# cron's PATH (/usr/bin:/bin) resolves neither `pi` (lives in node's bin dir,
+# no /usr/local/bin symlink) nor `cli-agent` (~/.local/bin). The sweep spawns
+# `bash -c "<alias cmd>"` for its probe, so the alias command must resolve —
+# without this every probe dies rc=127 (command not found) and rows never
+# recover. Prepend the real locations; keep the inherited PATH as tail.
+export PATH="$HOME/.local/bin:/usr/local/lib/node_modules/node/bin:/usr/local/bin:$PATH"
 SWEEP="$REPO/bin/recovery-sweep.ts"
 LOCK=/tmp/arc-recovery-sweep-tick.lock
 

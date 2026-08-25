@@ -2424,6 +2424,26 @@ test("update --in-place with no worktree_path set (rows from non-worktree source
   }
 });
 
+// Regression: shell interpolation can embed leading/trailing whitespace or
+// newlines in the --worktree flag value. Untrimmed whitespace corrupts the
+// stored worktree_path, breaking the in-place merge worktree-exists check
+// (fix: path-strip, 2026-08-19). The update verb must trim before storing.
+test("update --worktree trims leading/trailing whitespace from path", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    // Pass a path with leading/trailing spaces and newlines (simulates shell interpolation artifact).
+    const pathWithWhitespace = `  ${process.cwd()}\n`;
+    await runStrict(db, "update", c.id, "--worktree", pathWithWhitespace);
+    // Fetch the stored value and verify it's trimmed.
+    const shown = (await run(db, "show", c.id)) as { issue: { worktree_path: string | null } };
+    expect(shown.issue.worktree_path).toBe(process.cwd());
+  } finally {
+    cleanup();
+  }
+});
+
 // ── join-status helpers (top-level so all tests can use them) ──────
 // `ledger join-status <parent>` is a pure read: no state writes, no
 // updated_at bump, no claimed_by clear. It tells a worker (or a human)

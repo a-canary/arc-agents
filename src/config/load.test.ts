@@ -22,7 +22,8 @@ test("loadConfig parses the real repo config.json", () => {
 
 test("resolveAlias returns the primary command of a known alias group", () => {
   const cfg = loadConfig(repoRoot);
-  // `smart` is a failover group; resolveAlias returns the first candidate.
+  // `smart` is a retired alias name; both calls fall back to default_alias,
+  // so resolveAlias must return the first candidate of that fallback group.
   const cmd = resolveAlias("smart", cfg);
   expect(cmd).toBe(getAliasCommands("smart", cfg)[0]!);
   expect(cmd).toContain("{prompt}");
@@ -30,12 +31,17 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  const cmds = getAliasCommands("smart", cfg);
-  // The real config's smart tier is a cli-agent pool call with an interactive opus last-resort.
-  expect(cmds.length).toBeGreaterThan(1);
-  expect(cmds[0]).toContain("cli-agent");
-  expect(cmds[cmds.length - 1]).toContain("opus");
-  for (const c of cmds) expect(c).toContain("{prompt}");
+  // Current routing (arc-llm-proxy cutover): every alias is a single
+  // `pi --model arc-proxy/<alias>` command. A retired alias name (e.g.
+  // `minimax-build`, still referenced by row markers) falls back to
+  // default_alias.
+  const cmds = getAliasCommands("planning", cfg);
+  expect(cmds).toHaveLength(1);
+  expect(cmds[0]).toContain("pi --model arc-proxy/planning");
+  expect(cmds[0]).toContain("{prompt}");
+  expect(getAliasCommands("minimax-build", cfg)).toEqual(
+    getAliasCommands(cfg.default_alias, cfg),
+  );
 });
 
 test("getAliasCommands normalizes a bare-string alias to a one-element group", () => {

@@ -23,13 +23,13 @@ test("exits 0 when bin/recovery-sweep.ts is absent (forward-reference no-op)", (
   // is expected to be missing — if this test ever fails with rc!=0, either
   // the sweep MVP has landed (and this test should be retired) or the
   // forward-reference check has regressed.
-  const r = spawnSync(SCRIPT, [], { encoding: "utf8" });
   if (existsSync(join(dirname(SCRIPT), "recovery-sweep.ts"))) {
-    // Sweep MVP has landed — this test no longer applies. Pass trivially.
-    // (A real sweep MVP test will exercise the flock path directly.)
-    expect(r.status).toBeDefined();
+    // Sweep MVP has landed — the forward-reference no-op path no longer
+    // applies. Pass without running the script: a real sweep run does a
+    // live model probe and can take minutes (unit tests must not block on it).
     return;
   }
+  const r = spawnSync(SCRIPT, [], { encoding: "utf8" });
   expect(r.status).toBe(0);
   expect(r.stderr).toBe("");
 });
