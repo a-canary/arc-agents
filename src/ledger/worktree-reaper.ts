@@ -38,7 +38,7 @@
 //     leave-it-alone signal and just log.
 
 import { spawnSync } from "node:child_process";
-import { existsSync, readdirSync, statSync } from "node:fs";
+import { existsSync, readdirSync, rmSync, statSync } from "node:fs";
 import { join } from "node:path";
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
@@ -426,6 +426,90 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
     }
     results.push({ worktree_path: dir, outcome: "removed" });
   }
+
+  return results;
+}
+
+// ---------------------------------------------------------------------------
+// (d) tmp-fixture sweep — abandoned test fixtures under $TMPDIR.
+//
+// Test files root their scratch at `mkdtempSync(join(tmpdir(), "arc-<x>-"))`
+// and tear it down in afterEach, which covers pass AND fail. It does NOT cover
+// a hung or SIGKILLed run: the process dies before afterEach, the dir survives,
+// and any worktree the fixture registered against a real repo survives with it
+// as a prunable registration.
+//
+// 2026-08-20 incident: 52 leftover /tmp/arc-factory-test-* + /tmp/arc-pi-home-*
+// dirs and ~51 registered worktrees pointing into them (102 -> 51 after a manual
+// rm + prune). A snapshot the same day found 1934 /tmp/arc-* dirs total.
+//
+// ponytail: mtime age gate, not liveness — a SIGKILLed run leaves no pid to
+// check. A full test suite runs in minutes, so the default 6h gate cannot reach
+// a fixture that is still in use. Raise ARC_TMP_FIXTURE_MAX_AGE if that changes.
+//
+// SECURITY: only direct children of `tmpRoot` whose basename matches
+// FIXTURE_NAME (an `arc-` prefixed mkdtemp/test scratch name) are considered.
+// No shell; rmSync is scoped to the resolved child path.
+
+// `arc-` prefixed AND either a mkdtemp dir (6 trailing random chars) or an
+// explicitly test-named scratch dir. Deliberately narrow: a long-lived arc
+// runtime dir like `arc-bench` or `arc-cache` must not match.
+const FIXTURE_NAME = /^arc-[A-Za-z0-9._-]*(?:-test[A-Za-z0-9._-]*|-[A-Za-z0-9]{6})$/;
+
+export type TmpFixtureResult = {
+  path: string;
+  outcome: "removed" | "kept-too-young" | "rm-failed";
+  detail?: string;
+};
+
+export type TmpFixtureOpts = {
+  tmpRoot: string;
+  // Repo whose worktree registrations are pruned after a removal — fixtures
+  // that ran a fake-HOME worker register their worktree here.
+  parentRepo: string;
+  maxAgeSec: number;
+  now?: number; // unix seconds; overridable for tests
+};
+
+export function sweepTmpFixtures(opts: TmpFixtureOpts): TmpFixtureResult[] {
+  const { tmpRoot, parentRepo, maxAgeSec } = opts;
+  const now = opts.now ?? Math.floor(Date.now() / 1000);
+  const results: TmpFixtureResult[] = [];
+
+  let entries: string[];
+  try {
+    entries = readdirSync(tmpRoot);
+  } catch {
+    return results;
+  }
+
+  for (const name of entries) {
+    if (!FIXTURE_NAME.test(name)) continue;
+    const dir = join(tmpRoot, name);
+    let st: ReturnType<typeof statSync>;
+    try {
+      st = statSync(dir);
+    } catch {
+      continue;
+    }
+    if (!st.isDirectory()) continue;
+
+    const ageSec = now - Math.floor(st.mtimeMs / 1000);
+    if (ageSec < maxAgeSec) {
+      results.push({ path: dir, outcome: "kept-too-young" });
+      continue;
+    }
+    try {
+      rmSync(dir, { recursive: true, force: true });
+      results.push({ path: dir, outcome: "removed" });
+    } catch (e) {
+      results.push({ path: dir, outcome: "rm-failed", detail: String(e) });
+    }
+  }
+
+  // Drop registrations whose dir we just deleted. `worktree prune` only touches
+  // entries whose directory is already gone, so a live worker is never hit.
+  if (results.some((r) => r.outcome === "removed")) git(parentRepo, ["worktree", "prune"]);
 
   return results;
 }

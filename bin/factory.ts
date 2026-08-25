@@ -39,8 +39,10 @@ import { openWithMigrate } from "../src/ledger/db";
 import {
   reapWorktrees,
   backstopPurgeWorktrees,
+  sweepTmpFixtures,
   type ReapedWorktree,
   type BackstopResult,
+  type TmpFixtureResult,
 } from "../src/ledger/worktree-reaper";
 import { runLedgerJson } from "../src/ledger/cli-invoke";
 import {
@@ -76,6 +78,11 @@ const WORKTREES_ROOT =
 const BACKSTOP_MAX_AGE = parseInt(process.env.ARC_BACKSTOP_MAX_AGE ?? `${7 * 86400}`, 10);
 const BACKSTOP_INTERVAL = parseInt(process.env.ARC_BACKSTOP_INTERVAL ?? "1800", 10);
 const BACKSTOP_DISABLE = process.env.ARC_BACKSTOP_DISABLE === "1";
+// Trigger (d): abandoned test fixtures under $TMPDIR. Rides the same interval
+// gate as (c) — a hung/SIGKILLed test run leaks its /tmp scratch dir plus any
+// worktree registered into it (2026-08-20: 52 dirs, ~51 prunable worktrees).
+const TMPDIR_ROOT = process.env.TMPDIR ?? "/tmp";
+const TMP_FIXTURE_MAX_AGE = parseInt(process.env.ARC_TMP_FIXTURE_MAX_AGE ?? `${6 * 3600}`, 10);
 let lastBackstop = 0;
 
 export type TickResult = {
@@ -83,6 +90,7 @@ export type TickResult = {
   swept: string[];
   worktrees: ReapedWorktree[];
   backstop: BackstopResult[];
+  tmp_fixtures: TmpFixtureResult[];
   sweeper_cooldown_excluded: { orphan: string[]; stale: string[] };
   live: number;
   ready: number;
@@ -110,12 +118,19 @@ export function tick(): TickResult {
   // Interval-gated so the readdir + per-dir git calls don't run every 5s tick.
   const nowSec = Math.floor(Date.now() / 1000);
   let backstop: BackstopResult[] = [];
+  let tmpFixtures: TmpFixtureResult[] = [];
   if (!BACKSTOP_DISABLE && nowSec - lastBackstop >= BACKSTOP_INTERVAL) {
     lastBackstop = nowSec;
     backstop = backstopPurgeWorktrees(db, {
       worktreesRoot: WORKTREES_ROOT,
       parentRepo: REPO,
       maxAgeSec: BACKSTOP_MAX_AGE,
+      now: nowSec,
+    });
+    tmpFixtures = sweepTmpFixtures({
+      tmpRoot: TMPDIR_ROOT,
+      parentRepo: REPO,
+      maxAgeSec: TMP_FIXTURE_MAX_AGE,
       now: nowSec,
     });
   }
@@ -170,6 +185,7 @@ export function tick(): TickResult {
     swept: [...orphans, ...sweep.ids],
     worktrees,
     backstop,
+    tmp_fixtures: tmpFixtures,
     sweeper_cooldown_excluded: sweeperCooldownExcluded,
     live: curAny + curInteractive,
     ready: allReady.length,
