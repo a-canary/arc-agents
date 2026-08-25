@@ -9,10 +9,8 @@ These examples run from a clean clone of `arc-agents` with zero API keys.
 
 ### Optional
 - **Docker** — needed only if you want to start a ledger DB in a container for the migration demo
-- **Qdrant** — needed for the KE (knowledge engine) search example; start with:
-  ```bash
-  docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
-  ```
+
+The KE (knowledge engine) search example needs no external services — ke indexes `~/vault/ke/` with sqlite-vec over local all-MiniLM-L6-v2 embeddings.
 
 ## Quick start
 
@@ -61,9 +59,6 @@ separate `ke` installation at `~/repos/ke`. Those skills are present in
 # Install ke (separate repo)
 git clone git@github.com:a-canary/ke.git ~/repos/ke
 cd ~/repos/ke && bun install
-
-# Start Qdrant
-docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 
 # Use arc-agents skills
 cd ~/repos/arc-agents
