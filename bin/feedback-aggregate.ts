@@ -18,7 +18,10 @@
 //
 //   feedback-aggregate.ts [--project P] [--limit N] [--validate-stale]
 //
-// Two-pass stale/superseded flow (this slice):
+// Two-pass stale/superseded flow (this slice). Dedup is via theme_id, not
+// body-similarity scoring: each feedback row is linked to a single PRD by the
+// Collector/Proposal Generator theme assignment. Pass 2 only re-verifies the
+// PRD's merge state — no content-level comparison against the PRD body.
 //   1. flagStaleFeedback — runs by default; flags rows whose theme_id points to a
 //      merged PRD (state=merged, updated_at > feedback.created_at).
 //   2. validateStaleCandidates — opt-in via --validate-stale; re-verifies the PRD
@@ -302,10 +305,10 @@ export function markDeclined(db: DB, ids: string[]): void {
 // and not deleted) and either resolves the feedback with resolution='superseded'
 // or clears the tentative verdict and leaves it 'new' for a future run.
 //
-// ponytail: validation in pass 2 is just "is the row still merged" — there's no
-// body-similarity scoring against the PRD. The feedback's theme_id already
-// expresses the link; the validator's job is to catch stale links where the
-// PRD was reverted after pass 1 flagged it.
+// Design note: pass 2 validation is intentionally just "is the PRD still merged".
+// There is no body-similarity scoring against the PRD text because the feedback's
+// theme_id already expresses the semantic link. The validator's only job is to
+// catch stale links where the PRD was reverted/deprecated after pass 1 flagged it.
 
 /** Pass 1: flag new-state feedback whose theme_id is a merged PRD created later.
  *  Writes stale_candidate_at + stale_candidate_prd_id; returns the number flagged. */
