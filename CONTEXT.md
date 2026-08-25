@@ -130,8 +130,12 @@ Agent Execution Interface — the `ledger` CLI as a delegation surface arc-skill
 ## Steering Mode
 The `mode` of a feedback row: `imperative` (an order — fires a direct verb now) or `hypothesis` (a guess — validated on one concrete case before any scale). NULL is unstamped and treated as a hypothesis. Classified from the input by the pure `parse()` (a leading `!` ⇒ imperative).
 
+No CHECK constraint on the `mode` column — the feedback table is co-owned with arc-webui, which writes rows from its own `/feedback` form without applying CHECK constraints. Values are conventions enforced in code (`feedback-aggregate.ts`), not in the schema.
+
 ## author_trust
 The trust class of a feedback row's author: `operator` (trusted — a single row acts) or `product` (untrusted — three distinct submitters needed to corroborate). Keyed on the *author*, not the channel; closes the `source='direct'` degeneracy where any single product row could mint a PRD.
+
+No CHECK constraint on the `author_trust` column — same co-ownership as `mode` above. Values are conventions enforced in code, not in the schema.
 
 ## Feedback Collector
 The grouping tier of the feedback-aggregate pipeline (`collectCategories` in `bin/feedback-aggregate.ts`). A single no-tools MiniMax call that groups a batch of unaggregated feedback rows into thematic categories (label/pattern/ids). On any failure (timeout, unparseable JSON, model crash) it degrades to a single `"general"` category covering all rows — the old batch-level behaviour — so no feedback batch is dropped. See [docs/decisions/feedback-collector-single-minimax-call.md](docs/decisions/feedback-collector-single-minimax-call.md).
