@@ -334,6 +334,54 @@ test("(b) still SKIPS ready/wip rows even with a worktree_path set", () => {
   expect(existsSync(worktreeDir)).toBe(true);
 });
 
+// --- Upstream-aware unpushed count ---
+// Regression for improve-architecture-worktree-reaper-unp: the commit guard
+// counted `main..HEAD`, so a branch with an in-sync upstream (e.g. a deploy
+// branch == origin/deploy/...) was reported as having N "unpushed" commits
+// that were fully pushed — safe work mislabeled at-risk. With an upstream,
+// only commits NOT on the upstream are at risk; `main..HEAD` is the fallback
+// for upstream-less branches.
+
+function addBareOrigin(): string {
+  const origin = join(workDir, "origin.git");
+  spawnSync("git", ["init", "-q", "--bare", origin], { encoding: "utf8" });
+  git(repoDir, ["remote", "add", "origin", origin]);
+  return origin;
+}
+
+test("(b) reaps a FAILED row whose commits are all pushed to an in-sync upstream (even if ahead of main)", () => {
+  const db = setupDb();
+  addBareOrigin();
+  insertIssue(db, "iss-fail-pushed", "failed", worktreeDir, BRANCH);
+  commitInWorktree(worktreeDir, "pushed.txt", "work that is on origin\n");
+  const push = git(worktreeDir, ["push", "-q", "-u", "origin", BRANCH]);
+  if (!push.ok) throw new Error(`push failed: ${push.out}`);
+
+  // Ahead of main by 1, but fully pushed → nothing at risk → removable.
+  expect(git(worktreeDir, ["rev-list", "--count", "main..HEAD"]).out).toBe("1");
+
+  const reaped = reapWorktrees(db);
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.issue_id).toBe("iss-fail-pushed");
+  expect(reaped[0]!.outcome).toBe("removed");
+  expect(existsSync(worktreeDir)).toBe(false);
+});
+
+test("(b) PRESERVES a FAILED row with commits ahead of its upstream (unpushed work)", () => {
+  const db = setupDb();
+  addBareOrigin();
+  insertIssue(db, "iss-fail-unpushed", "failed", worktreeDir, BRANCH);
+  commitInWorktree(worktreeDir, "a.txt", "first\n");
+  const push = git(worktreeDir, ["push", "-q", "-u", "origin", BRANCH]);
+  if (!push.ok) throw new Error(`push failed: ${push.out}`);
+  commitInWorktree(worktreeDir, "b.txt", "second, unpushed\n");
+
+  const reaped = reapWorktrees(db);
+  expect(reaped.length).toBe(1);
+  expect(reaped[0]!.outcome).toBe("has-commits");
+  expect(existsSync(worktreeDir)).toBe(true);
+});
+
 // --- Trigger (c): 7-day backstop purge (disk-scan) ---
 // The row-driven reaper only sees worktrees still recorded on a ledger row.
 // The pre-startup sweep cancelled/deleted hundreds of rows, leaving on-disk
@@ -535,7 +583,8 @@ test("(c) backstop PRESERVES an aged, no-row orphan that has only uncommitted ch
 // --- Squash-merge stranded worktrees (Pattern 1 from
 // analysis-1783742673-pipeliner-analyse-recent-sessions.md):
 // squash-merge produces a NEW main SHA that is NOT an ancestor of the branch
-// tip, so commitsAheadOfMain == 1 but the work is genuinely in main. The reaper
+// tip, so unpushedCommits == 1 (no upstream, ahead of main) but the work is
+// genuinely in main. The reaper
 // must consult `gh pr list --head <branch> --state merged` to distinguish
 // "squash-merged (dead)" from "really ahead of main (preserve)".
 test("(c) backstop REAPS a squash-merged orphan when gh reports MERGED PR", () => {
