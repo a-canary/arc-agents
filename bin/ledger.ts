@@ -106,8 +106,40 @@ function getFlag(name: string): string | undefined {
 const BOOLEAN_FLAGS = new Set([
   "--all", "--apply", "--artifacts", "--deliveries",
   "--dry-run", "--events", "--force-in-place", "--in-place", "--json",
-  "--no-diff", "--pool-filter", "--strict", "--toon", "--type-filter",
+  "--no-diff", "--pool-filter", "--strict", "--toon", "--type-filter", "--unblocked",
 ]);
+
+// ADR-0014 shared barrier predicate for `wake` and `await --unblocked`.
+// Mirrors tick's two-arm rule: non-sprint rows pass when ALL blockers are
+// merged; kind=sprint rows pass when ALL blockers are terminal
+// (merged|failed|cancelled). Strict on missing blocker ids (they count as
+// pending — matches join-status, unlike tick's vacuous-true JOIN).
+function barrierPending(db: Database, id: string): { ok: boolean; pending: string[] } {
+  const row = db.query<{ state: string; blocked_by: string | null; kind: string }, [string]>(
+    "SELECT state, blocked_by, kind FROM issues WHERE id=?",
+  ).get(id);
+  if (!row) return { ok: false, pending: ["<missing>"] };
+  let blockers: string[] = [];
+  if (row.blocked_by && row.blocked_by !== "[]") {
+    const parsed = JSON.parse(row.blocked_by);
+    if (Array.isArray(parsed)) blockers = parsed.filter((b): b is string => typeof b === "string");
+  }
+  if (blockers.length === 0) return { ok: true, pending: [] };
+  const ph = blockers.map(() => "?").join(",");
+  const rows = db
+    .query<{ id: string; state: string }, string[]>(`SELECT id, state FROM issues WHERE id IN (${ph})`)
+    .all(...blockers);
+  const byId = new Map(rows.map((r) => [r.id, r.state]));
+  const passes = row.kind === "sprint"
+    ? (s: string) => s === "merged" || s === "failed" || s === "cancelled"
+    : (s: string) => s === "merged";
+  const pending: string[] = [];
+  for (const b of blockers) {
+    const s = byId.get(b);
+    if (s === undefined || !passes(s)) pending.push(b);
+  }
+  return { ok: pending.length === 0, pending };
+}
 
 // Positional args after the verb, excluding any --flag tokens and their
 // values. Scans the full arg list rather than args.slice(1) because a
@@ -1156,6 +1188,167 @@ switch (cmd) {
     break;
   }
 
+  case "wake": {
+    // ADR-0014: targeted unblock re-eval for ONE row (tick stays the global
+    // backstop). Flips blocked→ready + 'woken' event when all blockers are
+    // terminal-success. Never touches recovery-sweep markers.
+    // Exit 0 woke / already not blocked · 1 still blocked · 2 id not found.
+    const id = positionalAfterVerb()[0] ?? die("id required");
+    const db = openWithMigrate(getFlag("db"));
+    const row = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(id);
+    if (!row) {
+      process.stderr.write(`no such issue: ${id}\n`);
+      process.exit(2);
+    }
+    if (row.state !== "blocked") {
+      out({ id, woken: false, state: row.state });
+      process.exit(0);
+    }
+    const b = barrierPending(db, id);
+    if (!b.ok) {
+      out({ id, woken: false, state: "blocked", pending: b.pending });
+      process.exit(1);
+    }
+    const agent = getFlag("agent") ?? "cli";
+    const u = db.run(
+      `UPDATE issues SET state='ready', updated_at=strftime('%s','now') WHERE id=? AND state='blocked'`,
+      [id],
+    );
+    if (u.changes > 0) {
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'woken', ?, ?)`,
+        [id, agent, "targeted unblock: all blockers terminal-success"],
+      );
+      out({ id, woken: true, state: "ready" });
+      process.exit(0);
+    }
+    // Raced: another writer flipped the row between read and update.
+    const s2 = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(id)?.state ?? "blocked";
+    out({ id, woken: false, state: s2 });
+    process.exit(s2 === "blocked" ? 1 : 0);
+  }
+
+  case "await": {
+    // ADR-0014: block until terminal (or barrier pass with --unblocked).
+    // Pure read — opens the db read-only, never writes or emits events.
+    // Exit 0 merged/unblocked · 1 timeout · 2 id not found · 3 cancelled · 4 failed.
+    const id = positionalAfterVerb()[0] ?? die("id required");
+    const timeoutSec = Number(getFlag("timeout") ?? 3600);
+    const pollSec = Math.max(0.1, Number(getFlag("poll") ?? 5));
+    if (!Number.isFinite(timeoutSec) || timeoutSec <= 0) die("--timeout must be a positive number of seconds");
+    const unblockedMode = args.includes("--unblocked");
+    const dbPath = getFlag("db") ?? `${process.env.HOME}/vault/ledger.db`;
+    const db = new Database(dbPath, { readonly: true });
+    db.exec("PRAGMA journal_mode=WAL;");
+    const q = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?");
+    if (!q.get(id)) {
+      process.stderr.write(`no such issue: ${id}\n`);
+      process.exit(2);
+    }
+    const deadline = Date.now() + timeoutSec * 1000;
+    let state = q.get(id)!.state;
+    let reason: string | null = null;
+    for (;;) {
+      if (state === "merged") reason = "merged";
+      else if (state === "cancelled") reason = "cancelled";
+      else if (state === "failed") reason = "failed";
+      else if (unblockedMode && state !== "blocked" && barrierPending(db, id).ok) reason = "unblocked";
+      if (reason) break;
+      if (Date.now() >= deadline) { reason = "timeout"; break; }
+      await Bun.sleep(pollSec * 1000);
+      const r2 = q.get(id);
+      if (r2) state = r2.state; // row vanished (GC) → keep last known state
+    }
+    db.close();
+    out({ id, state, reason });
+    process.exit(
+      reason === "merged" || reason === "unblocked" ? 0
+        : reason === "timeout" ? 1
+          : reason === "cancelled" ? 3
+            : 4,
+    );
+  }
+
+  case "cancel": {
+    // ADR-0014: cancel a non-terminal row + 'reason' event. No cascade to
+    // children; dependents (blocked_by contains id) get a 'blocker-cancelled'
+    // event but are NOT unblocked — tick's all-merged rule keeps them blocked
+    // until a human repoints or cancels them.
+    // Exit 0 cancelled · 1 refused (terminal row / missing reason) · 2 not found.
+    const id = positionalAfterVerb()[0] ?? die("id required");
+    const reason = getFlag("reason") ?? die("--reason <text> required");
+    const db = openWithMigrate(getFlag("db"));
+    const row = db.query<{ state: string }, [string]>("SELECT state FROM issues WHERE id=?").get(id);
+    if (!row) {
+      process.stderr.write(`no such issue: ${id}\n`);
+      process.exit(2);
+    }
+    if (row.state === "merged" || row.state === "cancelled" || row.state === "failed") {
+      console.error(`refuse cancel: ${id} is terminal (${row.state})`);
+      process.exit(1);
+    }
+    const agent = getFlag("agent") ?? "cli";
+    db.transaction(() => {
+      db.run(`UPDATE issues SET state='cancelled', updated_at=strftime('%s','now') WHERE id=?`, [id]);
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'reason', ?, ?)`,
+        [id, agent, reason],
+      );
+      const deps = db
+        .query<{ id: string }, [string, string]>(
+          `SELECT id FROM issues
+            WHERE id != ? AND blocked_by IS NOT NULL AND blocked_by != '[]'
+              AND EXISTS (SELECT 1 FROM json_each(blocked_by) je WHERE je.value = ?)`,
+        )
+        .all(id, id)
+        .map((d) => d.id);
+      for (const dep of deps) {
+        db.run(
+          `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'blocker-cancelled', ?, ?)`,
+          [dep, agent, `blocker ${id} cancelled: ${reason}`],
+        );
+      }
+      out({ id, cancelled: true, dependents: deps });
+    })();
+    process.exit(0);
+  }
+
+  case "inspect": {
+    // ADR-0014: resolve claimed_by → live tmux session. Worker sessions are
+    // named arc-worker-a-<workerid> and the claim stores that exact name in
+    // claimed_by, so resolution is identity, not lookup.
+    // Exit 0 live session captured · 1 no live session · 2 id not found.
+    const id = positionalAfterVerb()[0] ?? die("id required");
+    const lines = Number(getFlag("lines") ?? 200);
+    if (!Number.isFinite(lines) || lines <= 0) die("--lines must be a positive integer");
+    const dbPath = getFlag("db") ?? `${process.env.HOME}/vault/ledger.db`;
+    const db = new Database(dbPath, { readonly: true });
+    db.exec("PRAGMA journal_mode=WAL;");
+    const row = db
+      .query<{ state: string; claimed_by: string | null }, [string]>(
+        "SELECT state, claimed_by FROM issues WHERE id=?",
+      )
+      .get(id);
+    db.close();
+    if (!row) {
+      process.stderr.write(`no such issue: ${id}\n`);
+      process.exit(2);
+    }
+    if (!row.claimed_by) {
+      out({ id, live: false, reason: `not claimed (state=${row.state})` });
+      process.exit(1);
+    }
+    const session = row.claimed_by;
+    const has = Bun.spawnSync(["tmux", "has-session", "-t", session]);
+    if (has.exitCode !== 0) {
+      out({ id, live: false, session, reason: "no live tmux session" });
+      process.exit(1);
+    }
+    const cap = Bun.spawnSync(["tmux", "capture-pane", "-p", "-t", session, "-S", String(-Math.floor(lines))]);
+    out({ id, live: true, session, state: row.state, lines: cap.stdout.toString().split("\n") });
+    process.exit(0);
+  }
+
   case "trash-sweep": {
     // Delegate to bin/trash-sweep.ts. Forward --apply and --dir. Output is
     // JSON; we surface it directly so cron can pipe the summary into logs.
@@ -2026,6 +2219,18 @@ function printHelp(): void {
   join-status <id>                pure read: is <id> past the dependency barrier?
                                        {id, state, unblocked, success, pending, failed}
                                        exit 0 unblocked / 1 pending-or-missing-blocker / 2 <id> not found
+  wake <id>                          targeted unblock re-eval (ADR-0014): blocked→ready
+                                       + 'woken' event when all blockers terminal-success
+                                       exit 0 woke/already-not-blocked · 1 still blocked · 2 not found
+  await <id> [--timeout S --poll S]  pure read: block until terminal (ADR-0014)
+         [--unblocked]               --unblocked exits 0 on barrier pass instead
+                                       exit 0 merged/unblocked · 1 timeout · 2 not found
+                                       · 3 cancelled · 4 failed (defaults: 3600s / 5s)
+  cancel <id> --reason <text>        cancel a non-terminal row + 'reason' event (ADR-0014);
+                                       dependents get 'blocker-cancelled', no unblock, no
+                                       child cascade. exit 0 cancelled · 1 refused · 2 not found
+  inspect <id> [--lines N]           resolve claimed_by → live tmux session, capture pane
+                                       tail (ADR-0014). exit 0 live · 1 no live session · 2 not found
   tick                                 cascade-unblock + reclaim stale (>2hr) claims
   spawn-ready [--type]                 emit JSON for ready rows
   render-prompt <id> [--worker W]      render worker system prompt for issue

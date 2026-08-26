@@ -1386,6 +1386,39 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "030_event_kind_control_verbs",
+    // ADR-0014: expand issue_events.kind CHECK for the first-class control
+    // verbs. 'woken' (wake's blocked→ready flip), 'reason' (cancel's reason
+    // text), 'blocker-cancelled' (dependents of a cancelled blocker —
+    // informational, does not unblock). Same shape as 013/014/018/026
+    // (CHECK-expand via table rebuild). Slot 030 because 029 is taken on
+    // origin/main.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE issue_events_new (
+          seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+          issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          ts         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          agent      TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','claimed','progress','blocked','unblocked',
+                                     'evidence','complete','failed','review','merged',
+                                     'budget-blocked','mirror-conflict','note','reclaimed',
+                                     'diff_review','triaged','operator_landed',
+                                     'woken','reason','blocker-cancelled')),
+          payload_md TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO issue_events_new (seq, issue_id, ts, agent, kind, payload_md)
+        SELECT seq, issue_id, ts, agent, kind, payload_md FROM issue_events;
+      `);
+      db.exec("DROP TABLE issue_events");
+      db.exec("ALTER TABLE issue_events_new RENAME TO issue_events");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
