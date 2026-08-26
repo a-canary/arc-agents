@@ -216,6 +216,111 @@ test("verifyMergeTruth refuses local sha not on origin/main", async () => {
   if (!r.ok) expect(r.reason).toContain("not an ancestor");
 });
 
+// Stale-ref guard: a worker that pushed via a differently-named remote (or
+// hasn't fetched since pushing) has an origin/main that predates the sha,
+// so the ancestry check refuses a genuinely merged commit. verifyLocalMerged
+// must fetch main from a configured remote before checking, verifying against
+// FETCH_HEAD (works for renamed remotes); fetch failure degrades to the local
+// ref (offline), not a hard refusal.
+test("verifyLocalMerged fetches main before the ancestry check", async () => {
+  const { runner, calls } = captureRunner("origin\n", 0);
+  const r = await verifyLocalMerged("239838c", runner);
+  expect(r.ok).toBe(true);
+  expect(calls[0]!.cmd).toBe("git");
+  expect(calls[0]!.args).toEqual(["remote"]);
+  expect(calls[1]!.args).toEqual(["fetch", "origin", "main"]);
+  // verified against the fetched main, not a possibly-stale local ref
+  expect(calls[2]!.args).toEqual(["merge-base", "--is-ancestor", "239838c", "FETCH_HEAD"]);
+});
+test("verifyLocalMerged detail names the fetched remote on success", async () => {
+  const r = await verifyLocalMerged("239838c", okRunner("origin\n", 0));
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    expect(r.detail).toContain("git fetch origin main");
+    expect(r.detail).toContain("verified after");
+  }
+});
+test("verifyLocalMerged works when the push remote is not named origin", async () => {
+  const r = await verifyLocalMerged("239838c", okRunner("github\n", 0));
+  expect(r.ok).toBe(true);
+  if (r.ok) expect(r.detail).toContain("git fetch github main");
+});
+test("verifyLocalMerged tries remotes in order until one fetch succeeds", async () => {
+  const { runner, calls } = captureRunner("origin\ngithub\n", 0);
+  // make the first remote's fetch fail
+  const seen: string[] = [];
+  const failing: Runner = async (cmd, args) => {
+    if (args[0] === "fetch") seen.push(args[1]!);
+    if (args[0] === "fetch" && args[1] === "origin") return { stdout: "fatal: unable to access", exitCode: 128 };
+    return runner(cmd, args);
+  };
+  const r = await verifyLocalMerged("239838c", failing);
+  expect(r.ok).toBe(true);
+  expect(seen).toEqual(["origin", "github"]);
+  if (r.ok) expect(r.detail).toContain("git fetch github main");
+});
+test("verifyLocalMerged tolerates fetch failure and falls back to the local ref", async () => {
+  const runner: Runner = async (_cmd, args) => {
+    if (args[0] === "remote") return { stdout: "origin\n", exitCode: 0 };
+    if (args[0] === "fetch") return { stdout: "unable to access 'https://github.com/x/y.git/'", exitCode: 128 };
+    return { stdout: "", exitCode: 0 };
+  };
+  const r = await verifyLocalMerged("239838c", runner);
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    // warning that the check ran against a possibly-stale local ref, with the
+    // fetch error surfaced for operators
+    expect(r.detail).toContain("fetch failed");
+    expect(r.detail).toContain("unable to access");
+  }
+});
+test("verifyLocalMerged falls back when no remotes are configured", async () => {
+  const r = await verifyLocalMerged("239838c", okRunner("", 0));
+  expect(r.ok).toBe(true);
+  if (r.ok) expect(r.detail).toContain("no remotes configured");
+});
+test("verifyLocalMerged still refuses when sha is not an ancestor even after fetch", async () => {
+  const runner: Runner = async (_cmd, args) => {
+    if (args[0] === "remote") return { stdout: "origin\n", exitCode: 0 };
+    if (args[0] === "fetch") return { stdout: "", exitCode: 0 };
+    return { stdout: "", exitCode: 1 };
+  };
+  const r = await verifyLocalMerged("deadbee", runner);
+  expect(r.ok).toBe(false);
+  if (!r.ok) {
+    expect(r.reason).toContain("not an ancestor");
+    // both refs named when the push remote differs from origin
+    const renamed: Runner = async (_cmd, args) => {
+      if (args[0] === "remote") return { stdout: "github\n", exitCode: 0 };
+      if (args[0] === "fetch") return { stdout: "", exitCode: 0 };
+      return { stdout: "", exitCode: 1 };
+    };
+    const r2 = await verifyLocalMerged("deadbee", renamed);
+    expect(r2.ok).toBe(false);
+    if (!r2.ok) {
+      expect(r2.reason).toContain("origin/main");
+      expect(r2.reason).toContain("github main");
+    }
+  }
+});
+test("verifyLocalMerged accepts sha on local origin/main even when not yet on fetched main", async () => {
+  // pre-push flow (bin/ledger.ts fixture verifies the local HEAD): the local
+  // ref only advances via real fetches, so reachability from it is genuine
+  // evidence of landing
+  const runner: Runner = async (_cmd, args) => {
+    if (args[0] === "remote") return { stdout: "github\n", exitCode: 0 };
+    if (args[0] === "fetch") return { stdout: "", exitCode: 0 };
+    // FETCH_HEAD check fails, local origin/main check passes
+    const target = args[args.length - 1];
+    return { stdout: "", exitCode: target === "origin/main" ? 0 : 1 };
+  };
+  const r = await verifyLocalMerged("239838c", runner);
+  expect(r.ok).toBe(true);
+  if (r.ok) {
+    expect(r.detail).toContain("local origin/main");
+    expect(r.detail).toContain("not yet on fetched github main");
+  }
+});
 test("verifyMergeTruth prefers local-sha route when both supplied", async () => {
   // local route takes precedence; pr route would have refused (gh missing)
   const r = await verifyMergeTruth({
@@ -392,20 +497,20 @@ test("defaultRunner falls back to process.cwd() when project has no resolvable r
   expect(r.stdout.length).toBeGreaterThan(0);
 });
 
-test("DEFAULT_RUNNER_TIMEOUT is 30 seconds (30_000ms)", async () => {
-  // The timeout exists to prevent a corrupt .git from hanging the validator
-  // forever. merge-base is in-memory and should finish in <1s; >30s means
-  // something is fundamentally wrong. If the constant is bumped, update the
-  // comment in merge-truth.ts and this test.
+test("DEFAULT_RUNNER_TIMEOUT is 60 seconds (60_000ms)", async () => {
+  // The timeout exists to prevent a corrupt .git or wedged network from
+  // hanging the validator forever. It now also covers the network-bound
+  // `git fetch origin main` (one ref); in-memory merge-base still finishes
+  // in <1s. If the constant is bumped, update the comment in merge-truth.ts
+  // and this test.
   // Re-imported separately to get a fresh module reference.
   const { DEFAULT_RUNNER_TIMEOUT_MS } = await import("./merge-truth");
-  expect(DEFAULT_RUNNER_TIMEOUT_MS).toBe(30_000);
+  expect(DEFAULT_RUNNER_TIMEOUT_MS).toBe(60_000);
 });
 
 test("defaultRunner timeout kills hung process and returns exit 124", async () => {
-  // Spawn a child that hangs beyond the timeout. Use a short-lived sleep
-  // that we know will exceed the 30s wall clock if we let it run — but
-  // rather than waiting 30s, we verify the mechanism: the runner races
+  // Spawn a child that hangs beyond the timeout. Rather than waiting out
+  // the full wall clock, we verify the mechanism: the runner races
   // against a timer, kills the child on timeout, and returns exit 124.
   //
   // We do an end-to-end smoke test with a sleep(31) but only because the

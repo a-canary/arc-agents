@@ -110,12 +110,60 @@ export async function verifyLocalMerged(sha: string, run: Runner): Promise<Merge
   if (!SHA_RE.test(sha)) {
     return { ok: false, reason: `--local-merged-sha '${sha}' is not a hex sha (7-40 chars).` };
   }
+  // Stale-ref guard: a worker that pushed via a differently-named remote (or
+  // simply hasn't fetched since pushing) has an origin/main that predates the
+  // sha, so the ancestry check would refuse a genuinely merged commit
+  // (observed in fix-arc-agents-pre-existing-main-failure). Fetch main from a
+  // configured remote (bounded — one branch, first success wins) and verify
+  // against FETCH_HEAD: that works for differently-named remotes too, where
+  // `git fetch <other> main` updates <other>/main, not origin/main. Best-
+  // effort: on failure (offline, no remotes) the local-ref check is the only
+  // option, so behavior degrades to pre-fix, not a hard refusal.
+  //
+  // The local origin/main check runs in BOTH cases and its success still
+  // accepts: a local ref only advances via real fetches, so an sha reachable
+  // from it is genuine evidence of landing. This keeps offline workers (and
+  // pre-push flows like the bin/ledger.ts fixture that verifies the local
+  // HEAD) working while the fetched-main check eliminates the stale-ref false
+  // negative.
+  const { fetchedRemote, fetchError } = await fetchAnyRemoteMain(run);
+  if (fetchedRemote) {
+    const r = await run("git", ["merge-base", "--is-ancestor", sha, "FETCH_HEAD"]);
+    if (r.exitCode === 0) return { ok: true, route: "local", detail: `sha ${sha} is on ${fetchedRemote} main (verified after git fetch ${fetchedRemote} main)` };
+    if (r.exitCode > 1) return { ok: false, reason: `git merge-base exited ${r.exitCode}: ${r.stdout.trim()}` };
+  }
   const r = await run("git", ["merge-base", "--is-ancestor", sha, "origin/main"]);
-  if (r.exitCode === 0) return { ok: true, route: "local", detail: `sha ${sha} is on origin/main` };
+  if (r.exitCode === 0) {
+    return {
+      ok: true,
+      route: "local",
+      detail: fetchedRemote
+        ? `sha ${sha} is on local origin/main (not yet on fetched ${fetchedRemote} main — possibly unpushed or just merged)`
+        : `sha ${sha} is on local origin/main (fetch failed${fetchError ? `: ${fetchError}` : " — no remotes configured"} — verified against possibly-stale local ref)`,
+    };
+  }
   if (r.exitCode === 1) {
-    return { ok: false, reason: `sha ${sha} is not an ancestor of origin/main. Push the commit (or merge it) before marking merged.` };
+    const extra = fetchedRemote && fetchedRemote !== "origin" ? ` or ${fetchedRemote} main` : "";
+    return { ok: false, reason: `sha ${sha} is not an ancestor of origin/main${extra}. Push the commit (or merge it) before marking merged.` };
   }
   return { ok: false, reason: `git merge-base exited ${r.exitCode}: ${r.stdout.trim()}` };
+}
+
+// Fetch `main` from each configured remote until one succeeds. Returns the
+// winning remote name (FETCH_HEAD now points at its main), or null with the
+// last fetch error for operator visibility in the fallback detail. Bounded:
+// one branch per remote, first success wins — no refspec wildcards, no tags.
+async function fetchAnyRemoteMain(run: Runner): Promise<{ fetchedRemote: string | null; fetchError: string | null }> {
+  const remotes = await run("git", ["remote"]);
+  if (remotes.exitCode !== 0) return { fetchedRemote: null, fetchError: `git remote failed: ${remotes.stdout.trim()}` };
+  const names = remotes.stdout.split("\n").map((s) => s.trim()).filter(Boolean);
+  let lastError: string | null = null;
+  for (const name of names) {
+    const f = await run("git", ["fetch", name, "main"]);
+    if (f.exitCode === 0) return { fetchedRemote: name, fetchError: null };
+    lastError = f.stdout.trim() || `git fetch ${name} main exited ${f.exitCode}`;
+  }
+  return { fetchedRemote: null, fetchError: lastError };
 }
 
 export async function verifyMergeTruth(args: {
@@ -161,11 +209,16 @@ export async function verifyMergeTruth(args: {
 //      the repo via the row's project field).
 //   2. stderr is appended to stdout in the result, so the operator-facing
 //      refusal message includes the actual reason.
-//   3. 30s timeout — git merge-base is in-memory and should finish in <1s;
-//      a corrupt .git could otherwise hang the validator forever.
+//   3. 60s timeout — covers the network-bound `git fetch <remote> main`;
+//      without it a wedged network connection could hang the validator.
 //
 // Tests inject a fake runner instead — they don't go through this factory.
-export const DEFAULT_RUNNER_TIMEOUT_MS = 30_000;
+//
+// 60s: the runner also spawns `git fetch <remote> main` (network-bound, one
+// branch per configured remote, first success wins). In-memory merge-base
+// still finishes in <1s; a slow link is the only realistic case near this
+// ceiling. Bump further if you add more remote refspecs.
+export const DEFAULT_RUNNER_TIMEOUT_MS = 60_000;
 
 export function defaultRunner(project: string | null | undefined): Runner {
   return async (cmd, args) => {
@@ -178,9 +231,10 @@ export function defaultRunner(project: string | null | undefined): Runner {
     // Race the process against a wall-clock timer. If the timer wins, kill
     // the child and surface exit 124 (timeout convention) with a descriptive
     // stdout so the validator can refuse the merge with a real reason.
-    // Kill on timeout: without this a corrupt .git could hang the validator
-    // forever. merge-base is in-memory; >30s = something is wrong. Bump if
-    // you ever point this at a remote refspec.
+    // Kill on timeout: without this a corrupt .git or a wedged network
+    // connection could hang the validator forever. The ceiling covers the
+    // one network-bound command (`git fetch origin main`); see
+    // DEFAULT_RUNNER_TIMEOUT_MS.
     let timer: ReturnType<typeof setTimeout> | null = null;
     const timeout = new Promise<"timeout">((resolve) => {
       timer = setTimeout(() => resolve("timeout"), DEFAULT_RUNNER_TIMEOUT_MS);
