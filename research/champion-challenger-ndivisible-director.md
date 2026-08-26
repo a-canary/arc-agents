@@ -60,7 +60,7 @@ Rollback: revert the one crontab line (<1 min). Reversible by design — blast r
 - Result (2026-08-26T21:24Z): **59/68 pass = 86.8%**, quality score 86.8, run `202608262018199-20a7ff`, harness=pi, model `unsloth/Qwen3.8-27B-GGUF` (Q4_K_M on Veles V100).
   - Failures (4): codegen-cli-tool, codegen-rest-api, file-operations-heterogeneous-dates, quixbugs-python-subsequences.
   - Timeouts (5): debugging-logistic-regression-divergence (360s cap), games-mahjong-winning-hand (360s cap), hard-implement-trie (240s), quixbugs-python-bitcount (180s), quixbugs-python-minimum_spanning_tree (180s).
-  - Caveat: no opus/champion baseline exists in harness-bench history (all prior runs are local models: Bonsai, Qwen variants, MiniMax-M3). This is a standalone reliability data point for qwen3.8, not a pairwise A/B. Pattern of misses: two long-horizon debugging/planning tasks and two codegen tasks; quixbugs batch (short fix-a-bug tasks) 24/26.
+  - Caveat: no opus/champion baseline exists in harness-bench history (all prior runs are local models: Bonsai, Qwen variants, MiniMax-M3). This is a standalone reliability data point for qwen3.8, not a pairwise A/B. Pattern of misses: two long-horizon debugging/planning tasks and two codegen tasks; quixbugs batch (short fix-a-bug tasks) 37/40.
   - Read-through to gate secondary metric 2: tool-calling reliability is strong on short task loops, weak under long-horizon planning. Director ticks are mid-horizon; the 20-tick A/B remains the deciding measurement.
 
 ## Adjudication log
