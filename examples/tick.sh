@@ -83,8 +83,12 @@ info "5. Issue merges (diff_review event required per G-0002)"
 # ledger.ts refuses merged without a diff_review event (G-0002 enforcement)
 # The real workflow: worker runs /diff-review skill, then logs the event.
 # For the demo, add the event directly so we can show the terminal state.
-"$LEDGER" event "$ISSUE_ID" diff_review '{"consequences":[],"surprises_vs_brief":[],"gaps_vs_brief":[],"adr_conflicts":[]}' --db "$TEMP_DB" > /dev/null 2>&1
-MERGE_OUT=$("$LEDGER" update "$ISSUE_ID" --state merged --db "$TEMP_DB" 2>&1)
+# Payload must satisfy the G-0002 contract: reviewer_identity (≠ claimed_by),
+# reviewed_sha (7–40 hex), verdict (pass|fail|comment).
+"$LEDGER" event "$ISSUE_ID" diff_review '{"reviewer_identity":"demo-reviewer-subagent","reviewed_sha":"deadbeef","verdict":"pass"}' --db "$TEMP_DB" > /dev/null 2>&1
+# Temp-DB demo: no GitHub PR, so acknowledge in-place with evidence.
+MERGE_OUT=$("$LEDGER" update "$ISSUE_ID" --state merged --in-place \
+  --evidence "demo run: temp-DB lifecycle walkthrough" --db "$TEMP_DB" 2>&1)
 STATE=$("$LEDGER" show "$ISSUE_ID" --db "$TEMP_DB" 2>&1 | python3 -c "import sys,json; print(json.load(sys.stdin)['issue']['state'])" 2>/dev/null)
 echo "  state: $STATE"
 if [[ "$STATE" == "merged" ]]; then
