@@ -12,7 +12,8 @@
     "arc-tui": "./bin/arc-tui.ts",
     "arc-replay": "./bin/arc-replay.ts",
     "factory": "./bin/factory.ts",
-    "webui-server": "./bin/webui-server.ts"
+    "webui-server": "./bin/webui-server.ts",
+    "wakeme": "./bin/wakeme.ts"
   },
   "scripts": {
     "test": "bun test",
