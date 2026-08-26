@@ -253,7 +253,7 @@ export function parsePlanJson(stdout: string): Plan | null {
   const end = s.lastIndexOf("}");
   if (start === -1 || end === -1 || end < start) return null;
   s = s.slice(start, end + 1);
-  let obj: { title?: unknown; body_md?: unknown; tracers?: unknown; objective?: unknown; relationships?: unknown };
+  let obj: { title?: unknown; body_md?: unknown; tracers?: unknown; objective?: unknown; relationships?: unknown; tracer_depends_on?: unknown };
   try { obj = JSON.parse(s); } catch { return null; }
   if (!obj || typeof obj.title !== "string" || !obj.title.trim()) return null;
   if (!Array.isArray(obj.tracers) || obj.tracers.length === 0) return null;

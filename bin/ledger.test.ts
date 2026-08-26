@@ -1,7 +1,7 @@
 import { test, expect, describe } from "bun:test";
 import { $ } from "bun";
 import { Database } from "bun:sqlite";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 
@@ -1733,17 +1733,22 @@ test("merged gate: legacy rows with null claimed_by skip self-review check", asy
 // ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
 
 test("alias-cmd prints the full failover group, one candidate per line", async () => {
-  const r = await runRawNoDb("alias-cmd", "smart");
+  // Contract: output lines equal the configured candidate list for any alias
+  // in the live config, in order. (Previously hardcoded a 2-candidate `smart`
+  // group; the arc-llm-proxy cutover made all aliases single pi commands, so
+  // pinning an alias name + line count here would rot on every config change.)
+  const cfg = JSON.parse(
+    readFileSync(new URL("../config.json", import.meta.url).pathname, "utf8"),
+  ) as { exec_cli_alias: Record<string, string | string[]> };
+  const entry = Object.entries(cfg.exec_cli_alias)[0];
+  if (!entry) throw new Error("config.json exec_cli_alias is empty");
+  const [name, raw] = entry;
+  const group: string[] = Array.isArray(raw) ? raw : [raw];
+  const r = await runRawNoDb("alias-cmd", name);
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  // smart is a 2-candidate group: cli-agent resolves the registry pool
-  // (fable → opus → minimax internally), then a last-resort interactive opus
-  // exec alias. arc-agents owns the alias→cli-agent call; cli-proxy + cli-agent
-  // own the pool→cmdline-template resolution.
-  expect(lines.length).toBe(2);
+  expect(lines).toEqual(group);
   for (const l of lines) expect(l).toContain("{prompt}");
-  expect(lines[0]).toContain("cli-agent");
-  expect(lines[lines.length - 1]).toContain("opus");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {

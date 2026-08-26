@@ -139,7 +139,8 @@ ledger("update", [prdId, "--state", "review"]);
 // the repoint-blocked-by gap in CHOICES I-0010 closed; chains are <=3 long.
 const tracerIds: string[] = [];
 for (const [i, t] of tracers.entries()) {
-  const blockers = [prdId, ...tracerDepends[i].map((idx) => tracerIds[idx])];
+  const deps = tracerDepends[i] ?? [];
+  const blockers = [prdId, ...deps.map((idx) => tracerIds[idx])];
   tracerIds.push(
     ledger("create", [
       "--kind", "task", "--type", "mvp", "--project", project,
