@@ -70,12 +70,28 @@ confirm the dominant `pr_url` repo before assuming the default
 Fixture: `project=cli-proxy, pr_url=https://github.com/a-canary/cli-proxy/pull/1` → `EXPECTED_REPO=a-canary/cli-proxy, ACTUAL_REPO=a-canary/cli-proxy`, check passes.
 Fixture (aliased): `project=arc-webui, pr_url=https://github.com/a-canary/webui/pull/29` → `EXPECTED_REPO=a-canary/webui, ACTUAL_REPO=a-canary/webui`, check passes (would have FAILED under the naive `a-canary/${PROJECT}` template — the bug this fix exists to prevent).
 
-Ask the bookie subagent to log the returned JSON as a ledger event
-(`kind=diff_review`, payload = the JSON object). All ledger writes go
-through bookie — do not invoke `bin/ledger.ts event` directly.
+Ask the bookie subagent to log it as a ledger event (`kind=diff_review`).
+The payload is ONE flat JSON object: the three contract fields plus the
+report's content keys at top level — never nested under a `report` key:
+
+```
+{reviewer_identity, reviewed_sha, verdict,
+ consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts, axi_violations}
+```
+
+- `reviewer_identity` — distinct from the row's `claimed_by` (self-review is refused)
+- `reviewed_sha` — 7–40 hex chars of the commit inspected (typically `HEAD` on the worker branch)
+- `verdict` — `pass` | `fail` | `comment`
+
+All ledger writes go through bookie — do not invoke `bin/ledger.ts event`
+directly.
 
 Reconcile every surprise/gap by editing the diff (and re-running the
 review) OR by naming the unresolved item in `evidence_md` at merge time.
 
-The ledger CLI refuses `update --state=merged` if no `diff_review` event
-exists for the task. Bookie mirrors the rule.
+The ledger CLI refuses `update --state=merged` unless the LATEST
+diff_review event parses as that contract shape: all three fields present
+and well-typed, reviewer independent of the row's worker. A payload missing
+any field — or nesting the content under `report` — is rejected; re-emit
+flat and update state again. Bookie mirrors the rule
+(`.claude/agents/bookie.md` rule #7).
