@@ -1,0 +1,13 @@
+# arc-agents cron entries
+# Format: minute hour day month weekday
+#
+# Install (idempotent):  ( crontab -l 2>/dev/null; cat bin/cron/ledger-tick.cron ) | crontab -
+#
+# Restore / uninstall:  crontab -l | grep -v 'ledger-tick' | crontab -
+
+# ledger-tick — every 15 min, runs `ledger tick`: cascade-unblock blocked rows
+# whose blockers are all terminal, reclaim stale claims (>2hr), reap expired
+# hitl_prompts (open → timeout_locked). The factory's own tick does none of
+# these three; this cron is the polling backstop. Pinned PATH per the
+# hygiene-tick pattern. Ledger db is WAL, so a stacked run is harmless.
+*/15 * * * * PATH=/home/aaron/.bun/bin:/usr/local/bin:/usr/bin:/bin /home/aaron/.bun/bin/bun /home/aaron/repos/arc-agents/bin/ledger.ts --db /home/aaron/vault/ledger.db tick >> /home/aaron/.cache/arc-ledger-tick.log 2>&1
