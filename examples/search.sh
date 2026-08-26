@@ -4,7 +4,6 @@
 # Demonstrates: ke-recall + ke-learn skills using the ke installation.
 # Prerequisites:
 #   - ke repo at ~/repos/ke (or set KE_REPO env var)
-#   - Qdrant running: docker run -d --name qdrant -p 6333:6333 qdrant/qdrant
 #   - KE compiled: bun ~/repos/ke/bin/ke-tool.ts compile
 #
 # This script is safe to run — it only searches/reads from the KE vault
@@ -37,14 +36,6 @@ check_dependencies() {
     warn "ke repo not found at $KE_REPO"
     echo "  Clone it: git clone git@github.com:a-canary/ke.git $KE_REPO"
     echo "  Then: cd $KE_REPO && bun install && bun $KE_TOOL compile"
-    echo ""
-    echo "Skipping KE search demo."
-    return 1
-  fi
-
-  if ! curl -s --max-time 2 http://localhost:6333/readyz 2>/dev/null | grep -q "ready"; then
-    warn "Qdrant not running — start with:"
-    echo "  docker run -d --name qdrant -p 6333:6333 qdrant/qdrant"
     echo ""
     echo "Skipping KE search demo."
     return 1
@@ -93,13 +84,12 @@ echo ""
 
 if ! check_dependencies; then
   echo ""
-  ok "arc-agents is intact — KE demo skipped (no ke repo or Qdrant)"
+  ok "arc-agents is intact — KE demo skipped (no ke repo)"
   echo "Install ke to enable the search demo."
   exit 0
 fi
 
 ok "ke repo found: $KE_REPO"
-ok "Qdrant running"
 
 show_skills
 run_queries

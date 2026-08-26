@@ -42,10 +42,10 @@ echo ""
 echo "━━━ 4/5: CLI verb reference ━━━━━━━━━━━━━━━━"
 "$WORKSPACE/examples/commands.sh"
 
-# 5. KE search demo — needs Qdrant + ke repo
+# 5. KE search demo — needs ke repo (no external services)
 echo ""
 echo "━━━ 5/5: KE search demo ━━━━━━━━━━━━━━━━━━━━"
-"$WORKSPACE/examples/search.sh" || echo "(KE search demo skipped — needs Qdrant + ke repo)"
+"$WORKSPACE/examples/search.sh" || echo "(KE search demo skipped — needs ke repo)"
 
 echo ""
 echo "━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━━"
