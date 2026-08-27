@@ -31,6 +31,17 @@ test("update --help prints help, does not report updated:true", () => {
   expect(r.stdout).not.toContain('"updated"');
 });
 
+// clarify-docs-ledger-update-help-text-und: the help text must name the full
+// metadata-patch flag set (no --state), not just --agent/--project, and warn
+// that unknown flags are silently ignored.
+test("update --help documents the full metadata-patch flag set", () => {
+  const r = run("update", "--help");
+  expect(r.code).toBe(0);
+  expect(r.stdout).toContain("metadata patch");
+  expect(r.stdout).toMatch(/--evidence, --pr/);
+  expect(r.stdout).toMatch(/Unknown flags are silently\s+ignored/);
+});
+
 test("update with flag-shaped id exits nonzero", () => {
   const { path, cleanup } = freshDb();
   try {
