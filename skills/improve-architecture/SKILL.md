@@ -11,6 +11,10 @@ This skill is *not* for new behavior. If the change alters runtime semantics, fi
 
 Wiring this skill into the stop-hook reminder (and any bookie hygiene-emit verb) is Slice D's responsibility — until that lands, workers reach this skill by directory listing or by an explicit pointer from the director.
 
+## Step 0 (intake): ontology gate
+
+If the repo has `docs/ontology/`: run `bun <arc-skills>/skills/map-ontology/scripts/ontology-check.ts <repo>` before reading its structure. Fresh → use it as a survey starting point, verifying any claim you act on against live reality first. Stale → verify-first refresh per the map-ontology skill before using any claim. No ontology → proceed normally.
+
 ## When to use
 
 - A function or type is duplicated across ≥2 files with no shared owner.
