@@ -1,23 +1,31 @@
 {
-  "_note": "Aliases route through arc-llm-proxy (http://127.0.0.1:8091/v1, provider 'arc-proxy' in ~/.pi/agent/models.json). The alias set is defined in /home/aaron/repos/arc-llm-proxy/aliases.default.json — when aliases change there, update: this file, ~/.pi/agent/models.json, and the arc-skills slow-lane skill. Cron/worker traffic must not require claude — see AGENTS.md model-routing rules.",
+  "_note": "Direct provider routing per captain standing plan (2026-08-27). Workhorse: Veles/Qwen3.8-27B (planning, wayfinder, grilling, driver, bench). Lite reasoning (extraction, websearch, routing, hygiene): llama-103/Bonsai-27B. Escalation only (defense, really difficult): claude-afk opus-medium, with Veles fallback if the opus lane is down. Providers defined in ~/.pi/agent/models.json. No arc-llm-proxy hop on the factory lane; the proxy remains available for slow-lane queuing.",
   "exec_cli_alias": {
     "planning": [
-      "pi --model arc-proxy/planning -p {prompt}"
+      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
     ],
-    "hard": [
-      "pi --model arc-proxy/hard -p {prompt}"
-    ],
-    "easy": [
-      "pi --model arc-proxy/easy -p {prompt}"
-    ],
-    "bench": [
-      "pi --model arc-proxy/bench -p {prompt}"
+    "minimax-build": [
+      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
     ],
     "driver": [
-      "pi --model arc-proxy/driver -p {prompt}"
+      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
+    ],
+    "bench": [
+      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
+    ],
+    "easy": [
+      "pi --model llama-103/Bonsai-27B-Q1_0.gguf -p {prompt}"
     ],
     "hygiene": [
-      "pi --model arc-proxy/hygiene -p {prompt}"
+      "pi --model llama-103/Bonsai-27B-Q1_0.gguf -p {prompt}"
+    ],
+    "hard": [
+      "claude-afk --model opus --effort medium -p {prompt}",
+      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
+    ],
+    "opus-max": [
+      "claude-afk --model opus --effort medium -p {prompt}",
+      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
     ]
   },
   "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },
