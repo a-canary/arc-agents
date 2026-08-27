@@ -2001,9 +2001,15 @@ function printHelp(): void {
                                        naming the negative result. Still needs --pr/
                                        --local-merged-sha/--in-place like any merge.
                                        Override with ARC_SKIP_MERGE_TRUTH=1.
-                                       --agent/--project patch the row (metadata update, no
-                                       --state). With --state, --agent names the event author;
-                                       use --agent-set to reassign the row's agent alongside a state change.
+                                       No --state = metadata patch: --evidence, --pr,
+                                       --branch, --worktree, --hitl 0|1, --agent and
+                                       --project each plain-SET their column (no event
+                                       logged; --local-merged-sha/--in-place/--no-diff are
+                                       state-only). With --state, --agent names the event
+                                       author; use --agent-set to reassign the row's agent
+                                       alongside a state change. Unknown flags are silently
+                                       ignored — a typo (e.g. --evidence-file) stores nothing
+                                       yet still reports updated:true.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
