@@ -345,6 +345,26 @@ fast_forward_main() {
   return 0
 }
 
+# Acquire the per-task workspace via arc-director's treehouse spawn.sh
+# (pooled, lease-tracked worktree + base-freshness gate on the fetched origin
+# tip). Replaces the deprecated G-0004 raw `git worktree add` pattern
+# (arc-director CHOICES.md 2026-08-19). Prints spawn.sh's JSON
+# {path,branch,base_sha,...} on stdout. Return codes: 0 ok · 3 stale base
+# (lease already released by spawn.sh) · 4 acquire failed (spawn.sh missing,
+# treehouse absent, pool error — any other non-zero rc collapses here).
+# ARC_SPAWN_SH overrides the default location so tests and non-default
+# checkouts can redirect. Pure enough to unit-test via SOURCE_ONLY sourcing.
+acquire_workspace() {
+  local repo="$1" slug="$2" holder="$3"
+  local spawn_sh="${ARC_SPAWN_SH:-${HOME}/repos/arc-director/src/driver/scripts/spawn.sh}"
+  [ -f "$spawn_sh" ] || return 4
+  local rc=0
+  bash "$spawn_sh" "$repo" "$slug" --holder "$holder" || rc=$?
+  if [ "$rc" -eq 3 ]; then return 3; fi
+  [ "$rc" -eq 0 ] && return 0
+  return 4
+}
+
 # Sourced by the test harness — define functions, then stop before doing any
 # real work (claim, exec, ledger writes). Production never sets this.
 if [[ "${ARC_WORKER_SHELL_SOURCE_ONLY:-}" == "1" ]]; then
@@ -492,43 +512,54 @@ if [ ! -d "$WT_REPO" ]; then
   exit 1
 fi
 REPO_NAME="$(basename "$WT_REPO")"
-WT_DIR="${HOME}/worktrees/${REPO_NAME}-${CLAIM_ID}"
-WT_BRANCH="worker/${CLAIM_ID}"
-# Fast-forward the project's local `main` to origin/main BEFORE we add the
-# per-claim worktree. Pattern 3 follow-up of analysis-1782813826.md: rows
-# that claim against a stale local main see a stale parent base for
-# `git worktree add -B <branch> ... main` AND for `--local-merged-sha`
-# truth-checks. Failure to ff is non-fatal (orphan-claim revive logic still
-# resets on the next tick); we just race fewer windows. Crucially, this
-# runs BEFORE `worktree add` so even the FIRST claim after a merge observes
-# current main. See fast_forward_main() above for the helper contract.
+# Fast-forward the project's local `main` to origin/main BEFORE we acquire
+# the per-claim worktree. Pattern 3 follow-up of analysis-1782813826.md:
+# rows that claim against a stale local main see a stale parent base for
+# `--local-merged-sha` truth-checks (merge-guard). Failure to ff is non-fatal
+# (orphan-claim revive logic still resets on the next tick); we just race
+# fewer windows. See fast_forward_main() above for the helper contract.
 fast_forward_main "$WT_REPO" || true
-# Discover the repo's default branch ONCE and reuse at the worktree-add +
-# BASELINE_SHA fallback sites. Same helper fast_forward_main uses — keeps
-# the three references in lockstep (analysis-1783678328.md Pattern 2 root
-# cause: the original three references drifted from each other silently).
-WT_DEFAULT="$(default_branch_for_repo "$WT_REPO")"
-WT_DEFAULT="${WT_DEFAULT:-main}"
-if [ ! -d "$WT_DIR" ]; then
-  # -B resets the branch to the default's tip if a stale branch lingers from
-  # a prior reaped attempt; --force overrides a leftover claude-agent
-  # worktree lock.
-  # ponytail: timeout 5s on git worktree add — can hang when nesting worktrees.
-  if ! timeout 5 git -C "$WT_REPO" worktree add --force -B "$WT_BRANCH" "$WT_DIR" "$WT_DEFAULT" 2>/dev/null; then
-    # Branch may be checked out elsewhere; fall back to a detached worktree so
-    # the worker still isolates rather than silently running in prod root.
-    # Apply timeout here too to survive nested-worktree hangs.
-    timeout 5 git -C "$WT_REPO" worktree add --force --detach "$WT_DIR" "$WT_DEFAULT" 2>/dev/null
+# Acquire the worker workspace via treehouse spawn.sh (pooled, lease-tracked
+# worktree + base-freshness gate; G-0004 raw `git worktree add` deprecated,
+# arc-director CHOICES.md 2026-08-19). Branch = worker/<CLAIM_ID> (factory
+# convention, unchanged), baseline = spawn.sh's verified origin tip. The gate
+# fails closed: exit 3 = stale base (local default ahead of/diverged from
+# origin — lease already released), rc 4 = acquire failed (spawn.sh missing,
+# treehouse absent, pool error). Both are infra conditions, not task defects
+# — block the row with a machine-readable marker (retriable: clear the base
+# or install treehouse, then flip back to ready) instead of failing it and
+# instead of leaving it claimed (respawn loop burning budget).
+SPAWN_RC=0
+SPAWN_JSON="$(acquire_workspace "$WT_REPO" "$CLAIM_ID" "$WORKER")" || SPAWN_RC=$?
+if [ "$SPAWN_RC" -ne 0 ]; then
+  if [ "$SPAWN_RC" -eq 3 ]; then
+    EVIDENCE="worker-shell: spawn.sh rejected stale base (exit 3, lease released): local default branch of ${WT_REPO} is ahead of or diverged from origin — push or reset it, then flip this row back to ready. spawn-stale-base:${REPO_NAME}"
+  else
+    EVIDENCE="worker-shell: treehouse acquire failed (spawn.sh rc=${SPAWN_RC}): check arc-director checkout at ~/repos/arc-director (or ARC_SPAWN_SH) and treehouse on PATH, then flip this row back to ready. spawn-acquire-failed:${REPO_NAME}:rc${SPAWN_RC}"
   fi
+  echo "$EVIDENCE" >&2
+  bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state blocked \
+    --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+  exit 1
+fi
+WT_DIR="$(jq -r '.path' <<<"$SPAWN_JSON")"
+WT_BRANCH="$(jq -r '.branch' <<<"$SPAWN_JSON")"
+# spawn.sh promised {path,branch,...} on rc 0 — malformed output is an infra
+# defect, not a task one: block with the same marker as acquire failure.
+if [ -z "$WT_DIR" ] || [ "$WT_DIR" = "null" ] || [ -z "$WT_BRANCH" ] || [ "$WT_BRANCH" = "null" ]; then
+  EVIDENCE="worker-shell: spawn.sh rc=0 but unparseable JSON (path='${WT_DIR:-}' branch='${WT_BRANCH:-}'): spawn-acquire-failed:${REPO_NAME}:bad-json"
+  echo "$EVIDENCE" >&2
+  bun "$LEDGER_BIN" update "$CLAIM_ID" "${DB_FLAG[@]}" --state blocked \
+    --evidence "$EVIDENCE" >/dev/null 2>&1 || true
+  exit 1
 fi
 cd "$WT_DIR"
-# Baseline HEAD at claim time — reused worktrees from a prior claim may sit
-# commits ahead of the default already; reconcile must count only THIS run's
-# commits, not everything since the default (else a stale reused worktree
-# with 0 new commits masks an empty/failed engine run as reviewable work).
-# Fall back to the default branch name when rev-parse fails (empty repo, no
-# commits yet) — same `WT_DEFAULT` variable, so the two sites can't drift.
-BASELINE_SHA="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo "$WT_DEFAULT")"
+# Baseline = spawn.sh's verified base tip (== HEAD after its checkout -B).
+# Reconcile must count only THIS run's commits, not everything since the
+# default. Fall back to rev-parse when the JSON field is absent.
+BASELINE_SHA="$(jq -r '.base_sha' <<<"$SPAWN_JSON")"
+[ -n "$BASELINE_SHA" ] && [ "$BASELINE_SHA" != "null" ] \
+  || BASELINE_SHA="$(git -C "$WT_DIR" rev-parse HEAD 2>/dev/null || echo "$WT_BRANCH")"
 # Record branch + worktree on the row so reapWorktrees() prunes both after the
 # task merges. Bootstrap write (pre-agent), same exception as the claim above;
 # all in-session writes still route through the bookie.

@@ -25,6 +25,7 @@ let workDir: string;
 let dbPath: string;
 let fakeClaude: string;
 let fakeBinDir: string;
+let fakeSpawnSh: string;
 let prefix: string;
 
 function bun(args: string[], env: Record<string, string> = {}) {
@@ -76,6 +77,30 @@ beforeEach(() => {
   // own report wins. Placed on a bin dir we prepend to PATH for the boot tests.
   fakeBinDir = join(workDir, "bin");
   mkdirSync(fakeBinDir, { recursive: true });
+  // Fake spawn.sh for the e2e boots below (ARC_SPAWN_SH): mimics the legacy
+  // G-0004 worktree-add behavior and prints spawn.sh's JSON contract. Keeps
+  // the boots hermetic — no real treehouse pool, no network fetch, no
+  // cross-test slot contention (a shared-pool race hung one boot 300s).
+  const fakeSpawn = join(fakeBinDir, "spawn-fake.sh");
+  writeFileSync(
+    fakeSpawn,
+    [
+      "#!/usr/bin/env bash",
+      'repo="$1"; slug="$2"',
+      'wt="${HOME}/worktrees/fake-${slug}"',
+      'br="worker/${slug}"',
+      'git -C "$repo" worktree remove --force "$wt" >/dev/null 2>&1 || true',
+      'git -C "$repo" worktree prune >/dev/null 2>&1 || true',
+      'if [ ! -d "$wt" ]; then',
+      '  git -C "$repo" worktree add --force -B "$br" "$wt" HEAD >/dev/null 2>&1 || mkdir -p "$wt"',
+      "fi",
+      'sha="$(git -C \"$wt\" rev-parse HEAD 2>/dev/null || echo HEAD)"',
+      'printf \'{"path":"%s","branch":"%s","base_sha":"%s"}\' "$wt" "$br" "$sha"',
+      "",
+    ].join("\n"),
+  );
+  chmodSync(fakeSpawn, 0o755);
+  fakeSpawnSh = fakeSpawn;
   const fakePi = join(fakeBinDir, "pi");
   writeFileSync(
     fakePi,
@@ -401,7 +426,10 @@ test("worker-shell.sh allows arctest-* claim against a non-canon (test) ledger",
   expect(r.stdout).toContain("race-lost-or-empty");
 });
 
-test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", { timeout: 30000 }, () => {
+// ponytail: timeout options go AFTER fn per bun:test signature
+// test(label, fn, options) — main had them as arg 2 (runtime tolerated it,
+// tsc did not; pre-existing typecheck break).
+test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
   // Regression: systemd --user services inherit PATH without ~/.bun/bin, so
   // factory-spawned tmux subshells could not resolve `bun` and died exit 127
   // before the claim ran. Shell must restore the bun dir itself.
@@ -429,6 +457,7 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", { timeo
     // them to dummy values bypasses the potentially-blocking pass lookup entirely.
     CLAUDE_CODE_OAUTH_TOKEN: "test-token",
     MINIMAX_API_KEY: "test-key",
+    ARC_SPAWN_SH: fakeSpawnSh,
   };
   const r = spawnSync("bash", [shell, "w-stripped"], { encoding: "utf8", env });
   expect(r.status).toBe(0);
@@ -441,7 +470,7 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", { timeo
   const issue = JSON.parse(show.stdout).issue;
   expect(issue.claimed_by).toBe("w-stripped");
   expect(issue.state).toBe("review");
-});
+}, { timeout: 30000 });
 
 test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a stripped PATH", () => {
   // Regression (live daemon 2026-06-29): 9 exit-127 `pi: command not found`
@@ -523,6 +552,7 @@ test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a strippe
     ARC_LEDGER_DB: dbPath,
     CLAUDE_BIN: fakeClaude,
     ARC_PROJECT_REPO_ARC_AGENTS: REPO,
+    ARC_SPAWN_SH: fakeSpawnSh,
   };
   const r = spawnSync("bash", [shell, "w-pi-strip"], { encoding: "utf8", env });
   expect(r.status).toBe(0);
@@ -738,7 +768,7 @@ test("worker-shell.sh claims atomically: only one of two parallel shells wins fo
   // one. The fake self-reports terminal and exits, so the winner returns fast.
   // ARC_PROJECT_REPO_ARC_AGENTS pins the worktree base to this checkout — the
   // row's project=arc-agents else resolves to ~/repos/arc-agents, absent on CI.
-  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude, ARC_PROJECT_REPO_ARC_AGENTS: REPO };
+  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude, ARC_PROJECT_REPO_ARC_AGENTS: REPO, ARC_SPAWN_SH: fakeSpawnSh };
   // Run two shells in parallel; both attempt claim, exactly one should succeed.
   const r1 = spawnSync("bash", [shell, "w1"], { encoding: "utf8", env });
   const r2 = spawnSync("bash", [shell, "w2"], { encoding: "utf8", env });
