@@ -8,7 +8,7 @@
 import { test, expect, beforeEach, afterEach } from "bun:test";
 import { Database } from "bun:sqlite";
 import { spawnSync } from "node:child_process";
-import { mkdtempSync, rmSync, writeFileSync, existsSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { migrate } from "./migrate";
@@ -614,4 +614,51 @@ test("(c) backstop PRESERVES an ahead-of-main orphan when gh is unavailable (nul
   const mine = res.find((r) => r.worktree_path === dir);
   expect(mine?.outcome).toBe("kept-has-commits");
   expect(existsSync(dir)).toBe(true);
+});
+
+// Treehouse-pooled slots (worker-shell.sh acquires via arc-director's
+// spawn.sh) live under a `/.treehouse/` dir. The reaper must hand them back
+// with `treehouse return` (warm slot survives, lease released) instead of
+// `git worktree remove` (which would destroy the pooled build cache).
+
+function fakeTreehouse(workDir: string, rc: number): { binDir: string; calls: string } {
+	const binDir = join(workDir, "th-bin");
+	const calls = join(workDir, "th-calls.txt");
+	spawnSync("mkdir", ["-p", binDir]);
+	writeFileSync(
+		join(binDir, "treehouse"),
+		`#!/usr/bin/env bash\necho "$@" >> "${calls}"\nexit ${rc}\n`,
+	);
+	spawnSync("chmod", ["755", join(binDir, "treehouse")]);
+	return { binDir, calls };
+}
+
+test("(a) returns a treehouse-pooled slot via `treehouse return`, nulls the row", () => {
+	const db = setupDb();
+	spawnSync("mkdir", ["-p", join(workDir, ".treehouse")]);
+	const slot = addWorktreeUnder(join(workDir, ".treehouse"), "slot1", "th-slot-br");
+	const { binDir, calls } = fakeTreehouse(workDir, 0);
+	insertMergedIssue(db, "iss-th", slot, "th-slot-br");
+
+	const reaped = reapWorktrees(db, { treehouseBin: join(binDir, "treehouse") });
+	const r = reaped.find((x) => x.issue_id === "iss-th")!;
+	expect(r.outcome).toBe("removed");
+	expect(readFileSync(calls, "utf8")).toContain(`return ${slot}`);
+	const row = db.query("SELECT worktree_path, branch FROM issues WHERE id='iss-th'").get() as any;
+	expect(row.worktree_path).toBeNull();
+	expect(row.branch).toBeNull();
+});
+
+test("(a) treehouse return failure → git-remove-failed, row kept for retry", () => {
+	const db = setupDb();
+	spawnSync("mkdir", ["-p", join(workDir, ".treehouse")]);
+	const slot = addWorktreeUnder(join(workDir, ".treehouse"), "slot2", "th-slot2-br");
+	const { binDir } = fakeTreehouse(workDir, 1);
+	insertMergedIssue(db, "iss-th-fail", slot, "th-slot2-br");
+
+	const reaped = reapWorktrees(db, { treehouseBin: join(binDir, "treehouse") });
+	const r = reaped.find((x) => x.issue_id === "iss-th-fail")!;
+	expect(r.outcome).toBe("git-remove-failed");
+	const row = db.query("SELECT worktree_path FROM issues WHERE id='iss-th-fail'").get() as any;
+	expect(row.worktree_path).toBe(slot);
 });

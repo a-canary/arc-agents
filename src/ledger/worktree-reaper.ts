@@ -103,6 +103,15 @@ function isMainWorktree(path: string): boolean {
   return gitDir.out === commonDir.out;
 }
 
+// True when the path lives inside a treehouse pool root (a `.treehouse`
+// path segment). Those worktrees are pooled, lease-tracked slots owned by
+// treehouse (worker-shell.sh acquires via arc-director's spawn.sh) —
+// `git worktree remove` would destroy a warm slot (deps/build cache);
+// `treehouse return` retires it back to the pool instead.
+function isTreehouseSlot(wt: string): boolean {
+  return wt.split("/").includes(".treehouse");
+}
+
 // Count commits on the worktree's HEAD that are NOT reachable from main —
 // i.e. unmerged work. 0 means the branch is fully merged (or never diverged):
 // nothing to salvage. Any git failure (detached, no main, corrupt) is treated
@@ -174,7 +183,10 @@ function ghPrMerged(branch: string, slug: string | null, runner: GhRunner): bool
   }
 }
 
-export function reapWorktrees(db: Db): ReapedWorktree[] {
+// opts.treehouseBin: absolute path to the treehouse binary for tests (Bun's
+// spawnSync does not propagate runtime process.env.PATH mutations, so a fake
+// on PATH is invisible — inject the path instead).
+export function reapWorktrees(db: Db, opts: { treehouseBin?: string } = {}): ReapedWorktree[] {
   // (a) merged + (b) failed/cancelled. blocked stays excluded (decomposition
   // parents). ready/wip/claimed/review are live — never reaped here.
   // 021: merged rows are gated on hygiene_complete=1 — the hygiene phase must
@@ -248,6 +260,41 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
         ],
       );
       reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "main-working-tree" });
+      continue;
+    }
+
+    // Treehouse-pooled slot: return it to the pool instead of destroying it.
+    // Must run BEFORE the dirty check — pooled slots carry gitignored build
+    // caches, so the dirty guard would skip them forever and leak every slot.
+    // treehouse absent/failing → leave the row for the next tick (revisit),
+    // same as git-remove-failed below. The commit-guard above already
+    // preserved failed/cancelled slots with unmerged work.
+    if (isTreehouseSlot(wt)) {
+      const ret = spawnSync(opts.treehouseBin ?? "treehouse", ["return", wt], { encoding: "utf8" });
+      if (ret.status === 0) {
+        // Best-effort branch delete, same as the plain remove path below.
+        if (br) git(parent, ["branch", "-D", br]);
+        db.run(
+          `UPDATE issues SET worktree_path=NULL, branch=NULL, updated_at=strftime('%s','now') WHERE id=?`,
+          [row.id],
+        );
+        db.run(
+          `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', 'worktree-reaper', ?)`,
+          [
+            row.id,
+            JSON.stringify({ event: "worktree-reaped", outcome: "removed", detail: "treehouse-return", worktree_path: wt, branch: br }),
+          ],
+        );
+        reaped.push({ issue_id: row.id, worktree_path: wt, branch: br, outcome: "removed", detail: "treehouse-return" });
+        continue;
+      }
+      reaped.push({
+        issue_id: row.id,
+        worktree_path: wt,
+        branch: br,
+        outcome: "git-remove-failed",
+        detail: `treehouse return failed: ${((ret.stdout ?? "") + (ret.stderr ?? "")).trim()}`,
+      });
       continue;
     }
 
