@@ -27,6 +27,8 @@ bun bin/cron-install.ts install --dry-run --from <tab> bin/cron/*.cron  # upsert
 bun bin/cron-lint.ts [crontab-file]  # fail on unpinned-PATH bun/pi entries
 ```
 
+arc-agents' live crontab entries are managed marker blocks (bin/cron/*.cron). Edit the manifest and re-run cron-install — never hand-edit a `# >>> name >>>` block in the live crontab. A daily cron-lint entry (06:00 UTC) lints the whole live crontab and reports violations via report-error.sh.
+
 CLI verbs (see `I-0001`): `init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum`.
 
 Install bins on PATH (only after merge to main, per `I-0005`):
