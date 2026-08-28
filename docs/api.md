@@ -232,7 +232,7 @@ export function runPreDrafter(db: Database, row: ChatInRow): RunResult
 {
   "exec_cli_alias": {
     "fast_alias": "claude {prompt}",
-    "smart_alias": "claude --model opus-4.7 {prompt}"
+    "smart_alias": "claude --model opus {prompt}"
   },
   "default_alias": "fast_alias",
   "pool_caps": {

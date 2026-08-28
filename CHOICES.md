@@ -69,14 +69,36 @@ SQL trigger flips dependents `blocked` → `ready` when all blockers merged. Pol
 ### G-0005: One Slice Per Worktree Per Commit
 Thin vertical tracer-bullets. 100k token smart-zone cap per issue.
 
-### G-0006: Two-Tier Model Policy
-Opus 4.7 for synthesis ($10/day cap). minimax-m2.7 for impl (unlimited, direct API).
+### G-0006: Two-Tier Model Policy (partially superseded by G-0011)
+Workhorse model for impl/wayfinder/planning; frontier (Opus) only at named
+critical junctions — see G-0011 for the Defend* gate family and the cost rule.
 
 ### G-0007: No Symlinks During Migrations
 Move files; subagents fix refs.
 
 ### G-0008: TypeScript Default
 TS over Python where reasonable. Bun runtime.
+
+### G-0011: Defend* Gate Family (2026-08-28)
+Critical-junction gates where an independent model attacks the artifact before it
+crosses the seam. Three gates, one verdict contract:
+
+- **DefendPlan** (Opus, via ask-claude): wayfinder result + evidence → build dispatch.
+  Sits between user and Director; verdict reaches the user directly.
+- **DefendMerge** (workhorse, fresh context = /hard-merge): worker diff → git merge.
+  No Opus — merges are frequent and git-reversible.
+- **DefendRelease** (Opus, via ask-claude): QA-passed + human-reviewed artifact →
+  public deploy. Includes the drift lens: deviation since last human-approved
+  prototype → "refresh human approval" is a valid attack.
+
+Rubric = mandatory lenses per gate (floor, not fence) + free attack; Opus adapts
+to conditions. Verdict contract: `CLEAR | ATTACKS`, ranked, each attack
+satisfiable. Overrides are logged as ledger events (gate, attacks, why). Opus budget =
+junction count — Opus is spent only at named junctions and counsel escalation
+(complex problem / repeating blockage), never for routine review.
+
+Spec: `arc-skills/skills/defend/` (SKILL.md + plan.md/merge.md/release.md),
+transport: `arc-skills/skills/ask-claude/`.
 
 ### G-0010: Pool-Aware Factory Dispatch
 Factory dispatches on the `pool` column (not `type`). Slot model: 4-any (any pool) + 2-interactive (`pool=interactive` fast-pass). `claimOnce(db, worker, poolFilter?)` in `src/ledger/claim.ts` builds one SQL UPDATE…RETURNING; pool clause is injected only when filter is set. `bin/worker-shell.sh` reads `ARC_CLAIM_POOL` (preferred) or `ARC_CLAIM_TYPE` (deprecated alias) to set the filter.
