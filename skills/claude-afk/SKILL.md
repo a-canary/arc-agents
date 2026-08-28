@@ -82,7 +82,20 @@ OUT="${OUT:-$(mktemp -t claude-afk.XXXXXX.json)}"
 RAW="$(mktemp -t claude-afk-raw.XXXXXX.txt)"
 SESSION="${PREFIX}-$$-${RANDOM}"
 
-tmux new-session -d -s "$SESSION" \
+# tmux new-session inherits the *server* env, not the caller's — a
+# CLAUDE_CODE_OAUTH_TOKEN exported in the worker shell never reaches the afk
+# pane ("Not logged in · Please run /login"). Propagate it via -e (envp,
+# never argv — no secret in /proc/*/cmdline); fall back to pass (canonical
+# store) when unset. Requires tmux >= 3.2 for -e.
+if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && command -v pass >/dev/null 2>&1; then
+  export CLAUDE_CODE_OAUTH_TOKEN="$(pass show api/claude/oauth-token 2>/dev/null || true)"
+fi
+TMUX_ENV_ARGS=()
+if [ -n "${CLAUDE_CODE_OAUTH_TOKEN:-}" ]; then
+  TMUX_ENV_ARGS+=(-e "CLAUDE_CODE_OAUTH_TOKEN=${CLAUDE_CODE_OAUTH_TOKEN}")
+fi
+
+tmux new-session -d -s "$SESSION" "${TMUX_ENV_ARGS[@]}" \
   "claude -p ${MODEL:+--model $(printf '%q' "$MODEL")} \
    ${SYS:+--append-system-prompt $(printf '%q' "$SYS")} \
    $(printf '%q' "$PROMPT") > $(printf '%q' "$RAW") 2>&1; \
@@ -115,6 +128,12 @@ Save as `~/.local/bin/claude-afk`, `chmod +x`. Replace `claude -p --output-forma
 - Hermetic settings only override hooks; permissions/MCP come from `~/.claude/settings.json`. Extend the hermetic settings if you need stricter perms.
 - Check `.exit_reason`: `stop` = clean, `timeout` = wrapper killed the session.
 - No streaming, no resume, tmux-only. Caller's global MCP config applies.
+- Auth: the wrapper propagates `CLAUDE_CODE_OAUTH_TOKEN` into the pane via
+  `tmux new-session -e` (envp, not argv — tmux server env does NOT carry
+  caller exports, root cause of "Not logged in" failures in factory workers,
+  verified 2026-08-29) and falls back to `pass show api/claude/oauth-token`.
+  If both are absent, claude inside the pane cannot authenticate; fix the
+  env, not the prompt. Needs tmux >= 3.2.
 
 ## Relationship to arc-agents
 

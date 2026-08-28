@@ -155,9 +155,9 @@ No editorializing. No output outside the JSON object.
 
 | Worker harness | Spawn command | Independent? |
 | --- | --- | --- |
-| `claude -p` headless (arc-agents default) | `claude-afk ... --session-prefix diff-review` | Yes (fresh session, hermetic settings, no shared hooks) |
+| `claude -p` headless (arc-agents default) | `claude-afk ... --session-prefix diff-review` | Yes (fresh session, hermetic settings, no shared hooks). Wrapper propagates `CLAUDE_CODE_OAUTH_TOKEN` into the tmux pane — "Not logged in" from inside a worker was the tmux server-env gap, fixed 2026-08-29; if it recurs, check token presence before blaming the model |
 | pi-coding-agent (with subagent extension loaded) | `pi -p` or RPC mode dispatched by an extension | Yes (fresh subagent with no shared reasoning) |
-| pi-coding-agent (no extension loaded) | direct self-review with honest `reviewer_identity` label | No (same reasoning trace); document via `self_review_limitation` field |
+| pi-coding-agent (no extension loaded) | `pi -p --no-session "<review prompt>"` — fresh process, no shared trace (verified working 2026-08-27); else direct self-review with honest `reviewer_identity` label | Yes for the `pi -p` row / No for in-process self-review; document via `self_review_limitation` field |
 
 If the table doesn't match your harness, fix the table — don't silently fall back.
 
