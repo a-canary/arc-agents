@@ -63,7 +63,7 @@ echo ""
 ID=$("$LEDGER" create --db "$TEMP_DB" \
   --title "cmd-overview: sample issue" \
   --kind task --type quality --pool explore 2>&1 | \
-  python3 -c "import sys,json; print(json.load(sys.stdin)['issue']['id'])" 2>/dev/null)
+  python3 -c "import sys,json; print(json.load(sys.stdin)['id'])")
 
 if [[ -n "$ID" ]]; then
   info "Sample: ledger show $ID"
