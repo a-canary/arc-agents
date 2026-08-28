@@ -1183,7 +1183,9 @@ switch (cmd) {
     // --pool X: filter by pool column (preferred). --type X: deprecated alias.
     const pool = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
+    // hitl=0 mirrors buildClaimSQL (src/ledger/claim.ts) — a ready row that
+    // can never be claimed must not appear in spawn-ready output.
+    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND hitl=0 AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
       pool ? "AND pool=?" : ""
     } ORDER BY ${SORT_KEY_SQL}`;
     out(pool ? db.query(sql).all(pool) : db.query(sql).all());
