@@ -153,7 +153,6 @@ function createPrd(title: string) {
     "--title", title,
     "--tier", "mvp",
     "--pool", "ops",
-    "--class-rationale", "test fixture",
   ]);
   if (r.status !== 0) throw new Error(`create prd failed: ${r.stderr}`);
   return JSON.parse(r.stdout).id;

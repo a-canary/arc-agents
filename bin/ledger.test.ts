@@ -2041,11 +2041,27 @@ test("create --project rejects mixed-case with canonical suggestion", async () =
 // value-taking, so a boolean flag (e.g. --json) immediately followed by a
 // stray positional swallowed that positional as its "value" and the
 // create-time "no positional args" guard never saw it (path-strip, 2026-08-04).
-test("create --json <stray> still rejects the stray positional", async () => {
+// --json is not a real create flag, so the unknown-flag guard now rejects it
+// first — strictly stricter than the original swallow bug.
+test("create --json <stray> dies on the unknown flag before any write", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
     const r = await runRaw(db, "create", "--kind", "task", "--type", "mvp", "--title", "t", "--json", "stray");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("unknown flag for create: --json");
+  } finally {
+    cleanup();
+  }
+});
+
+// The underlying positional-rejection guard must still fire for a genuinely
+// stray positional (no boolean flag involved).
+test("create <stray> rejects the stray positional", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const r = await runRaw(db, "create", "--kind", "task", "--type", "mvp", "--title", "t", "stray");
     expect(r.exitCode).not.toBe(0);
     expect(r.stderr.toString()).toContain("positional args not allowed for create");
   } finally {
