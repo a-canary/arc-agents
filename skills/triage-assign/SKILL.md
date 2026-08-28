@@ -22,6 +22,7 @@ No flags required. The worker claims `agent_unset` / `pool_unset` rows atomicall
    ledger.ts list --pool pool_unset --limit 20
    ```
    Deduplicate (a row may have both unset).
+   **Skip rows with `type='HITL'`** — human-decision rows are not worker work; leave their sentinels alone.
 
 2. **For each row, read payload + context.**
    - `ledger.ts show <id>` — kind, tier, title, body_md, parent_id.

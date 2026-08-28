@@ -370,22 +370,25 @@ test("bad type rejected with enum hint", async () => {
   }
 });
 
-test("claim picks HITL before mvp via priority sort", async () => {
+test("claim skips type='HITL' rows even when they outrank on priority sort", async () => {
   const { db, cleanup } = freshDb();
   try {
     await run(db, "init");
-    await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "mvp-row");
+    const m = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "mvp-row")) as {
+      id: string;
+    };
     const h = (await run(db, "create", "--kind", "task", "--type", "HITL", "--title", "hitl-row")) as {
       id: string;
     };
     // Migration 017: sort is (tier, pool, created_at, id). Pin HITL row to
-    // (prod, interactive) so it outranks mvp deterministically.
+    // (prod, interactive) so it would outrank mvp deterministically if the
+    // type <> 'HITL' guard were absent.
     const { Database } = await import("bun:sqlite");
     const raw = new Database(db);
     raw.run("UPDATE issues SET tier='prod', pool='interactive' WHERE id=?", [h.id]);
     raw.close();
     const claimed = (await run(db, "claim", "w1")) as { claimed: string };
-    expect(claimed.claimed).toBe(h.id);
+    expect(claimed.claimed).toBe(m.id);
   } finally {
     cleanup();
   }

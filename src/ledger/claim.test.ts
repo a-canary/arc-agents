@@ -209,3 +209,33 @@ test("claimOnce skips a higher-priority hitl=1 row and claims the next hitl=0 ro
 test("CLAIM_SQL carries the hitl=0 guard", () => {
   expect(CLAIM_SQL).toContain("hitl=0");
 });
+
+// ── type='HITL' guard: rows created as kind=task/type=HITL often carry the
+// schema-default hitl=0 (187 live rows at filing), so the hitl=0 guard alone
+// lets them into the claim pool. Regression: map-ontology-pilot-review was
+// claimed + triaged despite type='HITL'.
+
+test("claimOnce does NOT claim a type='HITL' ready row with hitl=0 even as the only candidate", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertReadyType(db, "hitl-type-row", "HITL", "prod", "interactive");
+    expect(claimOnce(db, "w-hitltype")).toBeNull();
+  } finally {
+    cleanup();
+  }
+});
+
+test("claimOnce skips a higher-priority type='HITL' row and claims the next hitl=0 non-HITL row", () => {
+  const { db, cleanup } = freshDb();
+  try {
+    insertReadyType(db, "hitl-type-row", "HITL", "prod", "interactive"); // outranks on tier/pool
+    const ok = insertReady(db, "normal-work-hitltype", "mvp", "pool_unset");
+    expect(claimOnce(db, "w-hitltype-skip")?.id).toBe(ok);
+  } finally {
+    cleanup();
+  }
+});
+
+test("CLAIM_SQL carries the type <> 'HITL' guard", () => {
+  expect(CLAIM_SQL).toContain(`type <> 'HITL'`);
+});
