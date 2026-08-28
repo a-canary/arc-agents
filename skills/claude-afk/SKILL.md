@@ -24,6 +24,7 @@ claude-afk <prompt>                              # positional, required
   [--timeout <seconds>]                          # default: 1800
   [--session-prefix <str>]                       # default: "afk"
   [--model <name>]                               # passed through to claude -p
+  [--effort <level>]                             # passed through to claude -p
 ```
 
 Behavior: mints a tmux session, writes a hermetic settings file spawns `tmux new-session -d` running `claude -p` with the prompt (output teed into the JSON envelope), blocks until JSON appears or timeout fires, kills the tmux session, prints JSON to stdout. Exits 0 on success, nonzero on timeout / hook failure.
@@ -72,11 +73,12 @@ while [ $# -gt 0 ]; do
     --system-prompt) SYS="$2";   shift 2 ;;
     --session-prefix) PREFIX="$2"; shift 2 ;;
     --model)      MODEL="$2";    shift 2 ;;
+    --effort)     EFFORT="$2";   shift 2 ;;
     -p|--thinking) [ "$1" = "--thinking" ] && shift; shift ;; # tolerated no-ops (alias compat)
     *)            PROMPT="$1";    shift ;;
   esac
 done
-[ -z "$PROMPT" ] && { echo "usage: claude-afk <prompt> [--model M] [--out F] [--timeout S] [--system-prompt S] [--session-prefix P]" >&2; exit 2; }
+[ -z "$PROMPT" ] && { echo "usage: claude-afk <prompt> [--model M] [--effort L] [--out F] [--timeout S] [--system-prompt S] [--session-prefix P]" >&2; exit 2; }
 
 OUT="${OUT:-$(mktemp -t claude-afk.XXXXXX.json)}"
 RAW="$(mktemp -t claude-afk-raw.XXXXXX.txt)"
@@ -97,6 +99,7 @@ fi
 
 tmux new-session -d -s "$SESSION" "${TMUX_ENV_ARGS[@]}" \
   "claude -p ${MODEL:+--model $(printf '%q' "$MODEL")} \
+   ${EFFORT:+--effort $(printf '%q' "$EFFORT")} \
    ${SYS:+--append-system-prompt $(printf '%q' "$SYS")} \
    $(printf '%q' "$PROMPT") > $(printf '%q' "$RAW") 2>&1; \
    jq -n --rawfile r $(printf '%q' "$RAW") --arg rc \$? \
