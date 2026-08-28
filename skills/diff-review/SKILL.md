@@ -159,6 +159,8 @@ No editorializing. No output outside the JSON object.
 | pi-coding-agent (with subagent extension loaded) | `pi -p` or RPC mode dispatched by an extension | Yes (fresh subagent with no shared reasoning) |
 | pi-coding-agent (no extension loaded) | `pi -p --no-session "<review prompt>"` — fresh process, no shared trace (verified working 2026-08-27); else direct self-review with honest `reviewer_identity` label | Yes for the `pi -p` row / No for in-process self-review; document via `self_review_limitation` field |
 
+If `claude-afk` exits with `Not logged in · Please run /login` on a worker host (observed 2026-08-28), use plain `claude -p --model haiku --allowedTools "" < prompt-file > result.json` — a fresh headless session has the same independence property. Do NOT fall back to self-review on this failure mode.
+
 If the table doesn't match your harness, fix the table — don't silently fall back.
 
 ## Enforcement
