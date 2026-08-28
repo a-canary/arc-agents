@@ -6,6 +6,8 @@
 #   2. typecheck — `bun run typecheck` passes (tsc --noEmit)
 #   3. secret-scan — gitleaks + trufflehog (no real secrets)
 #   4. test      — `bun test` passes (full suite, bun's runner)
+#   5. write-lane — arc-director shared check (invariant 7) over the PR diff
+#                   file list; LANE_BLOCKED on any out-of-lane landing path
 #
 # Usage: bin/merge-gate.sh [--project <path>]
 #   PROJECT env var or --project overrides cwd. Defaults to repo containing this script.
@@ -145,6 +147,33 @@ gate_test() {
   fi
 }
 
+# ── Gate 5: Write-lane — invariant 7 over the PR diff ─────────────────────
+
+gate_write_lane() {
+  log "Gate 5: Write-lane (invariant 7)"
+  local script="$PROJECT/bin/write-lane-gate.sh"
+  if ! [ -x "$script" ]; then
+    fail "write-lane" "bin/write-lane-gate.sh missing — shared check unavailable, failing closed"
+    return 1
+  fi
+  local logf rc=0
+  logf="$(mktemp)"
+  "$script" --project "$PROJECT" >"$logf" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
+    pass "write-lane" "PR diff files all in-lane"
+    rm -f "$logf"
+    return 0
+  fi
+  cat "$logf" >&2
+  rm -f "$logf"
+  if [ "$rc" -eq 2 ]; then
+    fail "write-lane" "shared check unavailable — failing closed (output above)"
+  else
+    fail "write-lane" "write-lane gate failed (output above)"
+  fi
+  return 1
+}
+
 # ── Main ────────────────────────────────────────────────────────────────────
 
 main() {
@@ -155,6 +184,7 @@ main() {
   gate_migration_lint || true
   gate_secret_scan   || true
   gate_test           || true
+  gate_write_lane     || true
 
   local failed
   failed=$(printf '%s\n' "${RESULTS[@]}" | grep -c "^FAIL" || true)
