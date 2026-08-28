@@ -299,6 +299,46 @@ ensure_cli_agent_on_path() {
   return 0
 }
 
+# Factory-level install of the write-lane PreToolUse hook (arc-director
+# DESIGN.md invariant 7). Ensures $HOME/.claude/settings.json carries a
+# PreToolUse entry (matcher Write|Edit|MultiEdit|NotebookEdit|Bash) pointing
+# at arc-director's shared hooks/pre-write-lane.sh, so every worker shell in
+# every repo gates out-of-lane writes — repos with their own per-repo entry
+# (e.g. arc-director) are untouched; the user-level entry is the backstop for
+# all others. Idempotent: existing entries and hooks are preserved, the
+# command is appended only if absent. jq-merged into a tmp file then mv'd —
+# never clobbers. Fail-open with a loud warning: a corrupt settings.json
+# would break claude boot for every worker on the machine; the merge-gate
+# write-lane check (bin/write-lane-gate.sh) remains the durable backstop.
+ensure_write_lane_hook() {
+  local settings="${CLAUDE_SETTINGS_JSON:-$HOME/.claude/settings.json}"
+  local hook_cmd="${ARC_DIRECTOR:-$HOME/repos/arc-director}/hooks/pre-write-lane.sh"
+  local matcher="Write|Edit|MultiEdit|NotebookEdit|Bash"
+  command -v jq >/dev/null 2>&1 || {
+    echo "[worker-shell] WARN: jq missing — write-lane hook not installed at $settings" >&2
+    return 0; }
+  [ -f "$hook_cmd" ] || {
+    echo "[worker-shell] WARN: pre-write-lane.sh not found at $hook_cmd (set ARC_DIRECTOR) — write-lane hook not installed" >&2
+    return 0; }
+  mkdir -p "$(dirname "$settings")"
+  [ -f "$settings" ] || echo '{}' > "$settings"
+  local tmp="${settings}.lane-tmp.$$"
+  if ! jq --arg m "$matcher" --arg c "$hook_cmd" '
+      .hooks = (.hooks // {})
+      | .hooks.PreToolUse = ((.hooks.PreToolUse // []) as $ptu
+          | $ptu + (if any($ptu[]; .matcher == $m) then [] else [{matcher: $m, hooks: []}] end))
+      | .hooks.PreToolUse |= map(
+          if (.matcher == $m) and (([.hooks[]?.command] | index($c)) | not)
+          then .hooks = ((.hooks // []) + [{type: "command", command: $c}])
+          else . end)
+    ' "$settings" > "$tmp" 2>/dev/null; then
+    rm -f "$tmp"
+    echo "[worker-shell] WARN: $settings unreadable/invalid JSON — write-lane hook not installed (merge-gate backstop still holds)" >&2
+    return 0
+  fi
+  mv "$tmp" "$settings"
+}
+
 # Fast-forward the given repo's default branch (e.g. local `main` or
 # `master`) to `origin/<default>`. Closes the "local main N behind origin"
 # pattern documented in analysis-1782813826.md §"Pattern 4 follow-up" — the
@@ -377,6 +417,7 @@ fi
 ensure_pi_on_path
 ensure_claude_afk_on_path
 ensure_cli_agent_on_path
+ensure_write_lane_hook
 
 WORKER="${1:?worker name required}"
 REPO="$(cd "$(dirname "$0")/.." && pwd)"
