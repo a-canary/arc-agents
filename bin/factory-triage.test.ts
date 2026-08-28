@@ -46,6 +46,7 @@ function insertReady(
     kind?: string;
     state?: string;
     source_module?: string;
+    type?: string;
   } = {},
 ): string {
   const { Database } = require("bun:sqlite");
@@ -54,10 +55,11 @@ function insertReady(
   const id = title.toLowerCase().replace(/[^a-z0-9]+/g, "-").slice(0, 40);
   db.run(
     `INSERT INTO issues (id, project, title, body_md, acceptance_md, type, state, kind, tier, pool, agent, source_module)
-     VALUES (?, 'arc-agents', ?, '', '', 'mvp', ?, ?, ?, ?, ?, ?)`,
+     VALUES (?, 'arc-agents', ?, '', '', ?, ?, ?, ?, ?, ?, ?)`,
     [
       id,
       title,
+      overrides.type ?? "mvp",
       overrides.state ?? "ready",
       overrides.kind ?? "task",
       overrides.tier ?? "tier_unset",
@@ -196,6 +198,27 @@ test("triageUnset: kind=task, agent_unset → agent=developer", async () => {
     triageUnset(db, 10);
     const row = db.query<{ agent: string }, [string]>("SELECT agent FROM issues WHERE id=?").get("dev-task");
     expect(row?.agent).toBe("developer");
+  } finally {
+    db.close();
+  }
+});
+
+// Regression: a type='HITL' ready row (schema-default hitl=0) was triaged
+// pool=explore and entered the worker queue. Triage must skip type='HITL'
+// rows entirely — they are human-decision rows, not worker work.
+test("triageUnset: type='HITL' ready row stays *_unset (no agent/pool fill, no triaged event)", async () => {
+  const triageUnset = await loadTriageUnset();
+  insertReady({ title: "hitl-type-row", kind: "task", tier: "mvp", pool: "pool_unset", agent: "agent_unset", type: "HITL" });
+
+  const { Database } = await import("bun:sqlite");
+  const db = new Database(dbPath);
+  try {
+    triageUnset(db, 10);
+    const row = db.query<{ agent: string; pool: string }, [string]>("SELECT agent, pool FROM issues WHERE id=?").get("hitl-type-row");
+    expect(row?.agent).toBe("agent_unset");
+    expect(row?.pool).toBe("pool_unset");
+    const ev = db.query<{ n: number }, [string]>("SELECT COUNT(*) n FROM issue_events WHERE issue_id=? AND kind='triaged'").get("hitl-type-row");
+    expect(ev?.n).toBe(0);
   } finally {
     db.close();
   }

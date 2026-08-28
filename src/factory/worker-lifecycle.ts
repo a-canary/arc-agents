@@ -215,7 +215,8 @@ export function triageUnset(
     .query(
       `SELECT id, kind, tier, pool, agent, source_module
        FROM issues
-       WHERE state='ready' AND (agent='agent_unset' OR pool='pool_unset')
+       WHERE state='ready' AND type <> 'HITL'
+         AND (agent='agent_unset' OR pool='pool_unset')
        ORDER BY ${SORT_KEY_SQL}
        LIMIT ?`,
     )
