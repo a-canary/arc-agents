@@ -127,6 +127,14 @@ gh pr merge <num> --squash --delete-branch --auto=false
 
 Use `--squash` by default (matches arc-agents commit hygiene). Use `--merge` only if the worker explicitly requested it via the PR description.
 
+If `gh pr merge` fails with a secondary rate limit (it uses GraphQL, which can be throttled while core REST budget is full — observed 2026-08-28, expert-horde PR #67), fall back to REST:
+
+```bash
+gh api -X PUT repos/<owner>/<repo>/pulls/<num>/merge -f merge_method=squash
+```
+
+Then delete the branch via REST too (`gh api -X DELETE repos/<owner>/<repo>/branches/<branch>`) since `--delete-branch` is unavailable on that path.
+
 ### Step 8 — Clean up worktree
 ```bash
 git -C ~/repos/arc-agents worktree remove ~/worktrees/arc-agents-<slug> --force
