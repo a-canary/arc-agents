@@ -141,6 +141,22 @@ switch (cmd) {
   }
 
   case "create": {
+    // Silent-drop guard: unknown flags used to be ignored while the CLI still
+    // reported created:true. Die before any write (same class of bug as the
+    // update --evidence-file incident, 2026-08-27).
+    const CREATE_KNOWN_FLAGS = new Set([
+      "--title", "--kind", "--type", "--body", "--acceptance", "--parent",
+      "--agent", "--project", "--pool", "--tier", "--class", "--urgency",
+      "--blocked-by", "--thread", "--source-module", "--db",
+    ]);
+    for (const a of args) {
+      if (!a.startsWith("--")) continue;
+      const name = a.split("=")[0]!;
+      if (name === "--help") continue;
+      if (!CREATE_KNOWN_FLAGS.has(name)) {
+        die(`unknown flag for create: ${name} — silently dropping flags is how bad rows get minted; run 'ledger create --help'`);
+      }
+    }
     // ADR-0013 Wave 3: --kind spec → prd translation (write-side). Mirrors
     // the read-side filter in list/ls above so callers can use the new
     // vocabulary on either verb without tripping the schema constraint.
@@ -414,6 +430,24 @@ switch (cmd) {
     // A flag-only invocation (e.g. `update --state merged` with the id
     // forgotten) has no positional — fail loudly instead of a silent no-op.
     const id = positionalAfterVerb()[0] ?? die("update: expected task id");
+    // Silent-drop guard: unknown flags used to be ignored while the CLI still
+    // reported updated:true (live incident: --evidence-file dropped on a
+    // state=merged update — row merged with no evidence). Die before any write.
+    const UPDATE_KNOWN_FLAGS = new Set([
+      "--state", "--evidence", "--pr", "--local-merged-sha", "--branch",
+      "--worktree", "--hitl", "--agent", "--agent-set", "--project",
+      "--pool", "--tier", "--db",
+      "--in-place", "--force-in-place", "--no-diff",
+      "--blocked-by", // has its own dedicated refusal below
+    ]);
+    for (const a of args) {
+      if (!a.startsWith("--")) continue;
+      const name = a.split("=")[0]!;
+      if (name === "--help") continue;
+      if (!UPDATE_KNOWN_FLAGS.has(name)) {
+        die(`unknown flag for update: ${name} — silently dropping flags is how evidence goes missing; run 'ledger update --help'`);
+      }
+    }
     const state = getFlag("state");
     const evidence = getFlag("evidence");
     const pr = getFlag("pr");
@@ -452,6 +486,16 @@ switch (cmd) {
     const branch = getFlag("branch");
     const worktree = getFlag("worktree")?.trim();
     const hitl = getFlag("hitl");
+    // --pool/--tier: metadata patches per the triage-assign contract
+    // (skills/triage-assign/SKILL.md) — previously silently dropped.
+    const poolFlag = getFlag("pool");
+    if (poolFlag !== undefined && !(POOL_VALUES as readonly string[]).includes(poolFlag)) {
+      die(`--pool must be one of: ${POOL_VALUES.join(", ")}`);
+    }
+    const tierFlag = getFlag("tier");
+    if (tierFlag !== undefined && !(TIER_VALUES as readonly string[]).includes(tierFlag)) {
+      die(`--tier must be one of: ${TIER_VALUES.join(", ")}`);
+    }
     // --blocked-by is intentionally NOT honoured on `update` — silent drops
     // masked real decomposition attempts as successful no-ops. The
     // purpose-built `decompose` verb wires parent.blocked_by + parent.state
@@ -598,6 +642,14 @@ switch (cmd) {
     if (worktree) {
       sets.push("worktree_path=?");
       vals.push(worktree);
+    }
+    if (poolFlag !== undefined) {
+      sets.push("pool=?");
+      vals.push(poolFlag);
+    }
+    if (tierFlag !== undefined) {
+      sets.push("tier=?");
+      vals.push(tierFlag);
     }
     if (hitl !== undefined) {
       if (hitl !== "0" && hitl !== "1") die("--hitl must be 0 or 1");
@@ -1981,6 +2033,8 @@ function printHelp(): void {
   init                                 run migrations
   create --kind --type --title [...]   insert row (flag-only)
                                        flags: --project --body --acceptance --parent --blocked-by --agent
+                                               --pool --tier --class --urgency --thread --source-module
+                                       Unknown flags are a hard error (no silent drops).
   claim <worker> [--type T]            atomic claim of highest-priority ready task
                                        (--type restricts to one priority class)
   print-claim-sql [--type-filter]      emit canonical claim SQL (src/ledger/claim.ts)
@@ -1990,7 +2044,7 @@ function printHelp(): void {
   repoint-blocked-by <id> <blockerId...>
                                        repoint an existing blocked row's blocked_by to
                                        different sibling id(s); row must be state=blocked
-  update <id> [--state --evidence --pr --local-merged-sha --in-place --no-diff --branch --worktree --hitl 0|1 --agent --project]
+  update <id> [--state --evidence --pr --local-merged-sha --in-place --no-diff --branch --worktree --hitl 0|1 --agent --project --pool --tier]
                                        state=merged requires one of:
                                          --pr <url-or-#num>        gh pr view must say MERGED
                                          --local-merged-sha <sha>  sha must be on origin/main
@@ -2004,14 +2058,14 @@ function printHelp(): void {
                                        --local-merged-sha/--in-place like any merge.
                                        Override with ARC_SKIP_MERGE_TRUTH=1.
                                        No --state = metadata patch: --evidence, --pr,
-                                       --branch, --worktree, --hitl 0|1, --agent and
-                                       --project each plain-SET their column (no event
-                                       logged; --local-merged-sha/--in-place/--no-diff are
-                                       state-only). With --state, --agent names the event
+                                       --branch, --worktree, --hitl 0|1, --agent, --project,
+                                       --pool and --tier each plain-SET their column (no
+                                       event logged; --local-merged-sha/--in-place/--no-diff
+                                       are state-only). With --state, --agent names the event
                                        author; use --agent-set to reassign the row's agent
-                                       alongside a state change. Unknown flags are silently
-                                       ignored — a typo (e.g. --evidence-file) stores nothing
-                                       yet still reports updated:true.
+                                       alongside a state change. Unknown flags are a hard
+                                       error (no silent drops) — a typo (e.g.
+                                       --evidence-file) exits non-zero before any write.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
