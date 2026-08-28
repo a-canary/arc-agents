@@ -115,6 +115,22 @@ test("spawn-ready --type X (deprecated alias) returns same as --pool X", () => {
   expect(rowsByType[0].id).toBe(interactiveId);
 });
 
+test("spawn-ready excludes hitl=1 rows (parity with buildClaimSQL filter)", () => {
+  const normalId = insertReady({ title: "normal-task", pool: "build", tier: "mvp" });
+  const hitlId = insertReady({ title: "hitl-task", pool: "build", tier: "prod" });
+  const { Database } = require("bun:sqlite");
+  const db = new Database(dbPath);
+  db.run(`UPDATE issues SET hitl=1 WHERE id=?`, [hitlId]);
+  db.close();
+
+  const r = bun([LEDGER, "spawn-ready"]);
+  expect(r.status).toBe(0);
+  const rows = JSON.parse(r.stdout);
+  // prod tier ranks first, but the hitl=1 row must be filtered out entirely
+  expect(rows.length).toBe(1);
+  expect(rows[0].id).toBe(normalId);
+});
+
 test("spawn-ready with no filter returns all claimable ready rows in SORT_KEY order", () => {
   const prodId = insertReady({ title: "prod-task", pool: "build", tier: "prod" });
   const mvpId = insertReady({ title: "mvp-task", pool: "interactive", tier: "mvp" });
