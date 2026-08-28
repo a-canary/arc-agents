@@ -31,14 +31,19 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  // Current routing (arc-llm-proxy cutover): every alias is a single
-  // `pi --model arc-proxy/<alias>` command. A retired alias name (e.g.
-  // `minimax-build`, still referenced by row markers) falls back to
+  // Current routing (direct provider, captain standing plan 2026-08-27):
+  // `planning` is a single Veles workhorse command. A retired alias name
+  // (e.g. `minimax-build`, still referenced by row markers) falls back to
   // default_alias.
   const cmds = getAliasCommands("planning", cfg);
   expect(cmds).toHaveLength(1);
-  expect(cmds[0]).toContain("pi --model arc-proxy/planning");
+  expect(cmds[0]).toContain("pi --model Veles/unsloth/Qwen3.8-27B-GGUF");
   expect(cmds[0]).toContain("{prompt}");
+  // `hard` is the escalation group: claude-afk opus first, Veles fallback.
+  const hard = getAliasCommands("hard", cfg);
+  expect(hard).toHaveLength(2);
+  expect(hard[0]!).toContain("claude-afk --model opus");
+  expect(hard[1]!).toContain("pi --model Veles/unsloth/Qwen3.8-27B-GGUF");
   expect(getAliasCommands("minimax-build", cfg)).toEqual(
     getAliasCommands(cfg.default_alias, cfg),
   );
