@@ -114,7 +114,10 @@ if (import.meta.main) {
     process.stderr.write("cron-install: --from requires a file argument\n");
     process.exit(2);
   }
-  const fromArg = rest[rest.indexOf("--from") + 1];
+  // indexOf+1 with no --from present yields rest[0] (the first positional),
+  // which silently became the "current crontab" file — must be explicit.
+  const fromIdx = rest.indexOf("--from");
+  const fromArg = fromIdx >= 0 ? rest[fromIdx + 1] : undefined;
   let current = "";
   if (verb === "install") {
     if (fromArg) {

@@ -1,4 +1,8 @@
 import { describe, expect, test } from "bun:test";
+import { execFileSync } from "node:child_process";
+import { mkdirSync, mkdtempSync, writeFileSync, chmodSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { upsertBlock, removeBlock, blockName, upsertStatus, MARKER_OPEN, MARKER_CLOSE } from "./cron-install";
 
 const A = "# >>> a >>>";
@@ -93,5 +97,51 @@ describe("markers", () => {
   test("marker shape matches existing crontab convention", () => {
     expect(MARKER_OPEN("x")).toBe("# >>> x >>>");
     expect(MARKER_CLOSE("x")).toBe("# <<< x <<<");
+  });
+});
+
+describe("cli install without --from", () => {
+  // Runs the real CLI against a fake `crontab` shim on PATH so no live
+  // crontab is touched. Guards the arg-parsing bug where a missing --from
+  // made indexOf+1 pick the first positional (the manifest path) as the
+  // "current crontab" file.
+  function runCli(args: string[], fixtureCrontab: string, manifestName = "x.cron") {
+    const dir = mkdtempSync(join(tmpdir(), "cron-install-test-"));
+    writeFileSync(join(dir, "crontab"), `#!/bin/sh\necho '${fixtureCrontab}'\n`);
+    chmodSync(join(dir, "crontab"), 0o755);
+    const manifest = join(dir, manifestName);
+    writeFileSync(manifest, "# comment only line\n0 * * * * /bin/true\n");
+    // args may reference the bare manifest name; resolve it against dir
+    const resolved = args.map((a) => (a === manifestName ? manifest : a));
+    return execFileSync(
+      process.execPath,
+      [join(import.meta.dir, "cron-install.ts"), ...resolved],
+      { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" },
+    );
+  }
+
+  test("reads current crontab from `crontab -l`, not the manifest arg", () => {
+    const out = runCli(["install", "--dry-run", "x.cron"], "# foreign top\n*/5 * * * * /x/y.sh");
+    expect(out).toContain("appended x");
+    // diff must be against the fake live crontab, not the manifest file
+    expect(out).toContain("# foreign top");
+    expect(out).toContain("# >>> x >>>");
+  });
+
+  test("directory arg without --from reads `crontab -l` (no EISDIR)", () => {
+    const dir = mkdtempSync(join(tmpdir(), "cron-install-test-"));
+    writeFileSync(join(dir, "crontab"), "#!/bin/sh\necho '# foreign top'\n");
+    chmodSync(join(dir, "crontab"), 0o755);
+    const cronDir = join(dir, "cron");
+    mkdirSync(cronDir);
+    writeFileSync(join(cronDir, "y.cron"), "0 * * * * /bin/true\n");
+
+    const out = execFileSync(
+      process.execPath,
+      [join(import.meta.dir, "cron-install.ts"), "install", "--dry-run", cronDir],
+      { env: { ...process.env, PATH: `${dir}:${process.env.PATH}` }, encoding: "utf8" },
+    );
+    expect(out).toContain("appended y");
+    expect(out).toContain("# foreign top");
   });
 });

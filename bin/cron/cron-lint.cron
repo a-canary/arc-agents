@@ -1,0 +1,12 @@
+# arc-agents cron entries
+# Format: minute hour day month weekday
+#
+# Install (idempotent, marker-block upsert):
+#   bun bin/cron-install.ts install bin/cron/cron-lint.cron
+# Uninstall:  bun bin/cron-install.ts uninstall cron-lint
+
+# cron-lint — daily PATH-pin lint of the live crontab (06:00 UTC). Violations
+# are logged date-stamped; on failure report-error.sh appends a durable line to
+# ~/vault/observations/errors.log so an unpinned bun/pi entry fails loudly
+# instead of silently no-op'ing in cron.
+0 6 * * * PATH=/home/aaron/.bun/bin:/usr/local/lib/node_modules/node/bin:/usr/local/bin:/usr/bin:/bin sh -c 'echo "=== $(date -u +%Y-%m-%dT%H:%M:%SZ) ===" >> /home/aaron/.cache/arc-cron-lint.log; crontab -l | /home/aaron/.bun/bin/bun /home/aaron/repos/arc-agents/bin/cron-lint.ts >> /home/aaron/.cache/arc-cron-lint.log 2>&1 || /home/aaron/repos/arc-agents/bin/report-error.sh --severity error --source cron:cron-lint "cron-lint: unpinned PATH bun/pi entries in live crontab (see /home/aaron/.cache/arc-cron-lint.log)"'
