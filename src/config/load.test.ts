@@ -31,15 +31,21 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  // Current routing (arc-llm-proxy cutover): every alias is a single
-  // `pi --model arc-proxy/<alias>` command. A retired alias name (e.g.
-  // `minimax-build`, still referenced by row markers) falls back to
-  // default_alias.
+  // Current routing (direct provider routing, captain standing plan
+  // 2026-08-27): most aliases are a single `pi --model <provider>/<model>`
+  // command; the escalation tier (`hard`) is a 2-candidate group — claude-afk
+  // opus first, Veles fallback last. A retired alias name (e.g. `smart`)
+  // falls back to default_alias.
   const cmds = getAliasCommands("planning", cfg);
   expect(cmds).toHaveLength(1);
-  expect(cmds[0]).toContain("pi --model arc-proxy/planning");
+  expect(cmds[0]).toContain("pi --model");
   expect(cmds[0]).toContain("{prompt}");
-  expect(getAliasCommands("minimax-build", cfg)).toEqual(
+  const hard = getAliasCommands("hard", cfg);
+  expect(hard).toHaveLength(2);
+  expect(hard[0]).toContain("claude-afk");
+  expect(hard[1]).toContain("pi --model");
+  for (const c of hard) expect(c).toContain("{prompt}");
+  expect(getAliasCommands("smart", cfg)).toEqual(
     getAliasCommands(cfg.default_alias, cfg),
   );
 });

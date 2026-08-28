@@ -1733,17 +1733,15 @@ test("merged gate: legacy rows with null claimed_by skip self-review check", asy
 // ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
 
 test("alias-cmd prints the full failover group, one candidate per line", async () => {
-  const r = await runRawNoDb("alias-cmd", "smart");
+  const r = await runRawNoDb("alias-cmd", "hard");
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  // smart is a 2-candidate group: cli-agent resolves the registry pool
-  // (fable → opus → minimax internally), then a last-resort interactive opus
-  // exec alias. arc-agents owns the alias→cli-agent call; cli-proxy + cli-agent
-  // own the pool→cmdline-template resolution.
+  // hard is the escalation tier: claude-afk opus first, direct-provider
+  // (pi --model Veles) fallback last — one candidate per line.
   expect(lines.length).toBe(2);
   for (const l of lines) expect(l).toContain("{prompt}");
-  expect(lines[0]).toContain("cli-agent");
-  expect(lines[lines.length - 1]).toContain("opus");
+  expect(lines[0]).toContain("claude-afk");
+  expect(lines[lines.length - 1]).toContain("pi --model");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {
