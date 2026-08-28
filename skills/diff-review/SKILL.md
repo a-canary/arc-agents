@@ -95,6 +95,19 @@ Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is
    This is the only ledger write in the diff-review workflow (the reviewer is the read-only subagent, not a ledger actor).
 8. Proceed to `git add` / `git commit` / push / PR.
 
+### GraphQL rate-limit fallback (PR filing)
+
+`gh pr create` and `gh pr merge` go through the GitHub **GraphQL** API and can hit *secondary* limits even while core REST budget is full (observed 2026-08-28, expert-horde PR #67). When that happens, fall back to the REST equivalents via `gh api`:
+
+```bash
+# create — gh pr create --title T --head B --base main
+gh api repos/<owner>/<repo>/pulls -f title="T" -f head="B" -f base=main -F body="..."
+# merge — gh pr merge <n> --squash
+gh api -X PUT repos/<owner>/<repo>/pulls/<n>/merge -f merge_method=squash
+```
+
+The create response JSON includes `html_url` — that is the value for bookie's `--pr`. Verify with `gh pr view <n>` (or `gh api repos/<owner>/<repo>/pulls/<n>`) before asking bookie to merge.
+
 ## Reviewer prompt template
 
 ```
