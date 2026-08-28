@@ -1,5 +1,5 @@
 import { describe, test, expect, afterAll } from "bun:test";
-import { mkdtempSync, rmSync, writeFileSync, mkdirSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, mkdirSync, chmodSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
 import { tmpdir } from "node:os";
 
@@ -120,6 +120,79 @@ describe("write-lane-gate", () => {
       const r = spawnSync("bash", [GATE, "--canon-root", wt], { encoding: "utf8" });
       expect(r.status).toBe(0);
       expect(r.stdout.trim()).toBe(main);
+    });
+  });
+
+  // merge-gate.sh gate_write_lane wiring — sourced against stub helpers,
+  // mirroring the pre-merge.test.ts pattern.
+  function extractFn(src: string, name: string): string {
+    const m = new RegExp(`^${name}\\(\\) \\{`, "m").exec(src);
+    if (!m || m.index === undefined) throw new Error(`fn ${name} not found`);
+    let i = src.indexOf("{", m.index), depth = 0;
+    for (; i < src.length; i++) {
+      if (src[i] === "{") depth++;
+      else if (src[i] === "}" && --depth === 0) break;
+    }
+    return src.slice(m.index, i + 1);
+  }
+
+  function runGateWriteLane(wrapper: string | null): { out: string; rc: number } {
+    const dir = mkdtempSync(join(tmpdir(), "lane-gate-wiring-"));
+    try {
+      const bin = join(dir, "bin");
+      mkdirSync(bin);
+      if (wrapper !== null) {
+        const stub = join(bin, "write-lane-gate.sh");
+        writeFileSync(stub, `#!/bin/bash\n${wrapper}\n`);
+        chmodSync(stub, 0o755);
+      }
+      const fnBody = extractFn(
+        readFileSync(import.meta.dir + "/merge-gate.sh", "utf8"),
+        "gate_write_lane",
+      );
+      const driver = [
+        `PROJECT='${dir}'`,
+        `pass() { echo "PASS:$1:$2"; }`,
+        `fail() { echo "FAIL:$1:$2"; }`,
+        `skip() { echo "SKIP:$1:$2"; }`,
+        `log() { :; }`,
+        fnBody,
+        `gate_write_lane`,
+      ].join("\n");
+      const r = spawnSync("bash", ["-c", driver], { encoding: "utf8" });
+      return { out: (r.stdout || "") + (r.stderr || ""), rc: r.status ?? -1 };
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  }
+
+  describe("merge-gate.sh gate_write_lane wiring", () => {
+    test("missing wrapper fails closed (no skip)", () => {
+      const { out, rc } = runGateWriteLane(null);
+      expect(rc).toBe(1);
+      expect(out).toContain("FAIL:write-lane");
+      expect(out).toContain("failing closed");
+    });
+
+    test("wrapper exit 0 passes", () => {
+      const { out, rc } = runGateWriteLane("exit 0");
+      expect(rc).toBe(0);
+      expect(out).toContain("PASS:write-lane");
+    });
+
+    test("wrapper exit 1 fails with gate-failed message", () => {
+      const { out, rc } = runGateWriteLane("echo LANE_BLOCKED: /bad/path >&2; exit 1");
+      expect(rc).toBe(1);
+      expect(out).toContain("FAIL:write-lane");
+      expect(out).toContain("write-lane gate failed");
+      expect(out).toContain("LANE_BLOCKED");
+    });
+
+    test("wrapper exit 2 fails with shared-check-unavailable message", () => {
+      const { out, rc } = runGateWriteLane("echo no checker >&2; exit 2");
+      expect(rc).toBe(1);
+      expect(out).toContain("FAIL:write-lane");
+      expect(out).toContain("shared check unavailable");
     });
   });
 });

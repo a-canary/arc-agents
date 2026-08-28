@@ -22,7 +22,7 @@ bun test bin/ledger.test.ts          # single test file
 bun test -t "claims atomically"      # filter by test name
 bun run typecheck                    # tsc --noEmit
 bun bin/ledger.ts <verb>             # invoke CLI without install
-bin/merge-gate.sh                    # pipeline merge gate: fixture + typecheck + bun test
+bin/merge-gate.sh                    # pipeline merge gate: fixture + typecheck + secret scan + bun test + write-lane (invariant 7, fail-closed)
 bun bin/cron-install.ts install --dry-run --from <tab> bin/cron/*.cron  # upsert cron manifests as marker blocks
 bun bin/cron-lint.ts [crontab-file]  # fail on unpinned-PATH bun/pi entries
 ```

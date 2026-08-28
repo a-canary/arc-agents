@@ -153,17 +153,17 @@ gate_write_lane() {
   log "Gate 5: Write-lane (invariant 7)"
   local script="$PROJECT/bin/write-lane-gate.sh"
   if ! [ -x "$script" ]; then
-    skip "write-lane" "bin/write-lane-gate.sh missing"
-    return 0
+    fail "write-lane" "bin/write-lane-gate.sh missing — shared check unavailable, failing closed"
+    return 1
   fi
-  local logf rc
+  local logf rc=0
   logf="$(mktemp)"
-  if "$script" --project "$PROJECT" >"$logf" 2>&1; then
+  "$script" --project "$PROJECT" >"$logf" 2>&1 || rc=$?
+  if [ "$rc" -eq 0 ]; then
     pass "write-lane" "PR diff files all in-lane"
     rm -f "$logf"
     return 0
   fi
-  rc=$?
   cat "$logf" >&2
   rm -f "$logf"
   if [ "$rc" -eq 2 ]; then
