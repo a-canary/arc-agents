@@ -1386,6 +1386,48 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "032_recreate_unblock_triggers",
+    // The live vault DB lost unblock_dependents + unblock_sprint_parents
+    // while schema_migrations still recorded 019 as applied, so the cascade
+    // (merge blocker → dependent blocked→ready) was silently dead. Recreate
+    // both verbatim from the canonical table-qualified form above —
+    // json_each(issues.blocked_by), NOT bare blocked_by (the incident shape).
+    // DROP IF EXISTS + CREATE makes this idempotent on healthy DBs.
+    up: (db) => {
+      db.exec(`
+        DROP TRIGGER IF EXISTS unblock_dependents;
+        CREATE TRIGGER unblock_dependents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state = 'merged' AND OLD.state != 'merged'
+        BEGIN
+          UPDATE issues SET state='ready', updated_at=strftime('%s','now')
+          WHERE state='blocked' AND blocked_by IS NOT NULL AND blocked_by != '[]'
+            AND kind != 'sprint'
+            AND NOT EXISTS (
+              SELECT 1 FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state != 'merged'
+            );
+        END;
+
+        DROP TRIGGER IF EXISTS unblock_sprint_parents;
+        CREATE TRIGGER unblock_sprint_parents
+        AFTER UPDATE OF state ON issues
+        WHEN NEW.state IN ('merged','failed','cancelled') AND OLD.state NOT IN ('merged','failed','cancelled')
+        BEGIN
+          UPDATE issues SET state='ready', updated_at=strftime('%s','now')
+          WHERE state='blocked' AND blocked_by IS NOT NULL AND blocked_by != '[]'
+            AND kind = 'sprint'
+            AND NOT EXISTS (
+              SELECT 1 FROM json_each(issues.blocked_by) dep
+              JOIN issues b ON b.id = dep.value
+              WHERE b.state NOT IN ('merged','failed','cancelled')
+            );
+        END;
+      `);
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
