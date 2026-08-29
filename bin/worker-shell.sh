@@ -238,6 +238,18 @@ ensure_claude_afk_on_path() {
   return 0
 }
 
+# GitHub API auth for spawned subagents (diff-review reviewer, bookie). File-
+# based gh hosts.yml does not reach hermetic envs and the tmux server env
+# predates token exports — diff-review channel failures fb-vdur / fb-ntc1 /
+# fb-qhk4 (2026-08-25..29) all traced to subagent auth gaps. Pull the active
+# account's PAT from `gh auth token` when GH_TOKEN is unset so every spawned
+# subagent inherits working GitHub auth. No-op when gh is absent or already set.
+ensure_gh_token_on_env() {
+  [ -n "${GH_TOKEN:-}" ] && return 0
+  command -v gh >/dev/null 2>&1 || return 0
+  export GH_TOKEN="$(gh auth token 2>/dev/null || true)"
+}
+
 # Discover the repo's default branch (e.g. `main`, `master`, `develop`). The
 # factory previously hardcoded `main` in three sites (fast_forward_main,
 # worktree add base, BASELINE_SHA fallback) — arc-webui's GitHub default is
@@ -362,12 +374,14 @@ export PATH="${HOME}/.bun/bin:${HOME}/.local/bin:${PATH}"
 # - CLAUDE_CODE_OAUTH_TOKEN: headless `claude` auth (credentials.json can be
 #   wiped; inference-only token, no refresh).
 # - MINIMAX_API_KEY: bench SOLVE arms run `pi -p --model minimax-m3`.
+# - GH_TOKEN: via ensure_gh_token_on_env below (subagent GitHub auth).
 if [ -z "${CLAUDE_CODE_OAUTH_TOKEN:-}" ] && command -v pass >/dev/null 2>&1; then
   export CLAUDE_CODE_OAUTH_TOKEN="$(pass show api/claude/oauth-token 2>/dev/null || true)"
 fi
 if [ -z "${MINIMAX_API_KEY:-}" ] && command -v pass >/dev/null 2>&1; then
   export MINIMAX_API_KEY="$(pass show api/minimax/api-key 2>/dev/null || true)"
 fi
+ensure_gh_token_on_env
 
 # Headless engine `pi` (two-tier policy G-0006: agent-less rows → `pi -p ...`)
 # has the same stripped-PATH hazard as bun above; see ensure_pi_on_path.

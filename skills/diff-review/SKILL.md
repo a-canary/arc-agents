@@ -65,7 +65,10 @@ Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is
 1. Capture the diff: `git diff $(git merge-base HEAD origin/main)..HEAD` (or `--cached` if staged).
 2. Capture the brief: `bun bin/ledger.ts show <task-id>`, extract `body_md` + `acceptance_md`.
 3. Identify touched ADRs: any `docs/adr/*.md` in the diff, plus ADRs cited in the brief.
-4. Spawn an independent reviewer. The canonical channel depends on the worker harness:
+4. Spawn an independent reviewer. The canonical channel depends on the worker
+   harness (the reviewer inherits `GH_TOKEN` from the worker shell via
+   `ensure_gh_token_on_env` in bin/worker-shell.sh, so `gh` API calls work
+   inside the reviewer without extra setup):
 
    - **Headless claude workers (default):** spawn via `claude-afk` — observable headless claude in tmux, hermetic settings, no shared hooks. Example:
      ```bash
@@ -76,10 +79,26 @@ Empty arrays are valid (expected for clean, in-scope diffs). `axi_violations` is
      ```
      Then extract: `RESULT=$(jq -r '.result' /tmp/diff-reviewer.json)`.
 
+     Gotcha: panes inherit the **tmux server** env, not the spawning shell's.
+     If the server predates the auth token exports, claude-afk returns rc=0
+     with `{"result":"Not logged in · Please run /login","exit_reason":"error"}`
+     — an error-shaped result, NOT a review (fb-vdur, fb-ntc1, fb-qhk4).
+     Check the envelope before trusting `.result`. If it is error-shaped,
+     fall back to `pi -p --no-session "<prompt>"` (fresh process, still
+     independent; extract JSON from the tail if stop-hook noise follows).
+
    - **pi-coding-agent workers:** `Agent` / `Task` is NOT a built-in tool — it ships as the opt-in subagent extension at `examples/extensions/subagent/` inside the `@earendil-works/pi-coding-agent` package. If your pi profile loads that extension, dispatch via `pi -p` (or its RPC mode) instead of `claude-afk`. The contract is the same: an isolated session that has never seen the worker's reasoning.
 
    - **No spawn channel at all (rare, harness-limited):** if neither `claude-afk` nor a subagent extension is available, perform the review **in the worker process** but emit the contract under an `reviewer_identity` that **names the limitation honestly** (e.g. `arc-webui-direct-self-review-no-agent-tool`), include a `self_review_limitation` field in the payload body explaining what was missing, and keep the rest of the schema intact. The merge gate accepts this because `reviewer_identity` differs from `claimed_by`; the SPIRIT of independence is weakened but visible. Operator may re-review via a fresh claude/haiku session if desired. **Always prefer installing the subagent extension over relying on this fallback.**
-5. Validate the returned JSON parses against the schema. If malformed, re-prompt once; if still malformed, fail loud and decompose.
+5. **Reject error-shaped output before parsing.** rc=0 with
+   `exit_reason:"error"`, or result text shaped like a channel failure
+   ("Not logged in", "API Error", rate-limit message, empty) means NO REVIEW
+   happened — never emit a verdict from that output and never paraphrase it
+   into a pass payload (2026-08-28: a `"Not logged in"` result nearly became
+   a bogus `diff_review` event). On error-shaped output, retry once via the
+   next channel in step 4; if all channels fail, fail loud and decompose.
+   Then validate the returned JSON parses against the schema. If malformed,
+   re-prompt once; if still malformed, fail loud and decompose.
 6. Address every `surprises_vs_brief`, `gaps_vs_brief`, `adr_conflicts` entry by either editing the diff (then re-running) or including an explicit justification in `evidence_md` at merge time naming each unresolved item.
 7. Emit the report as a ledger event:
    ```bash
@@ -145,6 +164,7 @@ No editorializing. No output outside the JSON object.
 | `claude -p` headless (arc-agents default) | `claude-afk ... --session-prefix diff-review` | Yes (fresh session, hermetic settings, no shared hooks) |
 | pi-coding-agent (with subagent extension loaded) | `pi -p` or RPC mode dispatched by an extension | Yes (fresh subagent with no shared reasoning) |
 | pi-coding-agent (no extension loaded) | direct self-review with honest `reviewer_identity` label | No (same reasoning trace); document via `self_review_limitation` field |
+| Any worker, spawn channels auth-broken | `pi -p --no-session "<prompt>"` — fresh process, JSON from tail if stop-hook noise follows | Yes (fresh session) |
 
 If the table doesn't match your harness, fix the table — don't silently fall back.
 

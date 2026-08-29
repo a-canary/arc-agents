@@ -70,6 +70,20 @@ confirm the dominant `pr_url` repo before assuming the default
 Fixture: `project=cli-proxy, pr_url=https://github.com/a-canary/cli-proxy/pull/1` → `EXPECTED_REPO=a-canary/cli-proxy, ACTUAL_REPO=a-canary/cli-proxy`, check passes.
 Fixture (aliased): `project=arc-webui, pr_url=https://github.com/a-canary/webui/pull/29` → `EXPECTED_REPO=a-canary/webui, ACTUAL_REPO=a-canary/webui`, check passes (would have FAILED under the naive `a-canary/${PROJECT}` template — the bug this fix exists to prevent).
 
+**Reject error-shaped reviewer output (mandatory).** Before emitting the
+`diff_review` event, inspect the reviewer envelope/output. A channel error is
+NOT a review:
+- `claude-afk` rc=0 with `exit_reason:"error"`, or result text shaped like a
+  channel failure ("Not logged in", "API Error", rate-limit message, empty)
+  → treat as NO REVIEW. Never emit a verdict from that output and never
+  paraphrase/repair error text into a pass payload.
+- Retry once via the fallback channel: `pi -p --no-session "<prompt>"` (fresh
+  process, still independent). If both channels return error-shaped output,
+  fail loudly or decompose — do not merge without a real review.
+The emitted payload must be the reviewer's actual JSON report.
+Subagents inherit `GH_TOKEN` from the worker shell (`ensure_gh_token_on_env`),
+so `gh` API calls work inside the reviewer without extra setup.
+
 Ask the bookie subagent to log the returned JSON as a ledger event
 (`kind=diff_review`, payload = the JSON object). All ledger writes go
 through bookie — do not invoke `bin/ledger.ts event` directly.
