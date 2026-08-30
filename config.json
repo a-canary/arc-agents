@@ -1,6 +1,10 @@
 {
-  "_note": "Proxy-routed factory lane (arc-llm-proxy, http://127.0.0.1:8091). Consumers only know arc-proxy/<alias> — never Veles, llama-103, or minimax endpoints directly. Workhorse + lite + driver + bench route through the proxy so the proxy enforces slots, audit logging, and rate/balance tracking. Escalation (defense, really difficult): claude-afk opus-medium as primary admin carve-out, with arc-proxy/minimax-m3 failover (Qwen3.8 direct is retired). opus-max is forbidden — never use it. Hard aliases (hard, and any defense/escalation alias) follow the same rule: opus-medium primary, arc-proxy/minimax-m3 failover.",
+  "_note": "Proxy-routed factory lane (arc-llm-proxy, http://127.0.0.1:8091). Consumers only know arc-proxy/<alias> — never Veles, llama-103, or minimax endpoints directly. Workhorse + lite + driver + bench route through the proxy so the proxy enforces slots, audit logging, and rate/balance tracking. The DEFAULT alias is planner: FastLane primary via arc-proxy/planner (Qwen3.8 on eVeles, no local e103 fallback — pure cloud fast-lane for low-latency interactive work), with claude-afk --model opus --effort low as the direct admin failover when the proxy/Veles is down. Escalation (defense, really difficult): claude-afk opus-medium primary (hard alias), with arc-proxy/minimax-m3 failover. opus-max is forbidden — never use it. Hard aliases (hard, and any defense/escalation alias) follow the same rule: opus-medium primary, arc-proxy/minimax-m3 failover.",
   "exec_cli_alias": {
+    "planner": [
+      "pi --model arc-proxy/planner -p {prompt}",
+      "claude-afk --model opus --effort low -p {prompt}"
+    ],
     "planning": [
       "pi --model arc-proxy/planning -p {prompt}"
     ],
@@ -22,7 +26,7 @@
     ]
   },
   "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },
-  "default_alias": "planning",
+  "default_alias": "planner",
   "fast_alias": "easy",
-  "smart_alias": "planning"
+  "smart_alias": "planner"
 }
