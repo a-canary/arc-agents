@@ -1733,23 +1733,25 @@ test("merged gate: legacy rows with null claimed_by skip self-review check", asy
 // ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
 
 test("alias-cmd prints the full failover group, one candidate per line", async () => {
-  const r = await runRawNoDb("alias-cmd", "smart");
+  const r = await runRawNoDb("alias-cmd", "hard");
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  // smart is a 2-candidate group: cli-agent resolves the registry pool
-  // (fable → opus → minimax internally), then a last-resort interactive opus
-  // exec alias. arc-agents owns the alias→cli-agent call; cli-proxy + cli-agent
-  // own the pool→cmdline-template resolution.
+  // hard is a 2-candidate failover group: claude-afk opus-medium primary
+  // (admin/emergency carve-out), arc-proxy/minimax-m3 failover through the
+  // proxy. Never the other way around — Qwen3.8 direct was retired when
+  // minimax-m3 became the failover (defense escalation doctrine).
   expect(lines.length).toBe(2);
   for (const l of lines) expect(l).toContain("{prompt}");
-  expect(lines[0]).toContain("cli-agent");
-  expect(lines[lines.length - 1]).toContain("opus");
+  expect(lines[0]).toContain("opus");
+  expect(lines[lines.length - 1]).toContain("arc-proxy/minimax-m3");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {
   const r = await runRawNoDb("alias-cmd", "nonexistent-alias-xyz");
   expect(r.exitCode).toBe(0);
-  // The default is minimax-build — just verify we get a non-empty command with {prompt}
+  // The default is planning (arc-proxy/planning via pi) — just verify we get a
+  // non-empty command with {prompt}. Unknown aliases fall back via load.ts
+  // getAliasCommands → cfg.exec_cli_alias[cfg.default_alias].
   const out = r.stdout.toString().trim();
   expect(out.length).toBeGreaterThan(0);
   expect(out).toContain("{prompt}");

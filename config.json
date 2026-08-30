@@ -1,31 +1,24 @@
 {
-  "_note": "Direct provider routing per captain standing plan (2026-08-27). Workhorse: Veles/Qwen3.8-27B (planning, wayfinder, grilling, driver, bench). Lite reasoning (extraction, websearch, routing, hygiene): llama-103/Bonsai-27B. Escalation only (defense, really difficult): claude-afk opus-medium, with Veles fallback if the opus lane is down. Providers defined in ~/.pi/agent/models.json. No arc-llm-proxy hop on the factory lane; the proxy remains available for slow-lane queuing.",
+  "_note": "Proxy-routed factory lane (arc-llm-proxy, http://127.0.0.1:8091). Consumers only know arc-proxy/<alias> — never Veles, llama-103, or minimax endpoints directly. Workhorse + lite + driver + bench route through the proxy so the proxy enforces slots, audit logging, and rate/balance tracking. Escalation (defense, really difficult): claude-afk opus-medium as primary admin carve-out, with arc-proxy/minimax-m3 failover (Qwen3.8 direct is retired). opus-max is forbidden — never use it. Hard aliases (hard, and any defense/escalation alias) follow the same rule: opus-medium primary, arc-proxy/minimax-m3 failover.",
   "exec_cli_alias": {
     "planning": [
-      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
-    ],
-    "minimax-build": [
-      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
+      "pi --model arc-proxy/planning -p {prompt}"
     ],
     "driver": [
-      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
+      "pi --model arc-proxy/driver -p {prompt}"
     ],
     "bench": [
-      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
+      "pi --model arc-proxy/bench -p {prompt}"
     ],
     "easy": [
-      "pi --model llama-103/Bonsai-27B-Q1_0.gguf -p {prompt}"
+      "pi --model arc-proxy/easy -p {prompt}"
     ],
     "hygiene": [
-      "pi --model llama-103/Bonsai-27B-Q1_0.gguf -p {prompt}"
+      "pi --model arc-proxy/hygiene -p {prompt}"
     ],
     "hard": [
       "claude-afk --model opus --effort medium -p {prompt}",
-      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
-    ],
-    "opus-max": [
-      "claude-afk --model opus --effort medium -p {prompt}",
-      "pi --model Veles/unsloth/Qwen3.8-27B-GGUF -p {prompt}"
+      "pi --model arc-proxy/minimax-m3 -p {prompt}"
     ]
   },
   "pool_caps": { "interactive": 6, "ops": 5, "build": 4, "explore": 4, "default": 4 },
