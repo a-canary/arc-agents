@@ -643,7 +643,11 @@ fi
 LOG_FILE="$(worker_log_path "$WORKER")"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 STALL_SECS="$(stall_timeout_secs)"
-PIPE_READY=0
+# Attach the pane pipe BEFORE the loop: the interactive branch below `exec`s
+# and never returns, so a pipe attached inside the loop body would only ever
+# cover headless. The pipe lives on the pane, so it survives both the exec
+# and the factory's SIGKILL reap.
+setup_pipe_pane "$WORKER" "$LOG_FILE"
 LAST_RC=0
 ATTEMPT=0
 
@@ -693,10 +697,6 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   fi
 
   # Headless attempt — run as a child, capture rc, then reconcile-or-failover.
-  if [[ "$PIPE_READY" != "1" ]]; then
-    setup_pipe_pane "$WORKER" "$LOG_FILE"
-    PIPE_READY=1
-  fi
   set +e
   timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
   AGENT_RC=$?
