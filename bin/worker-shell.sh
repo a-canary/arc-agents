@@ -88,8 +88,10 @@ capture_scrollback_to_log() {
 # attached to the PANE, not the script's process tree, so it survives the
 # interactive `exec "${CMD_PARTS[@]}"` (which replaces this script with
 # claude) AND the factory's SIGKILL reap (the pipe's `-o` flag closes it
-# when the pane exits, flushing whatever was buffered to disk). Without
-# this, an interactive worker that exits within 10-30s of its factory spawn
+# when the pane exits, flushing whatever was buffered to disk). It survives
+# the exec ONLY if it was attached BEFORE it -- exec never returns -- so call
+# this above the candidate loop, never inside a branch interactive skips.
+# Without this, an interactive worker that exits within 10-30s of its factory spawn
 # (the hygiene-claim profile) has a logfile containing only the bootstrap
 # "Model not found" warning — currently 85 bytes, vs. 0 for hygiene claims
 # where the capture_scrollback_to_log fallback races the factory reap.
@@ -98,7 +100,7 @@ capture_scrollback_to_log() {
 setup_pipe_pane() {
   local worker="$1" log="$2"
   [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
-    && tmux pipe-pane -t "$worker" -o "cat >> $log" 2>/dev/null \
+    && tmux pipe-pane -t "$worker" -o "cat >> $(printf %q "$log")" 2>/dev/null \
     || true
   return 0
 }
@@ -591,18 +593,23 @@ fi
 #     above) — pre/post-agent mechanical writes, not in-session writes, so the
 #     "all in-session writes via bookie" rule is preserved.
 #
-# Headless guards (interactive doesn't need them — it execs claude which owns the
-# TTY + its own timeout + bookie):
-#   (1) Log capture: pane-side `tmux pipe-pane` mirrors the pane to the logfile.
-#       `capture_scrollback_to_log` is the last-resort fallback if pipe never
-#       attached. Set up once, reused across failover attempts.
+# (1) Log capture — BOTH paths. Pane-side `tmux pipe-pane` mirrors the pane to
+#     the logfile; `capture_scrollback_to_log` is the last-resort fallback if
+#     the pipe never attached. Attached once here, before the loop, because the
+#     interactive branch `exec`s and never comes back.
+#
+# Headless-only guard (interactive doesn't need it — it execs claude which owns
+# the TTY + its own timeout + bookie):
 #   (2) Stall watchdog: wrap each child in `timeout` so a hung engine self-
 #       terminates (SIGTERM at the bound, SIGKILL after 30s -k grace). Expiry
 #       exits 124 — a non-zero rc treated like any empty crash (→ failover).
 LOG_FILE="$(worker_log_path "$WORKER")"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
+# Attach the pane pipe BEFORE the candidate loop: the interactive branch
+# `exec`s and never returns, so any setup after that point is unreachable on
+# the very path M-0002 makes primary. Both paths need it, so it belongs here.
+setup_pipe_pane "$WORKER" "$LOG_FILE"
 STALL_SECS="$(stall_timeout_secs)"
-PIPE_READY=0
 LAST_RC=0
 ATTEMPT=0
 
@@ -646,16 +653,14 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   fi
 
   if [[ "$HEADLESS" != "1" ]]; then
-    # Interactive engine of last resort — exec hands over the TTY. The pane pipe
-    # set at spawn survives the exec and keeps mirroring for the worker's life.
+    # Interactive engine of last resort — exec hands over the TTY and NEVER
+    # returns, so nothing below this line runs on this path. The pane pipe
+    # attached above the loop survives the exec and mirrors for the worker's life.
     exec "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT"
   fi
 
   # Headless attempt — run as a child, capture rc, then reconcile-or-failover.
-  if [[ "$PIPE_READY" != "1" ]]; then
-    setup_pipe_pane "$WORKER" "$LOG_FILE"
-    PIPE_READY=1
-  fi
+  # Pipe already attached above the loop; nothing to do here.
   set +e
   timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
   AGENT_RC=$?
