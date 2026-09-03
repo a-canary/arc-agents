@@ -1384,6 +1384,9 @@ export const migrations: Migration[] = [
       db.exec(
         "CREATE INDEX IF NOT EXISTS idx_blog_pr_url ON blog(pr_url) WHERE pr_url IS NOT NULL",
       );
+    },
+  },
+  {
     id: "030_event_kind_classifier_and_inplace_review",
     // Expand issue_events.kind CHECK for the slice
     // failed-classifier-keys-off-structured-ev (from the merged PRD
