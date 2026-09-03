@@ -175,7 +175,7 @@ test("setup_pipe_pane works on a session that runs a printing command (headless-
 // Ordering is the whole defect, so assert on order, not mere presence.
 test("setup_pipe_pane is called before the interactive exec, not after", () => {
   const src = readFileSync(SHELL, "utf8").split("\n");
-  const attachLine = src.findIndex((l) => /^\s*setup_pipe_pane\s+"\$WORKER"/.test(l));
+  const attachLine = src.findIndex((l) => /setup_pipe_pane\s+"\$WORKER"\s+"\$LOG_FILE"/.test(l));
   const execLine = src.findIndex((l) => /^\s*exec "\$\{CMD_PARTS\[@\]\}"/.test(l));
 
   expect(attachLine).toBeGreaterThan(-1);
@@ -243,4 +243,29 @@ test("capture_scrollback_to_log does not double-write when the pipe attached", (
   // pipe-pane sees the keystroke echo and the command's own output; the
   // fallback must not pile the whole pane on top of that.
   expect(hits).toBeLessThanOrEqual(2);
+});
+
+// The tests above hand PIPE_READY in as an input, so none of them covers how the
+// script DERIVES it. That gap let a real regression through: setup_pipe_pane
+// used to `return 0` unconditionally, so PIPE_READY became 1 even when nothing
+// attached — permanently disarming the fallback in exactly the case it exists
+// for (tmux alive but the pipe failed to attach → log lost entirely).
+test("setup_pipe_pane reports failure when the pane does not exist", () => {
+  const r = spawnSync(
+    "bash",
+    ["-c", `source "$0" && setup_pipe_pane "$1" "$2"`, SHELL, "no-such-session-zzz", "/tmp/never-written.log"],
+    { encoding: "utf8", env: { ...process.env, ARC_WORKER_SHELL_SOURCE_ONLY: "1" } },
+  );
+  // Non-zero is what keeps PIPE_READY at 0 and the fallback armed.
+  expect(r.status).not.toBe(0);
+  expect(existsSync("/tmp/never-written.log")).toBe(false);
+});
+
+// The caller must key PIPE_READY off that status, not set it blind.
+test("PIPE_READY is derived from the attach result, not set unconditionally", () => {
+  const src = readFileSync(SHELL, "utf8");
+  // A bare `setup_pipe_pane ...` followed by an unconditional PIPE_READY=1 is
+  // the regression; the assignment has to be inside a conditional on the call.
+  expect(src).not.toMatch(/^setup_pipe_pane "\$WORKER" "\$LOG_FILE"\s*\nPIPE_READY=1/m);
+  expect(src).toMatch(/if setup_pipe_pane "\$WORKER" "\$LOG_FILE"; then PIPE_READY=1/);
 });
