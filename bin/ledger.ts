@@ -531,12 +531,23 @@ switch (cmd) {
     }
 
     if (state) {
-      const cur = db.query<{ state: string; pr_url: string | null }, [string]>(
-        "SELECT state, pr_url FROM issues WHERE id=?",
+      const cur = db.query<{ state: string; pr_url: string | null; type: string }, [string]>(
+        "SELECT state, pr_url, type FROM issues WHERE id=?",
       ).get(id);
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
       if (errs.length > 0) die(errs.map((e) => `${e.field}: ${e.message}`).join("\n"));
+      // HITL door guard (t08 incident 2026-09-04; #478 closed only the
+      // selection-SQL pick path): a worker walked `update <hitl-id> --state
+      // claimed` and merged a human-decision row whose deliverables never
+      // reached mainline. Execution-implying transitions need a declared
+      // human actor. Advisory (spoofable --agent); the kernel wall is
+      // per-uid ledgers (privacy policy v2 / T09).
+      const EXEC_STATES = new Set(["claimed", "wip", "merged"]);
+      const HUMAN_ACTORS = new Set(["cli", "human", "captain", "director", "aaron"]);
+      if (cur.type === "HITL" && EXEC_STATES.has(state) && !HUMAN_ACTORS.has(getFlag("agent") ?? "cli")) {
+        die(`refuse --state ${state} on type=HITL row ${id}: human-decision rows are captain-facing (actor '${getFlag("agent") ?? "cli"}' is not a human actor). Resolve via a human actor or move the work into a child task.`);
+      }
       // Fetch the row's project once when we're headed toward state=merged
       // — used by both the merge-guard (checkMergeGuard) and the runner
       // factory (defaultRunner). Hoisting it here avoids a second SQL

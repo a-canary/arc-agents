@@ -2695,3 +2695,41 @@ test("update: --db before the verb still resolves the id (not the db path)", asy
     cleanup();
   }
 });
+
+// --- HITL door guard (t08 incident, 2026-09-04) -----------------------------
+// Selection SQL already skips type='HITL' picks (#478); the explicit-id
+// update path was open — worker arc-worker-a-v98xdo claimed+merged
+// t08-privacy-policy-spec-labels-fail-clos, deliverables never reached
+// mainline. Execution-implying states (claimed/wip/merged) on HITL rows now
+// require a declared human actor (advisory; per-uid ledgers = kernel wall).
+
+async function hitlRow(db: string): Promise<string> {
+  const r = (await run(db, "create", "--kind", "task", "--type", "HITL",
+    "--project", "arc-agents", "--title", "hitl fixture row",
+    "--body", "x", "--acceptance", "y")) as { id: string };
+  return r.id;
+}
+
+for (const s of ["claimed", "wip", "merged"]) {
+  test(`update refuses worker --state ${s} on type=HITL rows`, async () => {
+    const { db, cleanup } = freshDb();
+    try {
+      const id = await hitlRow(db);
+      const r = await runRawNoDb("update", id, "--state", s, "--agent", "arc-worker-test", "--db", db);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr.toString()).toContain("refuse --state");
+    } finally { cleanup(); }
+  });
+}
+
+test("non-exec worker transition and human-actor claim on type=HITL stay open", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = await hitlRow(db);
+    const m = await run(db, "update", id, "--evidence", "classified", "--state", "failed");
+    expect((m as { updated?: boolean }).updated).toBe(true); // triage-failed flow
+    const id2 = await hitlRow(db);
+    const h = await run(db, "update", id2, "--state", "claimed", "--agent", "cli");
+    expect((h as { updated?: boolean }).updated).toBe(true); // captain works his own row
+  } finally { cleanup(); }
+});
