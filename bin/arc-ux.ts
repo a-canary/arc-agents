@@ -24,7 +24,7 @@ import { spawnSync } from "child_process";
 import { open } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
 import { type HitlKind } from "../src/ledger/hitl-schemas";
-import { loadConfig } from "../src/ledger/ux-config";
+import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 
 const args = process.argv.slice(2);
@@ -118,8 +118,17 @@ function emitPrompt(opts: {
   const db = open();
   migrate(db);
   const cfg = loadConfig();
+  // Pre-flight the liveness gate. insertHitlPrompt's dead-surface fallback parks
+  // undeliverable asks instead of throwing, which is right for the fire-and-forget
+  // `ledger hitl emit` path — but arc-ux blocks in waitForAnswer() right after,
+  // so a parked row here would hang the caller until timeout with nobody able to
+  // answer. Refuse up front (exit 3 + bootstrap task) and write no row.
+  if (pickModulesForHitl(db, cfg, opts.kind).length === 0) {
+    bootstrapTaskIfNeeded(`no alive module implements ${opts.kind}`);
+    die(3, `no alive UX module implements ${opts.kind}; bootstrap task spawned`);
+  }
   try {
-    return insertHitlPrompt(db, {
+    const res = insertHitlPrompt(db, {
       kind: opts.kind,
       cls: opts.cls,
       payload: opts.payload,
@@ -130,11 +139,12 @@ function emitPrompt(opts: {
       emittedBy: process.env.ARC_ROLE ?? null,
       cfg,
     });
+    return res;
   } catch (e) {
     const msg = e instanceof Error ? e.message : String(e);
-    // Distinguish "no alive module" (exit 3 + bootstrap task) from generic
-    // validation failures (exit 2 — bad payload/artifact).
-    if (msg.includes("no alive UX module") || msg.startsWith("kind:")) {
+    // Remaining throws are render-capability/payload failures (exit 2). The
+    // "no alive module" case is handled by the pre-flight above.
+    if (msg.startsWith("kind:")) {
       bootstrapTaskIfNeeded(`no alive module implements ${opts.kind}`);
       die(3, `no alive UX module implements ${opts.kind}; bootstrap task spawned`);
     }
