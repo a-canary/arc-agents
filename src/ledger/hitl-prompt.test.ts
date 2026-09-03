@@ -143,24 +143,53 @@ test("insertHitlPrompt inserts row + deliveries when alive module present", () =
   db.close();
 });
 
-test("insertHitlPrompt throws when no alive module implements the kind", () => {
+test("insertHitlPrompt parks the ask when no alive module implements the kind", () => {
   const db = openDb();
-  // No heartbeat -> arc-tui counts as stale -> no candidates.
+  // No heartbeat -> arc-tui counts as stale -> no candidates. The dead-surface
+  // fallback must still persist the row: losing the ask outright is worse than
+  // parking it, which is how the HITL surface went dark unnoticed for ~82 days.
   const cfg = loadConfig(cfgPath);
   const payload = buildPayload("ask_text", { prompt: "hi" });
-  expect(() =>
-    insertHitlPrompt(db, {
-      kind: "ask_text",
-      cls: "taste",
-      payload,
-      recommended: "ok",
-      strategy: "forward_fix",
-      timeoutSec: 60,
-      cfg,
-    }),
-  ).toThrow(/no alive UX module/);
-  const n = db.query<{ c: number }, []>("SELECT COUNT(*) AS c FROM hitl_prompts").get();
-  expect(n!.c).toBe(0);
+  const res = insertHitlPrompt(db, {
+    kind: "ask_text",
+    cls: "taste",
+    payload,
+    recommended: "ok",
+    strategy: "forward_fix",
+    timeoutSec: 60,
+    cfg,
+  });
+  expect(res.undelivered).toBe(true);
+  expect(res.deliveries).toEqual([]);
+  const row = db
+    .query<{ state: string }, [string]>("SELECT state FROM hitl_prompts WHERE id=?")
+    .get(res.id);
+  expect(row!.state).toBe("open");
+  const dels = db
+    .query<{ c: number }, [string]>(
+      "SELECT COUNT(*) AS c FROM hitl_deliveries WHERE prompt_id=?",
+    )
+    .get(res.id);
+  expect(dels!.c).toBe(0);
+  db.close();
+});
+
+test("insertHitlPrompt reports undelivered=false when a module is alive", () => {
+  const db = openDb();
+  heartbeat(db, "arc-tui");
+  const cfg = loadConfig(cfgPath);
+  const payload = buildPayload("ask_text", { prompt: "hi" });
+  const res = insertHitlPrompt(db, {
+    kind: "ask_text",
+    cls: "taste",
+    payload,
+    recommended: "ok",
+    strategy: "forward_fix",
+    timeoutSec: 60,
+    cfg,
+  });
+  expect(res.undelivered).toBe(false);
+  expect(res.deliveries).toEqual(["arc-tui"]);
   db.close();
 });
 

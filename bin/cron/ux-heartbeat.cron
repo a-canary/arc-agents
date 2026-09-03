@@ -1,0 +1,14 @@
+# arc-agents cron entries
+# Format: minute hour day month weekday
+#
+# Install (idempotent):  ( crontab -l 2>/dev/null; cat bin/cron/ux-heartbeat.cron ) | crontab -
+#
+# Restore / uninstall:  crontab -l | grep -v 'ux-heartbeat-tick' | crontab -
+
+# ux-heartbeat-tick — every minute, beats arc-tui into ux_heartbeats so
+# `hitl emit` passes the ADR-0002 liveness gate. Nothing scheduled this before:
+# bin/arc-tui-loop.sh was the intended keep-alive but is a foreground render loop
+# that dies with its terminal, so the surface sat stale for ~82 days and every
+# HITL ask was silently dropped. STALE_SEC is 300 (src/ledger/ux-config.ts), so a
+# 1-minute tick leaves 5x margin for a missed run.
+* * * * * /home/aaron/repos/arc-agents/bin/ux-heartbeat-tick.sh >> /home/aaron/.cache/arc-ux-heartbeat-tick.log 2>&1

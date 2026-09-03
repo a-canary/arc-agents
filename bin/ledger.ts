@@ -882,7 +882,27 @@ switch (cmd) {
     // optimistic execution: worker emits, surfaces to user, proceeds with
     // recommended; reconciliation handled separately.
     const sub = args[1];
-    if (sub !== "emit") die("usage: hitl emit ...");
+    if (sub === "pending") {
+      // Open prompts with no live delivery — the parked-ask backlog a dead
+      // surface leaves behind. This is the "you have unseen asks" surface.
+      const db = openWithMigrate(getFlag("db"));
+      out(
+        db
+          .query(
+            `SELECT p.id, p.kind, p.class, p.emitted_by, p.created_at,
+                    COUNT(d.module_name) AS deliveries
+             FROM hitl_prompts p
+             LEFT JOIN hitl_deliveries d ON d.prompt_id = p.id
+             WHERE p.state = 'open'
+             GROUP BY p.id
+             HAVING deliveries = 0
+             ORDER BY p.created_at DESC`,
+          )
+          .all(),
+      );
+      break;
+    }
+    if (sub !== "emit") die("usage: hitl emit ... | hitl pending");
     const cls = getFlag("class") ?? die("--class taste|impact required");
     if (cls !== "taste" && cls !== "impact") die("--class must be taste|impact");
     const kindRaw = getFlag("kind") ?? die("--kind required");
@@ -940,7 +960,7 @@ switch (cmd) {
     const cfg = loadConfig();
     const timeoutSecInt = timeoutSec ? parseInt(timeoutSec, 10) : null;
 
-    let result: { id: string; deliveries: string[] };
+    let result: { id: string; deliveries: string[]; undelivered: boolean };
     try {
       result = insertHitlPrompt(db, {
         kind,
@@ -957,11 +977,17 @@ switch (cmd) {
         cfg,
       });
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg.includes("no alive UX module")) {
-        die(`no alive UX module implements '${kind}' — install/revive one (ADR 0002)`);
-      }
-      die(msg);
+      die(e instanceof Error ? e.message : String(e));
+    }
+    // Dead-surface fallback (G-0009): the row is persisted regardless, so the
+    // ask is never silently lost. Shout on stderr — a worker that pipes stdout
+    // to JSON still sees this, and the row is discoverable via `hitl pending`.
+    if (result.undelivered) {
+      process.stderr.write(
+        `ledger: WARNING no alive UX module implements '${kind}' — prompt ${result.id} ` +
+          `persisted UNDELIVERED (ADR 0002). Revive a module: ` +
+          `'bun bin/arc-tui.ts heartbeat'. List parked asks: 'ledger hitl pending'.\n`,
+      );
     }
     out({
       id: result.id,
@@ -969,6 +995,7 @@ switch (cmd) {
       class: cls,
       recommended: recommended ?? null,
       deliveries: result.deliveries,
+      undelivered: result.undelivered,
     });
     break;
   }
@@ -2006,6 +2033,7 @@ function printHelp(): void {
                                        use --agent-set to reassign the row's agent alongside a state change.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
+  hitl pending                                  open prompts with no live delivery
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
                                        emit HITL prompt + fanout to alive UX modules
   hygiene-emit --skill <s> --title <t> [--body <b>] [--observed-in-task <id>]

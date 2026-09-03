@@ -90,6 +90,8 @@ export type InsertHitlPromptInput = {
 export type InsertHitlPromptResult = {
   id: string;
   deliveries: string[];
+  /** True when the row was persisted with no live module to deliver it to. */
+  undelivered: boolean;
 };
 
 function uuid(): string {
@@ -105,9 +107,11 @@ function uuid(): string {
  * Bookie pre-write checks (alive-module + render-capability) + atomic insert
  * of the hitl_prompts row and one hitl_deliveries row per alive module.
  *
- * Throws Error("no alive UX module ...") when no module satisfies the verb +
- * artifact-type requirements. Callers (arc-ux, ledger hitl emit) catch this
- * and translate to their CLI's exit-code convention.
+ * Dead-surface fallback: when no alive module implements the verb the row is
+ * STILL persisted, with zero deliveries and undelivered=true. Losing the ask
+ * outright is worse than parking it — a later-revived module (or the operator
+ * reading hitl_prompts directly) can still find it. Callers surface the
+ * undelivered flag loudly; they no longer abort.
  */
 export function insertHitlPrompt(
   db: Database,
@@ -116,17 +120,19 @@ export function insertHitlPrompt(
   const artifactTypes =
     ((input.payload as { artifacts?: { type: string }[] }).artifacts ?? []).map((a) => a.type);
 
-  const errs = validateHitlWrite(db, input.cfg, {
-    kind: input.kind,
-    artifacts: artifactTypes.map((t) => ({ type: t })),
-  });
-  if (errs.length > 0) {
-    throw new Error(errs.map((e) => `${e.field}: ${e.message}`).join("; "));
-  }
   const modules = pickModulesForHitl(db, input.cfg, input.kind);
-  if (modules.length === 0) {
-    // Defensive — validateHitlWrite above should already have errored.
-    throw new Error(`no alive UX module implements '${input.kind}'`);
+  const undelivered = modules.length === 0;
+
+  // Render-capability errors still hard-fail, but only when there IS a live
+  // surface to render on — otherwise the dead-surface fallback owns the case.
+  if (!undelivered) {
+    const errs = validateHitlWrite(db, input.cfg, {
+      kind: input.kind,
+      artifacts: artifactTypes.map((t) => ({ type: t })),
+    });
+    if (errs.length > 0) {
+      throw new Error(errs.map((e) => `${e.field}: ${e.message}`).join("; "));
+    }
   }
 
   const id = input.id ?? uuid();
@@ -162,5 +168,5 @@ export function insertHitlPrompt(
     }
   })();
 
-  return { id, deliveries: modules.map((m) => m.name) };
+  return { id, deliveries: modules.map((m) => m.name), undelivered };
 }

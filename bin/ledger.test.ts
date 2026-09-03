@@ -1367,6 +1367,51 @@ test("vacuum (no flags) + --dry-run: explicit negative — apply is gated, not j
   }
 });
 
+// The dead-surface fallback. Both registered UX modules once went ~82 days
+// without a heartbeat; every `hitl emit` failed the liveness gate, wrote no row,
+// and the operator never saw the ask. Now the row is persisted regardless, the
+// warning goes to stderr (so a caller parsing stdout as JSON still sees it), and
+// `hitl pending` lists the backlog.
+test("hitl emit with no alive module parks the row and hitl pending lists it", async () => {
+  const { db, cleanup } = freshDb();
+  const cfgDir = mkdtempSync(join(tmpdir(), "ledger-cli-cfg-"));
+  const cfgPath = join(cfgDir, "config.yaml");
+  // Module declared but never heartbeats -> stale -> no live surface.
+  writeFileSync(
+    cfgPath,
+    `modules:\n  arc-tui:\n    cli: "arc-tui"\n    implements: [ask_confirm]\n    renders:\n      text/markdown: native\n    can_retract: true\n`,
+  );
+  try {
+    await run(db, "init");
+    const r = await $`bun ${cli} hitl emit --class impact --kind ask_confirm --prompt ${"ship it?"} --db ${db}`
+      .env({ ...process.env, ARC_CONFIG: cfgPath })
+      .quiet();
+    expect(r.exitCode).toBe(0);
+    expect(r.stderr.toString()).toContain("UNDELIVERED");
+
+    const emitted = JSON.parse(r.stdout.toString()) as {
+      id: string;
+      deliveries: string[];
+      undelivered: boolean;
+    };
+    expect(emitted.undelivered).toBe(true);
+    expect(emitted.deliveries).toEqual([]);
+
+    const pend = await $`bun ${cli} hitl pending --db ${db}`
+      .env({ ...process.env, ARC_CONFIG: cfgPath })
+      .quiet();
+    const parked = JSON.parse(pend.stdout.toString()) as {
+      id: string;
+      deliveries: number;
+    }[];
+    expect(parked.map((x) => x.id)).toEqual([emitted.id]);
+    expect(parked[0]!.deliveries).toBe(0);
+  } finally {
+    cleanup();
+    rmSync(cfgDir, { recursive: true, force: true });
+  }
+});
+
 // hitl emit must persist expires_at so arc-tui (and any future reconciler) can
 // reap prompts whose requesting worker has given up. Without it, a NULL
 // expires_at is treated as "live forever" by every consumer query.
