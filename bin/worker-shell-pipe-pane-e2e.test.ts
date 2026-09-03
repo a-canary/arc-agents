@@ -162,3 +162,85 @@ test("setup_pipe_pane works on a session that runs a printing command (headless-
   const content = readFileSync(log, "utf8");
   expect(content).toContain(marker);
 });
+
+// ---- Regression: the three holes the tests above did not catch -------------
+//
+// The tests above call `setup_pipe_pane` directly, so they prove the function
+// works but say nothing about whether the SCRIPT ever reaches it. It didn't:
+// the only call site sat after the interactive `exec`, which replaces the
+// script — so the interactive worker (the case the bug report names) never
+// attached a pipe and kept producing 85-byte logs.
+
+// Static check: on the interactive path the attach must precede the `exec`.
+// Ordering is the whole defect, so assert on order, not mere presence.
+test("setup_pipe_pane is called before the interactive exec, not after", () => {
+  const src = readFileSync(SHELL, "utf8").split("\n");
+  const attachLine = src.findIndex((l) => /^\s*setup_pipe_pane\s+"\$WORKER"/.test(l));
+  const execLine = src.findIndex((l) => /^\s*exec "\$\{CMD_PARTS\[@\]\}"/.test(l));
+
+  expect(attachLine).toBeGreaterThan(-1);
+  expect(execLine).toBeGreaterThan(-1);
+  // An attach after the exec is unreachable on the interactive path.
+  expect(attachLine).toBeLessThan(execLine);
+});
+
+// The pipe-pane command string is re-parsed by tmux with /bin/sh, so an
+// unquoted path splits on whitespace: `cat >> /tmp/a b/w.log` redirects into
+// `b/w.log` and hands `/tmp/a` to cat. The intended logfile is never written.
+test("setup_pipe_pane handles a log path containing spaces", () => {
+  workDir = mkdtempSync(join(tmpdir(), "arc-pipe pane-spaced-"));
+  const sess = `arc-pp-space-${Math.random().toString(36).slice(2, 8)}`;
+  const log = join(workDir, "a dir", "w.log");
+  spawnSync("mkdir", ["-p", dirname(log)]);
+
+  tmux(["new-session", "-d", "-s", sess, "bash --norc -i"]);
+  createdSessions.push(sess);
+  spawnSync("sleep", ["1"]);
+
+  expect(attachPipe(sess, log).rc).toBe(0);
+  tmux(["send-keys", "-t", sess, "echo SPACED_PATH_MARKER", "Enter"]);
+  spawnSync("sleep", ["1"]);
+  tmux(["kill-session", "-t", sess]);
+  createdSessions.length = 0;
+  spawnSync("sleep", ["1"]);
+
+  expect(existsSync(log)).toBe(true);
+  expect(readFileSync(log, "utf8")).toContain("SPACED_PATH_MARKER");
+});
+
+// With a pipe attached, the exit-time fallback would append the visible pane
+// on top of what pipe-pane already streamed — every line twice (and the
+// duplication inflates the logfile past the >1000-byte acceptance check
+// without proportionate real content).
+test("capture_scrollback_to_log does not double-write when the pipe attached", () => {
+  workDir = mkdtempSync(join(tmpdir(), "arc-pp-dup-"));
+  const sess = `arc-pp-dup-${Math.random().toString(36).slice(2, 8)}`;
+  const log = join(workDir, "w.log");
+
+  tmux(["new-session", "-d", "-s", sess, "bash --norc -i"]);
+  createdSessions.push(sess);
+  spawnSync("sleep", ["1"]);
+
+  attachPipe(sess, log);
+  tmux(["send-keys", "-t", sess, "echo DUP_MARKER_ZZZ", "Enter"]);
+  spawnSync("sleep", ["1"]);
+
+  // Fallback fires with PIPE_READY=1, exactly as the script sets it once
+  // setup_pipe_pane has run.
+  const r = spawnSync(
+    "bash",
+    ["-c", `source "$0" && PIPE_READY=1 capture_scrollback_to_log "$1" "$2"`, SHELL, sess, log],
+    { encoding: "utf8", env: { ...process.env, ARC_WORKER_SHELL_SOURCE_ONLY: "1" } },
+  );
+  expect(r.status).toBe(0);
+
+  tmux(["kill-session", "-t", sess]);
+  createdSessions.length = 0;
+  spawnSync("sleep", ["1"]);
+
+  const body = readFileSync(log, "utf8");
+  const hits = body.split("DUP_MARKER_ZZZ").length - 1;
+  // pipe-pane sees the keystroke echo and the command's own output; the
+  // fallback must not pile the whole pane on top of that.
+  expect(hits).toBeLessThanOrEqual(2);
+});
