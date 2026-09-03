@@ -2353,6 +2353,9 @@ test("update --state merged --no-diff succeeds without diff_review event", async
   try {
     await run(db, "init");
     const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    // --no-diff waives diff_review, not the in-place reviewer gate: the two are
+    // independent, so an --in-place merge still needs its in_place_review event.
+    await stubInPlaceReview(db, c.id);
     const r = await runStrictRaw(db, "update", c.id, "--state", "merged", "--no-diff", "--in-place", "--evidence", "N<3 sample, nothing to trash");
     if (r.exitCode !== 0) {
       throw new Error(r.stderr.toString());
@@ -2361,6 +2364,22 @@ test("update --state merged --no-diff succeeds without diff_review event", async
     expect(shown.issue.state).toBe("merged");
     const mergedEvent = shown.events.find((e) => e.kind === "merged");
     expect(mergedEvent?.payload_md).toMatch(/^\[no-diff\]/);
+  } finally {
+    cleanup();
+  }
+});
+
+// --no-diff must not become an escape hatch around the in-place reviewer gate:
+// --in-place asserts a real merge landed, so the pair is contradictory and the
+// reviewer event stays mandatory.
+test("update --no-diff --in-place still refused without an in_place_review event", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "x")) as { id: string };
+    const r = await runRaw(db, "update", c.id, "--state", "merged", "--no-diff", "--in-place", "--evidence", "nothing to trash");
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toMatch(/no in_place_review event/);
   } finally {
     cleanup();
   }
