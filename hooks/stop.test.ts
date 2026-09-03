@@ -81,11 +81,10 @@ test("passes through when task is merged", () => {
   ledger([
     "event",
     c.id,
-    "diff_review",
+    "in_place_review",
     JSON.stringify({
       reviewer_identity: "hook-test-reviewer",
-      reviewed_sha: "abcdef1234567890",
-      verdict: "pass",
+      justification: "hygiene-only test row, no code change",
     }),
   ]);
   ledger(["update", c.id, "--state", "merged", "--evidence", "ok", "--in-place"]);

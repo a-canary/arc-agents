@@ -48,8 +48,14 @@ A claude subagent (`.claude/agents/bookie.md`) that is the sole authority for le
 ## Diff Review
 A pre-commit phase in the worker loop: the worker spawns an independent subagent (via the `/diff-review` skill, no shared reasoning trace) that reviews the finalized diff against the task brief + touched ADRs and returns a structured JSON report `{consequences, surprises_vs_brief, gaps_vs_brief, adr_conflicts}`. The worker logs the report as a `kind=diff_review` event. `bin/ledger.ts update --state merged` refuses without a prior `diff_review` event for the issue id; bookie rule #7 mirrors the refusal. Surprises/gaps must be reconciled in the diff or addressed in `evidence_md`. See [I-0008](CHOICES.md#i-0008-pre-commit-diff-review-gate).
 
+## In-Place Review
+The `--in-place` merge route's independent review gate. The row's latest `kind=in_place_review` event must parse as JSON `{reviewer_identity, justification}` (justification ≤280 chars), and `reviewer_identity` must differ from `claimed_by` (same independence rule as Diff Review). Structurally separate from `diff_review` so a worker's `diff_review` cannot wave through an in-place ghost merge, and vice versa. See [I-0014](CHOICES.md#i-0014-structural-classifier--in-place-review-gate).
+
 ## Decomposition
 The act of breaking a parent task into N children atomically: insert N child issues + set `parent.blocked_by=[childIds]` + flip `parent.state='blocked'`. Children inherit the parent's `type` and `pool`; for human-decision rows the child is `type=HITL, hitl=1`. Fanout cap = 5; recursion allowed. The new `ledger join-status <parent>` verb is the read-only check for the parent's barrier. See also: [Join](#join), [Land](#land), [Fanout](#fanout).
+
+## Failed Classifier
+Pure function over a `state=failed` row + its event log → `{verdict: "low-risk" | "needs-HITL", reasons}`. **Structural, not prose-driven**: the only low-risk signals are structured event kinds emitted by the harness (`LOW_RISK_EVENT_KINDS = {test-fail, budget-blocked, tool-fail, timeout}`); worker-authored text (title, body, `evidence_md`, event payloads) is never consulted. Type-based safety still applies: `type ∈ {HITL, security}` → always needs-HITL. Unknown → needs-HITL by default (silent auto-decompose cannot swallow real bugs). Used by the `/triage-failed` skill. See [I-0014](CHOICES.md#i-0014-structural-classifier--in-place-review-gate).
 
 ## Terminal State
 An issue state from which there is no exit: `merged` and `cancelled`. Once a row reaches a terminal state, no writes are accepted against it.

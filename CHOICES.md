@@ -195,6 +195,15 @@ Cross-repo env var naming for vault/data directories.
 `resolveLedgerDb()` resolves `$ARC_LEDGER_DB` → `$ARC_VAULT_HOME/ledger.db` → `$HOME/vault/ledger.db`.
 Pre-existing installs with `ARC_LEDGER_DB` unset and no XDG migration continue working via legacy fallback.
 
+### I-0014: Structural Classifier + In-Place Review Gate
+After the diff-review gate for PR/local-sha merges (I-0008) and the in-place evidence requirement (bin-ledger-ts-restrict-in-place-to-requi), the merge-truth slice closes two remaining worker-self-triage attack surfaces:
+
+**Failed classifier is structural, not prose-driven.** `classifyFailed` in `src/ledger/failed-classifier.ts` keys OFF structured event kinds — `LOW_RISK_EVENT_KINDS = {test-fail, budget-blocked, tool-fail, timeout}` — emitted by the harness. Worker-authored text (title, body, `evidence_md`, event payloads) is never consulted: substring-matching on prose let a worker write "the test failed" and steer themselves into auto-decompose. Type-based safety still applies: `type ∈ {HITL, security}` always escalates to needs-HITL (the row's static contract is the second trustworthy signal). Unclassifiable rows default to needs-HITL — PRD enforce-merge-truth-code-verified-eviden user story 7 ("silent auto-decompose cannot swallow real bugs"). Extending `LOW_RISK_EVENT_KINDS` is a code-level change, not a config knob, on purpose.
+
+**`--in-place` requires an independent `in_place_review` event.** `bin/ledger.ts update --state merged --in-place` looks up the LATEST `kind=in_place_review` event for the row (NOT `diff_review` — the two kinds are structurally separate, slice failed-classifier-keys-off-structured-ev). The event must parse as JSON `{reviewer_identity, justification}` with both non-empty strings, `justification ≤280 chars` (same ceiling as `--evidence` on the same flag — bounded length punts long ghost-merge essays), and `reviewer_identity` differs from the row's `claimed_by` (same independence rule as I-0008, shared via `checkReviewerIndependence`). The 280-char `--evidence` note is retained as an operator hint but is no longer the sole gate (PRD §"In-place route"). Parser + independence checker live in `src/ledger/in-place-review.ts`; bookie rule #9 mirrors the refusal.
+
+Migration `029_event_kind_classifier_and_inplace_review` adds the four new kinds (`in_place_review`, `test-fail`, `tool-fail`, `timeout`) to the `issue_events.kind` CHECK via the same table-rebuild pattern as migrations 013/014/018/026. Pre-existing events are carried forward 1:1.
+
 ### I-0011: triageUnset Auto-Classification
 `triageUnset(db, budget=10)` in `bin/factory.ts` runs each factory tick. Selects up to `budget` ready rows with `agent='agent_unset' OR pool='pool_unset'` ordered by SORT_KEY_SQL. Rules: agent — `source_module='arc-chat'` → `chat`; `kind='prd'` → `director`; else → `developer`. Pool — `tier IN (prod,trust,mvp)` → `build`; else → `explore`. Tier is never touched. Each triaged row gets a `kind='triaged'` event (migration 018). Escape hatch: `ARC_TRIAGE_DISABLE=1`. Budget override: `ARC_TRIAGE_BUDGET=N`.
 

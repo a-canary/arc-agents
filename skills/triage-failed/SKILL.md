@@ -65,3 +65,18 @@ Wraps the pure module at `src/ledger/failed-classifier.ts`. The skill is the I/O
 - Never call this on a row that is not `state=failed`. The classifier is intentionally conservative — when in doubt it returns `needs-HITL`, so the default is safe, but the skill should refuse non-failed rows.
 - Never reclassify a row already cancelled or merged.
 - This is a director-subagent skill. Workers should not invoke it directly; the director runs it during cycle review.
+
+## Classification contract (slice failed-classifier-keys-off-structured-ev)
+
+Classification is **structural, not prose-driven**. The legacy version substring-matched `evidence_md` and the row title; workers could write "the test failed" and steer themselves into auto-decompose. The rewrite keys OFF the structured event kinds emitted by the harness:
+
+| Source        | Verdict         | Reason                                    |
+| ------------- | --------------- | ----------------------------------------- |
+| `type=HITL` or `type=security` | needs-HITL | type contract requires human ownership |
+| Event kind ∈ `{test-fail, budget-blocked, tool-fail, timeout}` in `events` | low-risk | harness marked this failure as safely auto-decomposable |
+| Anything else | needs-HITL      | no structured low-risk signal; unclassifiable defaults to HITL (PRD user story 7) |
+
+Implications for workers:
+- A "test failure" you cannot prove with a `kind=test-fail` event will NOT auto-triage as low-risk. If you file a `test-fail` event from the harness (e.g. the test runner hooks), the director will see one.
+- The list of "looked-for" kinds is `LOW_RISK_EVENT_KINDS` in `src/ledger/failed-classifier.ts`. Extending it is a code-level change — a deliberate reducer side channel.
+- "Worker-authored evidence text" (title, body, `evidence_md`, event payloads) is NEVER consulted. Don't bother crafting prose to influence the verdict.
