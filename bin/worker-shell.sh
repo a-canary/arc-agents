@@ -99,11 +99,14 @@ capture_scrollback_to_log() {
 # where the capture_scrollback_to_log fallback races the factory reap.
 # Pure: $1=worker, $2=logfile → no-op when not in a tmux session, never
 # creates the logfile on its own (mkdir is the caller's job).
+# Returns 0 only if the pipe actually attached — the caller keys PIPE_READY off
+# that, and PIPE_READY switches the capture_scrollback_to_log fallback off. A
+# blind success here would disarm the fallback in exactly the case it exists for.
 setup_pipe_pane() {
   local worker="$1" log="$2"
-  [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
-    && tmux pipe-pane -t "$worker" -o "cat >> $(printf %q "$log")" 2>/dev/null \
-    || true
+  [ -n "$log" ] || return 1
+  tmux has-session -t "$worker" 2>/dev/null || return 1
+  tmux pipe-pane -t "$worker" -o "cat >> $(printf %q "$log")" 2>/dev/null || return 1
   return 0
 }
 
@@ -651,8 +654,7 @@ STALL_SECS="$(stall_timeout_secs)"
 # and never returns, so a pipe attached inside the loop body would only ever
 # cover headless. The pipe lives on the pane, so it survives both the exec
 # and the factory's SIGKILL reap.
-setup_pipe_pane "$WORKER" "$LOG_FILE"
-PIPE_READY=1
+if setup_pipe_pane "$WORKER" "$LOG_FILE"; then PIPE_READY=1; else PIPE_READY=0; fi
 LAST_RC=0
 ATTEMPT=0
 
