@@ -1736,20 +1736,17 @@ test("alias-cmd prints the full failover group, one candidate per line", async (
   const r = await runRawNoDb("alias-cmd", "smart");
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  // smart is a 2-candidate group: cli-agent resolves the registry pool
-  // (fable → opus → minimax internally), then a last-resort interactive opus
-  // exec alias. arc-agents owns the alias→cli-agent call; cli-proxy + cli-agent
-  // own the pool→cmdline-template resolution.
-  expect(lines.length).toBe(2);
+  // ponytail: one candidate per line, each a runnable template. Which providers
+  // back the group is config.json's call and changes with routing cutovers —
+  // asserting the names here only rots the test.
+  expect(lines.length).toBeGreaterThan(0);
   for (const l of lines) expect(l).toContain("{prompt}");
-  expect(lines[0]).toContain("cli-agent");
-  expect(lines[lines.length - 1]).toContain("opus");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {
   const r = await runRawNoDb("alias-cmd", "nonexistent-alias-xyz");
   expect(r.exitCode).toBe(0);
-  // The default is minimax-build — just verify we get a non-empty command with {prompt}
+  // Whatever default_alias resolves to, we get a non-empty templated command.
   const out = r.stdout.toString().trim();
   expect(out.length).toBeGreaterThan(0);
   expect(out).toContain("{prompt}");
