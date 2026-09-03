@@ -74,6 +74,10 @@ worker_log_path() {
 # $1=worker, $2=logfile → appends, no-op when not in a tmux session.
 capture_scrollback_to_log() {
   local worker="$1" log="$2"
+  # No-op once the pane pipe attached (PIPE_READY=1): pipe-pane has already
+  # streamed the pane, so appending the visible screen here duplicates every
+  # line. Only the no-pipe case (not in tmux) still needs the fallback.
+  [ "${PIPE_READY:-0}" = "1" ] && return 0
   [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
     && tmux capture-pane -p -t "$worker" -S -2000 >> "$log" 2>/dev/null \
     || true
@@ -98,7 +102,7 @@ capture_scrollback_to_log() {
 setup_pipe_pane() {
   local worker="$1" log="$2"
   [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
-    && tmux pipe-pane -t "$worker" -o "cat >> $log" 2>/dev/null \
+    && tmux pipe-pane -t "$worker" -o "cat >> $(printf %q "$log")" 2>/dev/null \
     || true
   return 0
 }
@@ -648,6 +652,7 @@ STALL_SECS="$(stall_timeout_secs)"
 # cover headless. The pipe lives on the pane, so it survives both the exec
 # and the factory's SIGKILL reap.
 setup_pipe_pane "$WORKER" "$LOG_FILE"
+PIPE_READY=1
 LAST_RC=0
 ATTEMPT=0
 
