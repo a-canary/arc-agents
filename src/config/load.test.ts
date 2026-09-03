@@ -31,15 +31,14 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  // Current routing (arc-llm-proxy cutover): every alias is a single
-  // `pi --model arc-proxy/<alias>` command. A retired alias name (e.g.
-  // `minimax-build`, still referenced by row markers) falls back to
-  // default_alias.
+  // ponytail: assert the alias->group contract, not which provider config.json
+  // currently points at. Routing has been recut twice (arc-proxy hop, then
+  // direct providers); pinning a model string here just rots the test.
   const cmds = getAliasCommands("planning", cfg);
-  expect(cmds).toHaveLength(1);
-  expect(cmds[0]).toContain("pi --model arc-proxy/planning");
-  expect(cmds[0]).toContain("{prompt}");
-  expect(getAliasCommands("minimax-build", cfg)).toEqual(
+  expect(cmds.length).toBeGreaterThan(0);
+  for (const c of cmds) expect(c).toContain("{prompt}");
+  // An alias name absent from config falls back to the default_alias group.
+  expect(getAliasCommands("retired-alias-xyz", cfg)).toEqual(
     getAliasCommands(cfg.default_alias, cfg),
   );
 });
