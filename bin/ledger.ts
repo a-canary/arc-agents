@@ -10,6 +10,7 @@ import { validateCreate, validateDecompose, validateStateTransition, validatePro
 import { routeProjectFromBody } from "../src/ledger/hygiene-project-route";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
 import { parseDiffReviewPayload, checkReviewerIndependence } from "../src/ledger/diff-review";
+import { parseInPlaceReviewPayload, checkInPlaceReviewerIndependence } from "../src/ledger/in-place-review";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
@@ -544,33 +545,67 @@ switch (cmd) {
       const project = state === "merged"
         ? db.query<{ project: string }, [string]>("SELECT project FROM issues WHERE id=?").get(id)?.project
         : undefined;
-      if (state === "merged" && !noDiff) {
-        // diff_review payload contract: require the LATEST diff_review event
-        // to parse as JSON {reviewer_identity, reviewed_sha, verdict}, and
-        // the reviewer_identity must not match the row's claimed_by. This
-        // replaces the legacy "is there any diff_review event at all" check
-        // (analysis-1780502957 Pattern 1 Part A: worker self-review).
-        const latestReview = db
-          .query<{ payload_md: string | null; agent: string | null }, [string]>(
-            `SELECT payload_md, agent FROM issue_events
-             WHERE issue_id=? AND kind='diff_review'
-             ORDER BY seq DESC LIMIT 1`,
-          )
-          .get(id);
-        if (!latestReview) {
-          die(
-            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging. If this row has no diff to review, use --no-diff --evidence "<why>" instead. If this work is a duplicate or was already shipped elsewhere, close it with --state cancelled --evidence "<why>" instead — no diff_review needed.`,
-          );
-        }
-        const reviewParse = parseDiffReviewPayload(latestReview.payload_md);
-        if (!reviewParse.ok) {
-          die(`refuse merged: ${reviewParse.reason}`);
-        }
+      // --no-diff bypasses diff_review (a genuine zero-diff outcome has no diff
+      // to review) but NOT the in-place gate: --in-place asserts a real merge
+      // landed, so the two together are contradictory and must not become a
+      // way to wave through an unreviewed in-place merge.
+      if (state === "merged" && (!noDiff || inPlace)) {
         const claimedBy = db
           .query<{ claimed_by: string | null }, [string]>("SELECT claimed_by FROM issues WHERE id=?")
           .get(id)?.claimed_by;
-        const indepMsg = checkReviewerIndependence(reviewParse.payload.reviewer_identity, claimedBy);
-        if (indepMsg) die(indepMsg);
+        if (inPlace) {
+          // --in-place uses a separate review event kind (PRD
+          // enforce-merge-truth-code-verified-eviden §"In-place route"):
+          // in_place_review {reviewer_identity, justification} gates the
+          // in-place merge instead of diff_review. The two kinds are
+          // structurally distinct so a worker's diff_review cannot wave
+          // through an in-place ghost merge, nor vice versa; independence
+          // uses the same shared rule as diff_review (one identity check
+          // beats two that drift).
+          const latestInPlace = db
+            .query<{ payload_md: string | null }, [string]>(
+              `SELECT payload_md FROM issue_events
+               WHERE issue_id=? AND kind='in_place_review'
+               ORDER BY seq DESC LIMIT 1`,
+            )
+            .get(id);
+          if (!latestInPlace) {
+            die(
+              `refuse merged: no in_place_review event for ${id}. The --in-place route requires an independent reviewer event. Emit via 'ledger event ${id} in_place_review <json>' where <json> is '{"reviewer_identity":"<non-worker-id>","justification":"<\u2264280 chars>"}'.`,
+            );
+          }
+          const inPlaceParse = parseInPlaceReviewPayload(latestInPlace.payload_md);
+          if (!inPlaceParse.ok) {
+            die(`refuse merged: ${inPlaceParse.reason}`);
+          }
+          const inPlaceIndep = checkInPlaceReviewerIndependence(
+            inPlaceParse.payload.reviewer_identity,
+            claimedBy,
+          );
+          if (inPlaceIndep) die(inPlaceIndep);
+        } else {
+          // PR / local-sha routes use diff_review. Parser refuses empty /
+          // non-JSON / missing-field payloads and the shared identity check
+          // refuses self-review (analysis-1780502957 Pattern 1 Part A).
+          const latestReview = db
+            .query<{ payload_md: string | null; agent: string | null }, [string]>(
+              `SELECT payload_md, agent FROM issue_events
+               WHERE issue_id=? AND kind='diff_review'
+               ORDER BY seq DESC LIMIT 1`,
+            )
+            .get(id);
+          if (!latestReview) {
+            die(
+              `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging. If this row has no diff to review, use --no-diff --evidence "<why>" instead. If this work is a duplicate or was already shipped elsewhere, close it with --state cancelled --evidence "<why>" instead — no diff_review needed.`,
+            );
+          }
+          const reviewParse = parseDiffReviewPayload(latestReview.payload_md);
+          if (!reviewParse.ok) {
+            die(`refuse merged: ${reviewParse.reason}`);
+          }
+          const indepMsg = checkReviewerIndependence(reviewParse.payload.reviewer_identity, claimedBy);
+          if (indepMsg) die(indepMsg);
+        }
       }
       if (state === "merged") {
         // analysis-1780502957 Pattern 1 Part A: enforce pr_url's repo matches

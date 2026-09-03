@@ -1386,6 +1386,46 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "030_event_kind_classifier_and_inplace_review",
+    // Expand issue_events.kind CHECK for the slice
+    // failed-classifier-keys-off-structured-ev (from the merged PRD
+    // enforce-merge-truth-code-verified-eviden): the failed-classifier now
+    // keys off structured event kinds (test-fail / tool-fail / budget-blocked /
+    // timeout), and the --in-place merge route is gated by a structurally
+    // separate `in_place_review` event whose reviewer_identity must differ
+    // from the row's claimed_by (mirroring the diff_review gate for PR/local
+    // routes; same Pattern 1 attack surface, separate parser). New kinds are
+    // the four classifier-enum members plus in_place_review.
+    //
+    // Why a single migration: all five kinds land in the same CHECK rebuild
+    // (028's rebuild is the template; one rebuild beats five table swaps when
+    // they're shipped in the same slice). Same shape as 013 / 014 / 018 / 026.
+    up: (db) => {
+      db.exec(`
+        CREATE TABLE issue_events_new (
+          seq        INTEGER PRIMARY KEY AUTOINCREMENT,
+          issue_id   TEXT NOT NULL REFERENCES issues(id) ON DELETE CASCADE,
+          ts         INTEGER NOT NULL DEFAULT (strftime('%s','now')),
+          agent      TEXT NOT NULL,
+          kind       TEXT NOT NULL
+                     CHECK (kind IN ('created','claimed','progress','blocked','unblocked',
+                                     'evidence','complete','failed','review','merged',
+                                     'budget-blocked','mirror-conflict','note','reclaimed',
+                                     'diff_review','triaged','operator_landed',
+                                     'in_place_review','test-fail','tool-fail','timeout')),
+          payload_md TEXT
+        );
+      `);
+      db.exec(`
+        INSERT INTO issue_events_new (seq, issue_id, ts, agent, kind, payload_md)
+        SELECT seq, issue_id, ts, agent, kind, payload_md FROM issue_events;
+      `);
+      db.exec("DROP TABLE issue_events");
+      db.exec("ALTER TABLE issue_events_new RENAME TO issue_events");
+      db.exec("CREATE INDEX IF NOT EXISTS idx_events_issue ON issue_events(issue_id, seq)");
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
