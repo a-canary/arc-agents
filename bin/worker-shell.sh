@@ -170,17 +170,19 @@ resolve_repo() {
   echo "${HOME}/repos/${project}"
 }
 
-# Extract the `project` field from a `ledger show` JSON blob (stdin/$1).
-# Pure string helper so the parent-walk loop below is unit-testable without
-# a live ledger.
-extract_project_field() {
-  echo "$1" | grep -oE '"project":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true
+# Extract the first string-valued `"<field>": "<value>"` out of a `ledger show`
+# (or `ledger claim`) JSON blob. The one place the fragile grep/sed idiom lives
+# — every field read (project, parent_id, claimed, state) goes through here, so
+# the parsing can be fixed/hardened in a single spot. Pure: $1=field, $2=json →
+# value on stdout, empty when absent/null. Unit-tested via the named wrappers
+# below and the claim/state read sites.
+json_string_field() {
+  echo "$2" | grep -oE "\"$1\":[[:space:]]*\"[^\"]+\"" | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true
 }
 
-# Extract the `parent_id` field from a `ledger show` JSON blob ($1).
-extract_parent_id_field() {
-  echo "$1" | grep -oE '"parent_id":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true
-}
+# Named wrappers kept for the parent-walk loop's readability + existing tests.
+extract_project_field()   { json_string_field project "$1"; }
+extract_parent_id_field() { json_string_field parent_id "$1"; }
 
 # Prepend the dir holding a globally-installed `pi` to PATH if `pi` isn't
 # already resolvable. Used to survive the stripped PATH that systemd --user
@@ -475,7 +477,7 @@ POOL_FLAG=()
 CLAIM_POOL="${ARC_CLAIM_POOL:-${ARC_CLAIM_TYPE:-}}"
 [ -n "$CLAIM_POOL" ] && POOL_FLAG=(--pool "$CLAIM_POOL")
 CLAIM_JSON="$(bun "$LEDGER_BIN" claim "$WORKER" "${DB_FLAG[@]}" "${POOL_FLAG[@]}")"
-CLAIM_ID="$(echo "$CLAIM_JSON" | grep -oE '"claimed":[[:space:]]*"[^"]+"' | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+CLAIM_ID="$(json_string_field claimed "$CLAIM_JSON")"
 
 if [ -z "$CLAIM_ID" ]; then
   echo "{\"worker\":\"$WORKER\",\"claimed\":null,\"reason\":\"race-lost-or-empty\"}"
@@ -704,8 +706,7 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   LAST_RC=$AGENT_RC
 
   # Did the agent already advance the row past the claim? If so, respect it — done.
-  POST_STATE="$(bun "$LEDGER_BIN" show "$CLAIM_ID" "${DB_FLAG[@]}" 2>/dev/null \
-    | grep -oE '"state":[[:space:]]*"[^"]+"' | head -n1 | sed -E 's/.*"([^"]+)"$/\1/' || true)"
+  POST_STATE="$(json_string_field state "$(bun "$LEDGER_BIN" show "$CLAIM_ID" "${DB_FLAG[@]}" 2>/dev/null || true)")"
   if [[ "$POST_STATE" != "claimed" && "$POST_STATE" != "wip" && -n "$POST_STATE" ]]; then
     capture_scrollback_to_log "$WORKER" "$LOG_FILE"
     exit "$AGENT_RC"
