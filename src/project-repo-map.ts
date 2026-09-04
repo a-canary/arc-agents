@@ -9,6 +9,7 @@ export const PROJECT_REPO_MAP: Record<string, string> = {
   starlight: "expert-horde",
   "starlight-slm": "starlight-slm",
   onenation: "OneNation",
+  rrdm: "RRDM/rrdm",
 };
 
 import { existsSync } from "node:fs";
