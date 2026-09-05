@@ -1,5 +1,58 @@
-import { test, expect } from "bun:test";
+import { test, expect, beforeAll, afterAll } from "bun:test";
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from "node:fs";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, buildFallbackPlan, ARCH_CONTEXT, groundingFor, resolveProjectRepo, buildEnrichedContext, keRecallFor, adrGroundingFor } from "./plan-agent";
+
+// ── repo fixture ──
+// adrGroundingFor/groundingFor route through resolveProjectRepo(), which falls back
+// to $HOME/repos/<dir> on disk. Tests must not depend on the host having those repos
+// checked out (CI has only this checkout — that layout dependency was 3 CI-only
+// failures). Point the ARC_PROJECT_REPO_<UPPER> override at a tmp fixture instead;
+// production precedence in src/project-repo-map.ts is untouched.
+let fixtureRoot: string;
+const savedEnv: Record<string, string | undefined> = {};
+
+function fixtureRepo(project: string, ctx: string | null, adrs: Record<string, string> = {}): string {
+  const repo = join(fixtureRoot, project);
+  mkdirSync(repo, { recursive: true });
+  if (ctx !== null) writeFileSync(join(repo, "CONTEXT.md"), ctx);
+  if (Object.keys(adrs).length > 0) {
+    const adrDir = join(repo, "docs", "adr");
+    mkdirSync(adrDir, { recursive: true });
+    for (const [name, body] of Object.entries(adrs)) writeFileSync(join(adrDir, name), body);
+  }
+  const key = `ARC_PROJECT_REPO_${project.toUpperCase().replace(/-/g, "_")}`;
+  savedEnv[key] = process.env[key];
+  process.env[key] = repo;
+  return repo;
+}
+
+function adrFixture(title: string, status: string, decision: string): string {
+  return `# ${title}\n\n**Status:** ${status}\n\n## Decision\n\n${decision}\n\n`;
+}
+
+beforeAll(() => {
+  fixtureRoot = mkdtempSync(join(tmpdir(), "plan-agent-repos-"));
+  fixtureRepo("arc-agents", "# CONTEXT\n\nLedger is the message bus.", {
+    "0001-ledger-bus.md": adrFixture("ADR 0001: Ledger as message bus", "Accepted", "Use SQLite rows, not queues."),
+    "0002-atomic-claim.md": adrFixture("ADR 0002: Atomic claim", "Accepted", "One UPDATE...RETURNING decides the winner."),
+  });
+  // arc-webui deliberately has NO CONTEXT.md — that is what makes groundingFor
+  // fall back to the baked ARCH_CONTEXT (asserted below); it still has ADRs.
+  fixtureRepo("arc-webui", null, {
+    "0001-no-client-build.md": adrFixture("ADR 0001: No client build step", "Accepted", "Server-render HTML; no framework."),
+  });
+  fixtureRepo("expert-horde", "# CONTEXT\n\nHorde workers claim shards from the queue.");
+});
+
+afterAll(() => {
+  for (const [key, prev] of Object.entries(savedEnv)) {
+    if (prev === undefined) delete process.env[key];
+    else process.env[key] = prev;
+  }
+  rmSync(fixtureRoot, { recursive: true, force: true });
+});
 
 test("buildPlanningPrompt embeds request + context, asks for the json shape, avoids the hang trigger", () => {
   const p = buildPlanningPrompt("Add a dark-mode toggle", "PROJECT: arc-webui is server-rendered.");
@@ -142,7 +195,7 @@ test("groundingFor falls back to ARCH_CONTEXT for arc-webui (no repo CONTEXT.md)
 test("groundingFor reads the target repo's CONTEXT.md glossary when present", () => {
   const g = groundingFor("expert-horde");
   expect(g).toContain("expert-horde"); // labelled with the project
-  expect(g.toLowerCase()).toContain("horde"); // pulled from the real glossary
+  expect(g).toContain("claim shards"); // pulled from the repo's CONTEXT.md, not the fallback
 });
 
 test("groundingFor gives a neutral reversible-first context for an unknown project", () => {
@@ -393,14 +446,15 @@ test("adrGroundingFor returns empty string for a project with no adr dir", () =>
   expect(result).toBe("");
 });
 
-test("adrGroundingFor reads ADRs for arc-agents (the project that HAS them)", () => {
+test("adrGroundingFor reads ADRs for a project that HAS them", () => {
   const result = adrGroundingFor("arc-agents");
-  // The arc-agents repo itself has docs/adr/ with ADR files
   expect(result).toContain("ARCHITECTURAL DECISIONS");
-  expect(result).toContain("ADR");
+  expect(result).toContain("ADR 0001: Ledger as message bus");
   // Status lines appear as parenthesised status text after the title (e.g. "(Accepted)")
   // because adrGroundingFor strips the "**Status:** " prefix and emits the value cleanly.
-  expect(result).toContain("Accepted")
+  expect(result).toContain("(Accepted)");
+  // the Decision paragraph is summarised, not just the title
+  expect(result).toContain("SQLite rows");
 });
 
 test("keRecallFor returns empty string when ke binary not found", () => {
@@ -429,18 +483,19 @@ test("keRecallFor parses the human-readable ke recall output format", () => {
 
 test("buildEnrichedContext composes CONTEXT.md + ADRs + ke recall", () => {
   const result = buildEnrichedContext("Add a dark mode toggle", "arc-webui");
-  // CONTEXT.md grounding always present
+  // CONTEXT.md grounding from the fixture repo, then its ADR block. ke recall may
+  // or may not produce output depending on host — neither should crash.
   expect(result).toContain("PROJECT CONTEXT");
-  // arc-webui DOES have ADRs via resolveProjectRepo (~/repos/arc-webui/docs/adr/)
-  // so this should include ARCHITECTURAL DECISIONS. The key is that ke recall
-  // may or may not produce output — neither should crash.
   expect(result).toContain("ARCHITECTURAL DECISIONS");
+  expect(result).toContain("No client build step");
 });
 
 test("buildEnrichedContext includes ADRs for arc-agents projects", () => {
   const result = buildEnrichedContext("Add a task breakdown feature", "arc-agents");
   expect(result).toContain("PROJECT CONTEXT");
+  expect(result).toContain("Ledger is the message bus");
   expect(result).toContain("ARCHITECTURAL DECISIONS");
+  expect(result).toContain("Atomic claim");
 });
 
 test("buildEnrichedContext never throws — graceful degradation on missing repo", () => {
