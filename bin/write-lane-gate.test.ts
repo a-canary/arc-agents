@@ -1,7 +1,7 @@
 import { describe, test, expect, afterAll } from "bun:test";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, chmodSync, readFileSync } from "node:fs";
 import { dirname, join } from "node:path";
-import { tmpdir } from "node:os";
+import { homedir, tmpdir } from "node:os";
 
 import { spawnSync } from "node:child_process";
 import { Database } from "bun:sqlite";
@@ -13,10 +13,15 @@ import { Database } from "bun:sqlite";
 const GATE = import.meta.dir + "/write-lane-gate.sh";
 const CHECKER_REPO = process.env.ARC_DIRECTOR || join(process.env.HOME!, "repos", "arc-director");
 
-// Out-of-lane fixture root: this test file lives in a factory worktree
-// (~/worktrees/**), which is outside the invariant-7 allowlist. Anything we
-// git-init under it maps to an out-of-lane canonical root. Cleaned in afterAll.
-const OUT_LANE_ROOT = mkdtempSync(join(import.meta.dir, "..", ".write-lane-fixtures-"));
+// Out-of-lane fixture root. Must sit outside EVERY allowlist prefix
+// (~/repos/**, ~/worktrees/**, /tmp/**, ~/vault/ke/**, ~/vault/director/**).
+// Notably NOT under the repo root: this suite runs from both ~/repos/arc-agents
+// and a ~/worktrees/** factory worktree, and both are in-lane — a fixture under
+// import.meta.dir made these tests assert against an in-lane path (gate returned
+// 0, not 1). ~/.cache is writable and covered by no prefix. Cleaned in afterAll.
+const OUT_LANE_DIR = join(homedir(), ".cache");
+mkdirSync(OUT_LANE_DIR, { recursive: true });
+const OUT_LANE_ROOT = mkdtempSync(join(OUT_LANE_DIR, "write-lane-fixtures-"));
 
 afterAll(() => rmSync(OUT_LANE_ROOT, { recursive: true, force: true }));
 
