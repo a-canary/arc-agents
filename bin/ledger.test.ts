@@ -1736,14 +1736,19 @@ test("alias-cmd prints the full failover group, one candidate per line", async (
   const r = await runRawNoDb("alias-cmd", "smart");
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  // smart is a 2-candidate group: cli-agent resolves the registry pool
-  // (fable → opus → minimax internally), then a last-resort interactive opus
-  // exec alias. arc-agents owns the alias→cli-agent call; cli-proxy + cli-agent
-  // own the pool→cmdline-template resolution.
-  expect(lines.length).toBe(2);
+  // `smart` is a retired alias name — not present in exec_cli_alias since the
+  // direct-provider cutover (4693b59), so it falls back to default_alias
+  // (`planning`), a single workhorse candidate. `hard` is the group that still
+  // carries a real ordered failover: claude-afk opus first, `pi` second.
+  expect(lines.length).toBe(1);
   for (const l of lines) expect(l).toContain("{prompt}");
-  expect(lines[0]).toContain("cli-agent");
-  expect(lines[lines.length - 1]).toContain("opus");
+
+  const hard = await runRawNoDb("alias-cmd", "hard");
+  expect(hard.exitCode).toBe(0);
+  const hardLines = hard.stdout.toString().trim().split("\n");
+  expect(hardLines.length).toBe(2);
+  for (const l of hardLines) expect(l).toContain("{prompt}");
+  expect(hardLines[0]).toContain("opus");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {

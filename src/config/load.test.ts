@@ -31,13 +31,17 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  // Current routing (arc-llm-proxy cutover): every alias is a single
-  // `pi --model arc-proxy/<alias>` command. A retired alias name (e.g.
-  // `minimax-build`, still referenced by row markers) falls back to
-  // default_alias.
+  // Current routing (direct-provider cutover, 4693b59): the arc-proxy hop was
+  // dropped — models.json had no arc-proxy provider, so every worker died
+  // rc=1 "Model arc-proxy/planning not found". Aliases now name the provider
+  // model directly. `planning` is the workhorse, a single `pi -p` candidate.
+  // A retired alias name (e.g. `minimax-build`, still referenced by row
+  // markers) falls back to default_alias.
   const cmds = getAliasCommands("planning", cfg);
   expect(cmds).toHaveLength(1);
-  expect(cmds[0]).toContain("pi --model arc-proxy/planning");
+  expect(cmds[0]).toContain("pi --model ");
+  expect(cmds[0]).toContain(" -p ");
+  expect(cmds[0]).not.toContain("arc-proxy/");
   expect(cmds[0]).toContain("{prompt}");
   expect(getAliasCommands("minimax-build", cfg)).toEqual(
     getAliasCommands(cfg.default_alias, cfg),
