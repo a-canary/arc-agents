@@ -162,3 +162,23 @@ test("setup_pipe_pane works on a session that runs a printing command (headless-
   const content = readFileSync(log, "utf8");
   expect(content).toContain(marker);
 });
+
+// Ordering regression guard (the defect PR #252 shipped): the pipe attach must
+// come BEFORE the interactive `exec`, not inside the loop's headless branch.
+// `exec` replaces this script with claude and never returns, so an attach below
+// it is unreachable on the interactive path — which is the path that HAS the
+// 85-byte bug (M-0002: workers are interactive `claude`, no `-p`). Booting the
+// real script end-to-end would need a live ledger claim, a worktree and a
+// `claude` binary; the source order is the property that actually broke, so
+// that is what this pins.
+// ponytail: static order check, not a full boot — upgrade to a real boot
+// harness if worker-shell grows a second exec path.
+test("pipe attach precedes the interactive exec in worker-shell.sh", () => {
+  const src = readFileSync(SHELL, "utf8").split("\n");
+  const attach = src.findIndex((l) => /^\s*setup_pipe_pane "\$WORKER" "\$LOG_FILE"/.test(l));
+  const exec = src.findIndex((l) => /^\s*exec "\$\{CMD_PARTS\[@\]\}"/.test(l));
+
+  expect(attach).toBeGreaterThan(-1);
+  expect(exec).toBeGreaterThan(-1);
+  expect(attach).toBeLessThan(exec);
+});
