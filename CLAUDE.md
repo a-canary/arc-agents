@@ -74,6 +74,7 @@ own `AGENTS.md` (bindings, worker roles, constraints) is the context, not a
 - **Interactive panes only** (`M-0002`). No `claude -p` headless subprocesses — transparency/observability driven (live attachable tmux panes, full scrollback); Max-bucket billing is a side benefit.
 - **Atomic claim** (`G-0002`). One SQL `UPDATE...RETURNING` decides the winner. Don't add locks or retry loops.
 - **All writes through bookie** except the bootstrap claim in `worker-shell.sh`.
+- **Merge-guard fails closed** on the PR route: a non-null `project` with no `PROJECT_GH_REPO` entry, or a present-but-unparseable `pr_url`, refuses `state=merged` (extend the map or use `--in-place`). Null project / null pr_url still short-circuit (legacy rows / non-PR-route merges). PR + local-sha routes also require changed-file overlap with the row's declared paths, falling back to the row's `branch` (no `declared_paths` column yet). See `src/ledger/merge-guard.ts`, `src/ledger/merge-truth.ts`.
 - **No symlinks during migrations** (`G-0007`). Move files; let subagents fix refs.
 - **Vault overrides repo** (`A-0004`) where both exist. Vault never pushed.
 - **TypeScript default** (`G-0008`), Bun runtime.
