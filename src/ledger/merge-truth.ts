@@ -40,16 +40,17 @@ function hasScope(s: ScopeSignal): boolean {
   return !!(s.declaredPaths && s.declaredPaths.length) || !!(s.branch && s.branch.trim());
 }
 
-// One changed file overlaps a declared path when the file starts with any
-// declared prefix (a trailing '/' means directory; a bare path matches the
-// file itself or as a prefix). Simple, deterministic, no glob engine.
+// One changed file overlaps a declared path when the file equals it, or sits
+// under it as a directory prefix. A trailing '/' is optional — both 'src/led'
+// and 'src/led/' match files under src/led/ but NOT a sibling 'src/ledger'
+// (no partial-segment matches). Simple, deterministic, no glob engine.
 // ponytail: prefix match, upgrade to minimatch if declaredPaths ever carry globs.
 export function pathsOverlap(changed: string[], declared: string[]): boolean {
   return changed.some((f) =>
     declared.some((d) => {
-      const p = d.trim();
+      const p = d.trim().replace(/\/+$/, "");
       if (!p) return false;
-      return f === p || f.startsWith(p.endsWith("/") ? p : p + "/") || f.startsWith(p);
+      return f === p || f.startsWith(p + "/");
     }),
   );
 }

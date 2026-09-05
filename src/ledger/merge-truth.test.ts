@@ -1,5 +1,5 @@
 import { test, expect } from "bun:test";
-import { extractPrNumber, parsePrUrl, verifyLocalMerged, verifyMergeTruth, defaultRunner, type Runner } from "./merge-truth";
+import { extractPrNumber, parsePrUrl, pathsOverlap, verifyLocalMerged, verifyMergeTruth, defaultRunner, type Runner } from "./merge-truth";
 
 const okRunner = (stdout: string, exitCode = 0): Runner => async () => ({ stdout, exitCode });
 // Captures the args gh was called with so we can assert --repo is passed
@@ -12,6 +12,16 @@ const captureRunner = (stdout: string, exitCode = 0): { runner: Runner; calls: A
   };
   return { runner, calls };
 };
+
+test("pathsOverlap: matches exact + dir-prefix, not partial segment", () => {
+  expect(pathsOverlap(["src/ledger/x.ts"], ["src/ledger/"])).toBe(true);
+  expect(pathsOverlap(["src/ledger/x.ts"], ["src/ledger"])).toBe(true); // trailing / optional
+  expect(pathsOverlap(["src/ledger.ts"], ["src/ledger.ts"])).toBe(true); // exact file
+  // sibling with a shared prefix must NOT match (the over-match nit)
+  expect(pathsOverlap(["src/ledgerX/y.ts"], ["src/ledger"])).toBe(false);
+  expect(pathsOverlap(["docs/other.md"], ["src/ledger/"])).toBe(false);
+  expect(pathsOverlap(["anything"], [])).toBe(false);
+});
 
 test("extractPrNumber parses URLs and #N", () => {
   expect(extractPrNumber("https://github.com/foo/bar/pull/42")).toBe(42);
