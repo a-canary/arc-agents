@@ -13,12 +13,24 @@ import { Database } from "bun:sqlite";
 const GATE = import.meta.dir + "/write-lane-gate.sh";
 const CHECKER_REPO = process.env.ARC_DIRECTOR || join(process.env.HOME!, "repos", "arc-director");
 
-// Out-of-lane fixture root: this test file lives in a factory worktree
-// (~/worktrees/**), which is outside the invariant-7 allowlist. Anything we
-// git-init under it maps to an out-of-lane canonical root. Cleaned in afterAll.
+// Out-of-lane fixture root. Every real filesystem location this test may write
+// to is IN-lane (~/repos/**, ~/worktrees/**, /tmp/** are all allowed), so we
+// cannot make an out-of-lane path by picking a directory. Instead we move the
+// lane: the gate resolves `~` from $HOME (arc-director src/policy/check.ts,
+// the single source of truth for the allowlist), so running it with HOME
+// pointed at an empty temp dir re-anchors every ~-prefix away from the fixture.
+// The fixture itself stays under ~/worktrees/** — inside the runner's own
+// write lane. Cleaned in afterAll.
 const OUT_LANE_ROOT = mkdtempSync(join(import.meta.dir, "..", ".write-lane-fixtures-"));
+const FAKE_HOME = mkdtempSync(join(tmpdir(), "lane-gate-home-"));
+// Moving HOME also moves the gate's default ARC_DIRECTOR ($HOME/repos/arc-director),
+// which would fail-closed at rc=2 before the lane verdict is ever reached — so pin it.
+const OUT_LANE_ENV = { HOME: FAKE_HOME, ARC_DIRECTOR: CHECKER_REPO };
 
-afterAll(() => rmSync(OUT_LANE_ROOT, { recursive: true, force: true }));
+afterAll(() => {
+  rmSync(OUT_LANE_ROOT, { recursive: true, force: true });
+  rmSync(FAKE_HOME, { recursive: true, force: true });
+});
 
 function git(cwd: string, ...args: string[]): void {
   const r = spawnSync("git", args, { cwd, encoding: "utf8" });
@@ -68,7 +80,7 @@ describe("write-lane-gate", () => {
 
   test("refuses an out-of-lane canonical root with the allowlist in stderr", () => {
     const repo = mkRepo(OUT_LANE_ROOT, "outlane-repo");
-    const { rc, stderr } = runGate(repo);
+    const { rc, stderr } = runGate(repo, OUT_LANE_ENV);
     expect(rc).toBe(1);
     expect(stderr).toContain("LANE_BLOCKED");
     expect(stderr).toContain("~/repos/**");
@@ -77,7 +89,7 @@ describe("write-lane-gate", () => {
   test("a lane-approve ledger event unlocks the out-of-lane root", () => {
     const repo = mkRepo(OUT_LANE_ROOT, "approved-repo");
     const dbPath = approveLedger(OUT_LANE_ROOT);
-    expect(runGate(repo, { LEDGER_DB: dbPath }).rc).toBe(0);
+    expect(runGate(repo, { ...OUT_LANE_ENV, LEDGER_DB: dbPath }).rc).toBe(0);
   });
 
   test("fails closed (exit 2) when the shared check is unavailable", () => {
