@@ -119,18 +119,28 @@ export type PrStateRunner = (prUrl: string) => "OPEN" | "MERGED" | "CLOSED" | "u
 
 export type MergedPrDesync = { issueId: string; prUrl: string };
 
+// Only re-probe merged rows touched in the last 30 days: older rows have
+// survived many sweeps already and re-probing the whole history costs one
+// `gh pr view` subprocess each, every ~5min cron tick.
+const STALE_MERGED_WINDOW_S = 30 * 86_400;
+
 // Sweep `state='merged'` rows for a PR that GitHub still shows OPEN — the
 // inverse of the review-row salvage check above. Ledger flips to `merged`
 // when the merge command runs, but GitHub's own merge can still fail after
 // (branch protection, no approval) with nothing re-checking. Flags only —
 // does not auto-flip state, this needs a human/HITL call per row.
 // See analysis-1784260802.md (discord-bridge PR #8 stuck OPEN).
-export function sweepMergedPrDesync(db: Database, prState: PrStateRunner): MergedPrDesync[] {
+export function sweepMergedPrDesync(
+  db: Database,
+  prState: PrStateRunner,
+  now: number = Math.floor(Date.now() / 1000),
+): MergedPrDesync[] {
   const rows = db
-    .query<{ id: string; pr_url: string | null }, []>(
-      `SELECT id, pr_url FROM issues WHERE state='merged' AND pr_url IS NOT NULL`,
+    .query<{ id: string; pr_url: string | null }, [number]>(
+      `SELECT id, pr_url FROM issues
+        WHERE state='merged' AND pr_url IS NOT NULL AND updated_at >= ?`,
     )
-    .all();
+    .all(now - STALE_MERGED_WINDOW_S);
   const desyncs: MergedPrDesync[] = [];
   for (const row of rows) {
     if (!row.pr_url) continue;

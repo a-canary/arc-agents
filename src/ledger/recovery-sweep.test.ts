@@ -403,3 +403,32 @@ test("sweepMergedPrDesync flags merged rows whose PR is still OPEN on GitHub", (
   sweepMergedPrDesync(db, prState);
   expect(eventsFor(db, "m1", "note").length).toBe(1);
 });
+
+test("sweepMergedPrDesync skips merged rows older than the 30d window", () => {
+  const db = setup();
+  const now = 1_800_000_000;
+  const day = 86_400;
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, pr_url, updated_at)
+     VALUES ('old', 'p', 't', '', 'mvp', 'merged', 'task', 'https://github.com/a/b/pull/1', ?)`,
+    [now - 31 * day],
+  );
+  const calls: string[] = [];
+  const prState = (url: string) => {
+    calls.push(url);
+    return "OPEN" as const;
+  };
+  expect(sweepMergedPrDesync(db, prState, now)).toEqual([]);
+  expect(calls).toEqual([]);
+
+  // in-window row still probed
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, pr_url, updated_at)
+     VALUES ('fresh', 'p', 't', '', 'mvp', 'merged', 'task', 'https://github.com/a/b/pull/2', ?)`,
+    [now - 29 * day],
+  );
+  expect(sweepMergedPrDesync(db, prState, now)).toEqual([
+    { issueId: "fresh", prUrl: "https://github.com/a/b/pull/2" },
+  ]);
+  expect(calls).toEqual(["https://github.com/a/b/pull/2"]);
+});
