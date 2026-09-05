@@ -643,7 +643,13 @@ fi
 LOG_FILE="$(worker_log_path "$WORKER")"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 STALL_SECS="$(stall_timeout_secs)"
-PIPE_READY=0
+# Attach the pane pipe HERE — before the failover loop, and so before the
+# interactive `exec` below. `exec` replaces this script with claude and never
+# returns, so anything attached inside the loop's headless branch is unreachable
+# on the interactive path, which is the path that HAS the 85-byte bug (M-0002:
+# workers are interactive `claude`, no `-p`). The pipe lives on the pane, so one
+# attach covers the exec, every failover attempt, and the SIGKILL reap.
+setup_pipe_pane "$WORKER" "$LOG_FILE"
 LAST_RC=0
 ATTEMPT=0
 
@@ -693,10 +699,6 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   fi
 
   # Headless attempt — run as a child, capture rc, then reconcile-or-failover.
-  if [[ "$PIPE_READY" != "1" ]]; then
-    setup_pipe_pane "$WORKER" "$LOG_FILE"
-    PIPE_READY=1
-  fi
   set +e
   timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
   AGENT_RC=$?
