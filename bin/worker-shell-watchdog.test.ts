@@ -154,11 +154,14 @@ test("capture_scrollback_to_log is a no-op when log path is empty", () => {
 // `-o` closes it when the pane exits, flushing buffered content to disk.
 //
 // We can't run a real tmux server inside the unit test, but we can pin the
-// no-op contract: outside a tmux session, the function must return 0, NOT
-// create the logfile, and NOT crash.
+// no-op contract: outside a tmux session the function must NOT create the
+// logfile and must NOT crash the worker boot. It reports non-zero rather than
+// 0 — the caller keys PIPE_READY off that status, and a blind 0 here would
+// disarm the capture_scrollback_to_log fallback in exactly the case it covers.
+// The call site wraps it in `if`, which is set -e safe.
 test("setup_pipe_pane is a no-op when not in a tmux session", () => {
   const r = callFn("setup_pipe_pane", ["arc-worker-i-nonexistent", "/tmp/should-not-exist-pipe.log"]);
-  expect(r.rc).toBe(0);
+  expect(r.rc).not.toBe(0);
   try {
     const stat = require("node:fs").statSync("/tmp/should-not-exist-pipe.log");
     expect(stat.size).toBe(0);
@@ -168,8 +171,8 @@ test("setup_pipe_pane is a no-op when not in a tmux session", () => {
 });
 
 test("setup_pipe_pane is a no-op when log path is empty", () => {
-  // No logfile path → skip the pipe attach (mirrors the capture_scrollback
-  // guard: a bad path must not crash the worker boot).
+  // No logfile path → skip the pipe attach. A bad path must not crash the
+  // worker boot, but it must report failure so PIPE_READY stays 0.
   const r = callFn("setup_pipe_pane", ["arc-worker-i-nope", ""]);
-  expect(r.rc).toBe(0);
+  expect(r.rc).not.toBe(0);
 });

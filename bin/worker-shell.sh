@@ -74,6 +74,10 @@ worker_log_path() {
 # $1=worker, $2=logfile → appends, no-op when not in a tmux session.
 capture_scrollback_to_log() {
   local worker="$1" log="$2"
+  # No-op once the pane pipe attached (PIPE_READY=1): pipe-pane has already
+  # streamed the pane, so appending the visible screen here duplicates every
+  # line. Only the no-pipe case (not in tmux) still needs the fallback.
+  [ "${PIPE_READY:-0}" = "1" ] && return 0
   [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
     && tmux capture-pane -p -t "$worker" -S -2000 >> "$log" 2>/dev/null \
     || true
@@ -95,11 +99,14 @@ capture_scrollback_to_log() {
 # where the capture_scrollback_to_log fallback races the factory reap.
 # Pure: $1=worker, $2=logfile → no-op when not in a tmux session, never
 # creates the logfile on its own (mkdir is the caller's job).
+# Returns 0 only if the pipe actually attached — the caller keys PIPE_READY off
+# that, and PIPE_READY switches the capture_scrollback_to_log fallback off. A
+# blind success here would disarm the fallback in exactly the case it exists for.
 setup_pipe_pane() {
   local worker="$1" log="$2"
-  [ -n "$log" ] && tmux has-session -t "$worker" 2>/dev/null \
-    && tmux pipe-pane -t "$worker" -o "cat >> $log" 2>/dev/null \
-    || true
+  [ -n "$log" ] || return 1
+  tmux has-session -t "$worker" 2>/dev/null || return 1
+  tmux pipe-pane -t "$worker" -o "cat >> $(printf %q "$log")" 2>/dev/null || return 1
   return 0
 }
 
@@ -643,7 +650,11 @@ fi
 LOG_FILE="$(worker_log_path "$WORKER")"
 mkdir -p "$(dirname "$LOG_FILE")" 2>/dev/null || true
 STALL_SECS="$(stall_timeout_secs)"
-PIPE_READY=0
+# Attach the pane pipe BEFORE the loop: the interactive branch below `exec`s
+# and never returns, so a pipe attached inside the loop body would only ever
+# cover headless. The pipe lives on the pane, so it survives both the exec
+# and the factory's SIGKILL reap.
+if setup_pipe_pane "$WORKER" "$LOG_FILE"; then PIPE_READY=1; else PIPE_READY=0; fi
 LAST_RC=0
 ATTEMPT=0
 
@@ -693,10 +704,6 @@ for CMD_TEMPLATE in "${CMD_CANDIDATES[@]}"; do
   fi
 
   # Headless attempt — run as a child, capture rc, then reconcile-or-failover.
-  if [[ "$PIPE_READY" != "1" ]]; then
-    setup_pipe_pane "$WORKER" "$LOG_FILE"
-    PIPE_READY=1
-  fi
   set +e
   timeout -k 30 "$STALL_SECS" "${CMD_PARTS[@]}" "${ENGINE_TOOLS[@]}" --append-system-prompt "$SYS_PROMPT" "$USER_PROMPT" 2>&1
   AGENT_RC=$?
