@@ -5,6 +5,7 @@ project_repo_map_lookup() {
     starlight) echo "expert-horde" ;;
     starlight-slm) echo "starlight-slm" ;;
     onenation) echo "OneNation" ;;
+    rrdm) echo "RRDM/rrdm" ;;
   esac
 }
 

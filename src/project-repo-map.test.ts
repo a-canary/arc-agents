@@ -1,10 +1,12 @@
 import { describe, expect, test } from "bun:test";
 import { spawnSync } from "node:child_process";
+import { homedir } from "node:os";
 import { join } from "node:path";
 import {
   PARKED_PROJECTS,
   PROJECT_REPO_MAP,
   isParkedProject,
+  resolveProjectRepo,
 } from "./project-repo-map";
 
 function bashLookup(project: string): string {
@@ -37,6 +39,12 @@ describe("project-repo-map parity (ts vs bash)", () => {
   test("unmapped project yields empty string in bash", () => {
     expect(bashLookup("allmissions")).toBe("");
     expect(PROJECT_REPO_MAP["allmissions"]).toBeUndefined();
+  });
+});
+
+describe("nested repo path", () => {
+  test("rrdm resolves to the nested ~/repos/RRDM/rrdm, not ~/repos/rrdm", () => {
+    expect(resolveProjectRepo("rrdm")).toBe(join(homedir(), "repos", "RRDM", "rrdm"));
   });
 });
 
