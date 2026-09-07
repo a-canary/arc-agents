@@ -383,7 +383,7 @@ test("inconclusive gh poll (prState=unknown) is not logged as a salvage_inspecti
   expect(eventsFor(db, "review-flaky", "note").filter((e) => e.agent === "recovery-sweep")).toHaveLength(0);
 });
 
-test("sweepMergedPrDesync flags merged rows whose PR is still OPEN on GitHub", () => {
+test("sweepMergedPrDesync flags merged rows whose PR is not confirmed MERGED on GitHub", async () => {
   const db = setup();
   db.run(
     `INSERT INTO issues (id, project, title, body_md, type, state, kind, pr_url)
@@ -393,13 +393,18 @@ test("sweepMergedPrDesync flags merged rows whose PR is still OPEN on GitHub", (
     `INSERT INTO issues (id, project, title, body_md, type, state, kind, pr_url)
      VALUES ('m2', 'p', 't', '', 'mvp', 'merged', 'task', 'https://github.com/a/b/pull/9')`,
   );
-  const prState = (url: string) => (url.endsWith("/8") ? "OPEN" as const : "MERGED" as const);
-  const desyncs = sweepMergedPrDesync(db, prState);
-  expect(desyncs).toEqual([{ issueId: "m1", prUrl: "https://github.com/a/b/pull/8" }]);
+  const verify = async (url: string) =>
+    url.endsWith("/8") ? { ok: false, reason: "PR #8 state is 'OPEN', expected 'MERGED'." } : { ok: true };
+  const desyncs = await sweepMergedPrDesync(db, verify);
+  expect(desyncs).toEqual([{
+    issueId: "m1",
+    prUrl: "https://github.com/a/b/pull/8",
+    reason: "PR #8 state is 'OPEN', expected 'MERGED'.",
+  }]);
   const events = eventsFor(db, "m1", "note");
   expect(events.length).toBe(1);
-  expect(JSON.parse(events[0]!.payload_md)).toMatchObject({ kind: "merged_pr_desync", gh_state: "OPEN" });
+  expect(JSON.parse(events[0]!.payload_md)).toMatchObject({ kind: "merged_pr_desync", reason: "PR #8 state is 'OPEN', expected 'MERGED'." });
   // idempotent: re-running does not duplicate the event
-  sweepMergedPrDesync(db, prState);
+  await sweepMergedPrDesync(db, verify);
   expect(eventsFor(db, "m1", "note").length).toBe(1);
 });
