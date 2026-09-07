@@ -1,5 +1,5 @@
 import { describe, expect, test } from "bun:test";
-import { parseVerdict, stamp, SELECT_SQL, hasSalvageableCommits, preJudgeFlip, isNonOwnedRepoPr } from "./gate-triage";
+import { parseVerdict, stamp, SELECT_SQL, hasSalvageableCommits, preJudgeFlip, isNonOwnedRepoPr, isDraftAwaitingHuman } from "./gate-triage";
 
 describe("parseVerdict", () => {
   test("accepts valid auto verdict with tool list", () => {
@@ -160,6 +160,35 @@ describe("isNonOwnedRepoPr", () => {
   test("false for empty/missing pr_url", () => {
     expect(isNonOwnedRepoPr("")).toBe(false);
   });
+});
+
+test("isDraftAwaitingHuman: true only for gh-reported OPEN draft; false when gh is unresolvable", async () => {
+  const { mkdtempSync, writeFileSync, chmodSync, rmSync } = await import("node:fs");
+  const { tmpdir } = await import("node:os");
+  const { join } = await import("node:path");
+  const PR = "https://github.com/a-canary/Conjecture/pull/28";
+  const dir = mkdtempSync(join(tmpdir(), "gh-stub-"));
+  const stub = join(dir, "gh");
+  const write = (json: string) => {
+    writeFileSync(stub, `#!/bin/sh\necho '${json}'\n`);
+    chmodSync(stub, 0o755);
+  };
+  const origPath = process.env.PATH;
+  process.env.PATH = dir;
+  try {
+    write('{"isDraft":true,"state":"OPEN"}');
+    expect(isDraftAwaitingHuman(PR)).toBe(true);
+    write('{"isDraft":false,"state":"OPEN"}');
+    expect(isDraftAwaitingHuman(PR)).toBe(false);
+    write('{"isDraft":true,"state":"MERGED"}');
+    expect(isDraftAwaitingHuman(PR)).toBe(false);
+    // No gh on PATH (cron): fail open rather than throwing ENOENT.
+    process.env.PATH = "/nonexistent-empty-path-for-test";
+    expect(isDraftAwaitingHuman(PR)).toBe(false);
+  } finally {
+    process.env.PATH = origPath;
+    rmSync(dir, { recursive: true, force: true });
+  }
 });
 
 test("merge-review feedback ids use the full task id (24-char prefixes collide)", () => {

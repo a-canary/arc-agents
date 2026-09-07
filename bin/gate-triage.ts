@@ -59,10 +59,14 @@ export function isNonOwnedRepoPr(prUrl: string): boolean {
 // unreachable network doesn't silently swallow a real requeue.
 export function isDraftAwaitingHuman(prUrl: string): boolean {
   if (!isNonOwnedRepoPr(prUrl)) return false;
-  const gh = Bun.which("gh") ?? "gh";
-  const r = spawnSync([gh, "pr", "view", prUrl, "--json", "isDraft,state"]);
-  if (r.exitCode !== 0) return false;
+  // Resolve gh against the live PATH: under cron PATH is minimal, and spawning a
+  // bare "gh" throws (ENOENT) rather than returning a non-zero exit — which would
+  // defeat the fail-open contract above.
+  const gh = Bun.which("gh", { PATH: process.env.PATH ?? "" });
+  if (!gh) return false;
   try {
+    const r = spawnSync([gh, "pr", "view", prUrl, "--json", "isDraft,state"]);
+    if (r.exitCode !== 0) return false;
     const v = JSON.parse(new TextDecoder().decode(r.stdout));
     return v.state === "OPEN" && v.isDraft === true;
   } catch { return false; }
