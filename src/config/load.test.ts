@@ -31,14 +31,13 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  // Current routing (arc-llm-proxy cutover): every alias is a single
-  // `pi --model arc-proxy/<alias>` command. A retired alias name (e.g.
-  // `minimax-build`, still referenced by row markers) falls back to
-  // default_alias.
+  // Assert shape, not a literal provider: routing is re-pointed whenever the
+  // provider plan changes (arc-llm-proxy cutover → direct providers 2026-08-27).
+  // What must hold is that every candidate carries the {prompt} placeholder and
+  // that a retired alias name falls back to default_alias.
   const cmds = getAliasCommands("planning", cfg);
-  expect(cmds).toHaveLength(1);
-  expect(cmds[0]).toContain("pi --model arc-proxy/planning");
-  expect(cmds[0]).toContain("{prompt}");
+  expect(cmds.length).toBeGreaterThan(0);
+  for (const c of cmds) expect(c).toContain("{prompt}");
   expect(getAliasCommands("minimax-build", cfg)).toEqual(
     getAliasCommands(cfg.default_alias, cfg),
   );

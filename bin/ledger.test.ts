@@ -4,6 +4,7 @@ import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { loadConfig, getAliasCommands } from "../src/config/load";
 
 const cli = new URL("./ledger.ts", import.meta.url).pathname;
 
@@ -1733,17 +1734,18 @@ test("merged gate: legacy rows with null claimed_by skip self-review check", asy
 // ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
 
 test("alias-cmd prints the full failover group, one candidate per line", async () => {
-  const r = await runRawNoDb("alias-cmd", "smart");
+  // Assert against config.json, not a literal routing group: the alias table is
+  // re-pointed whenever provider routing changes (2026-08-27 direct-provider
+  // cutover retired the `smart`/cli-agent group). `hard` is the multi-candidate
+  // escalation group — pick whatever the config currently says it is.
+  const cfg = loadConfig(join(import.meta.dir, ".."));
+  const expected = getAliasCommands("hard", cfg);
+  expect(expected.length).toBeGreaterThan(1); // must exercise the group path
+  const r = await runRawNoDb("alias-cmd", "hard");
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  // smart is a 2-candidate group: cli-agent resolves the registry pool
-  // (fable → opus → minimax internally), then a last-resort interactive opus
-  // exec alias. arc-agents owns the alias→cli-agent call; cli-proxy + cli-agent
-  // own the pool→cmdline-template resolution.
-  expect(lines.length).toBe(2);
+  expect(lines).toEqual(expected);
   for (const l of lines) expect(l).toContain("{prompt}");
-  expect(lines[0]).toContain("cli-agent");
-  expect(lines[lines.length - 1]).toContain("opus");
 });
 
 test("alias-cmd <unknown> falls back to default_alias command", async () => {
