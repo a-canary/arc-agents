@@ -577,6 +577,40 @@ test("decompose: parent → blocked, N children inherit parent type, state=ready
   }
 });
 
+test("decompose: type=HITL child lands hitl=1, non-HITL child stays hitl=0", async () => {
+  // `hitl` was missing from the decompose INSERT, so it always fell to the
+  // schema default of 0 — a type=HITL child looked like ordinary work and
+  // the factory would spawn a worker for a row only a human can action.
+  // Setting hitl=1 took a second `update` call, making decompose's
+  // "insert N HITL children" contract unreachable in one call.
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const parent = (await run(db, "create", "--kind", "task", "--type", "cron", "--title", "hygiene parent")) as { id: string };
+    const r = (await run(
+      db, "decompose", parent.id,
+      "--child", JSON.stringify({ title: "needs a human", type: "HITL" }),
+      "--child", JSON.stringify({ title: "ordinary work" }),
+    )) as { children: { id: string; title: string }[] };
+
+    const byTitle = async (t: string) => {
+      const c = r.children.find((x) => x.title === t)!;
+      return ((await run(db, "show", c.id)) as { issue: { hitl: number; type: string } }).issue;
+    };
+
+    const hitlChild = await byTitle("needs a human");
+    expect(hitlChild.type).toBe("HITL");
+    expect(hitlChild.hitl).toBe(1);
+
+    // Non-HITL child inherits parent type=cron and must NOT be flagged hitl.
+    const plainChild = await byTitle("ordinary work");
+    expect(plainChild.type).toBe("cron");
+    expect(plainChild.hitl).toBe(0);
+  } finally {
+    cleanup();
+  }
+});
+
 test("decompose: claimed parent has claim fields nulled when flipped to blocked", async () => {
   const { db, cleanup } = freshDb();
   try {
