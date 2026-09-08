@@ -31,15 +31,19 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  // Current routing (arc-llm-proxy cutover): every alias is a single
-  // `pi --model arc-proxy/<alias>` command. A retired alias name (e.g.
-  // `minimax-build`, still referenced by row markers) falls back to
-  // default_alias.
-  const cmds = getAliasCommands("planning", cfg);
-  expect(cmds).toHaveLength(1);
-  expect(cmds[0]).toContain("pi --model arc-proxy/planning");
-  expect(cmds[0]).toContain("{prompt}");
-  expect(getAliasCommands("minimax-build", cfg)).toEqual(
+  // ponytail: assert the group contract (order, arity, {prompt}), not which
+  // model each alias points at — routing churns (arc-proxy -> direct
+  // providers, 4693b59) and pinning a model string just re-breaks the test.
+  // `hard` escalates: primary first, fallback second.
+  // Escalation aliases put the premium lane first and a local fallback last,
+  // so a degraded premium lane still executes.
+  const hard = getAliasCommands("hard", cfg);
+  expect(hard.length).toBeGreaterThan(1);
+  expect(hard[0]).toContain("claude-afk");
+  expect(hard[hard.length - 1]).toContain("pi --model");
+  for (const cmd of hard) expect(cmd).toContain("{prompt}");
+  // An unknown alias falls back to the default_alias group.
+  expect(getAliasCommands("retired-alias-xyz", cfg)).toEqual(
     getAliasCommands(cfg.default_alias, cfg),
   );
 });
