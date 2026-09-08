@@ -331,6 +331,11 @@ export type BackstopOpts = {
   ghRunner?: GhRunner;
 };
 
+// Grace period before a provably-empty (0 commits ahead) orphan worktree is
+// treated as scratch. Only needs to outlast the worktree-add → ledger-update
+// gap in worker-shell.sh; 1h is many orders of magnitude of headroom.
+const EMPTY_GRACE_SEC = 3600;
+
 export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResult[] {
   // parentRepo (opts) intentionally unused: removal resolves each dir's OWN
   // owner repo via findParentRepo — `~/worktrees` is multi-repo.
@@ -387,10 +392,25 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
     // branch tip is NOT an ancestor of post-squash origin/main, but the work
     // IS in main. The PR state on origin is the only authoritative answer
     // branch ancestry can't give. ghPrMerged=null means we can't tell → keep.
-    // `integrated` is also set true when behindMain > 0 (regular merge).
+    // `integrated` is also set true when behindMain > 0 (regular merge), or
+    // when the worktree has 0 commits ahead of main AND is older than the
+    // short grace window — nothing to salvage, so it is scratch by definition
+    // and need not wait out the full age gate. That case (detached at main's
+    // tip, clean, no ledger row) was the whole cause of the 58-worktree
+    // sprawl: ahead=0 AND behind=0 left integrated=false, so every
+    // provably-empty orphan sat until the 7-day backstop. Safe because
+    // commitsAheadOfMain() returns >0 on ANY git failure, so ahead===0 is a
+    // positive proof of emptiness, never a can't-tell.
+    //
+    // The grace window covers the one race the `tracked` row-check can't:
+    // worker-shell.sh creates the worktree and only THEN writes worktree_path
+    // to the row, so a just-spawned worker's dir is briefly empty AND
+    // row-less. EMPTY_GRACE_SEC must exceed that gap (milliseconds in
+    // practice) with a wide margin.
+    const ageSec = now - Math.floor(st.mtimeMs / 1000);
     const ahead = commitsAheadOfMain(dir);
     const behind = behindMain(dir);
-    let integrated = behind > 0;
+    let integrated = behind > 0 || (ahead === 0 && ageSec >= EMPTY_GRACE_SEC);
     if (ahead > 0 && !integrated) {
       const branch = git(dir, ["branch", "--show-current"]).out;
       const mergedPr =
@@ -407,7 +427,6 @@ export function backstopPurgeWorktrees(db: Db, opts: BackstopOpts): BackstopResu
     // - not integrated: pristine fork point that never diverged; only reap
     //   once older than maxAgeSec, so we don't yank a worktree a worker
     //   just created.
-    const ageSec = now - Math.floor(st.mtimeMs / 1000);
     if (!integrated && ageSec < maxAgeSec) {
       results.push({ worktree_path: dir, outcome: "kept-too-young" });
       continue;

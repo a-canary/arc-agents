@@ -413,13 +413,15 @@ test("(c) backstop KEEPS a worktree a live ledger row still references", () => {
   expect(existsSync(dir)).toBe(true);
 });
 
-test("(c) backstop KEEPS a young, no-row, no-commits worktree (not yet aged out)", () => {
+test("(c) backstop KEEPS a just-created, no-row, no-commits worktree (spawn race grace window)", () => {
   const db = setupDb();
   const root = join(workDir, "wts");
   spawnSync("mkdir", ["-p", root]);
   const dir = addWorktreeUnder(root, "fresh", "fresh-br");
 
-  // now == real now, dir just created → under the 7d age gate.
+  // now == real now, dir just created → inside EMPTY_GRACE_SEC. Covers the
+  // race where worker-shell.sh has added the worktree but not yet written
+  // worktree_path to the ledger row.
   const res = backstopPurgeWorktrees(db, {
     worktreesRoot: root,
     parentRepo: repoDir,
@@ -614,4 +616,34 @@ test("(c) backstop PRESERVES an ahead-of-main orphan when gh is unavailable (nul
   const mine = res.find((r) => r.worktree_path === dir);
   expect(mine?.outcome).toBe("kept-has-commits");
   expect(existsSync(dir)).toBe(true);
+});
+
+// Regression: the 58-worktree sprawl (improve-architecture-worktree-sprawl-58-).
+// An orphan detached at main's tip has ahead=0 AND behind=0, which left
+// `integrated` false, so it fell into the age gate and squatted for 7 days
+// despite being provably empty. Past the grace window it must reap immediately.
+test("(c) backstop REAPS a past-grace, no-row orphan detached at main's tip", () => {
+  const db = setupDb();
+  const root = join(workDir, "wts");
+  spawnSync("mkdir", ["-p", root]);
+  const dir = join(root, "detached-at-main");
+  const add = git(repoDir, ["worktree", "add", "-q", "--detach", dir, "main"]);
+  if (!add.ok) throw new Error(`worktree add failed: ${add.out}`);
+
+  // ahead=0 and behind=0 — the exact shape of the 55 sprawled worktrees.
+  expect(git(dir, ["rev-list", "--count", "main..HEAD"]).out).toBe("0");
+  expect(git(dir, ["rev-list", "--count", "HEAD..main"]).out).toBe("0");
+
+  // Older than the grace window but FAR younger than maxAgeSec: before the fix
+  // this returned kept-too-young.
+  const res = backstopPurgeWorktrees(db, {
+    worktreesRoot: root,
+    parentRepo: repoDir,
+    maxAgeSec: 7 * 86400,
+    now: Math.floor(Date.now() / 1000) + 2 * 3600,
+  });
+
+  const mine = res.find((r) => r.worktree_path === dir);
+  expect(mine?.outcome).toBe("removed");
+  expect(existsSync(dir)).toBe(false);
 });
