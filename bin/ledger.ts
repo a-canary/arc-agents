@@ -393,10 +393,15 @@ switch (cmd) {
         const childType = (spec.type ?? parentRow.type) as Type;
         const childProject = spec.project ?? parentRow.project;
         const childBody = spec.body ?? "";
+        // A type=HITL child is a human-decision row, so it must also carry
+        // hitl=1 — the column has no default tie to `type`, and leaving it 0
+        // made decompose's "insert N HITL children" contract unreachable in
+        // one call (children landed hitl=0 and looked like ordinary work).
+        const childHitl = childType === "HITL" ? 1 : 0;
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent)
-           VALUES (?, ?, ?, ?, ?, '', ?, 'ready', 'task', NULL, ?, ?, ?)`,
-          [id, childProject, parent, spec.title, childBody, childType, childTier, childPool, childAgent],
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent, hitl)
+           VALUES (?, ?, ?, ?, ?, '', ?, 'ready', 'task', NULL, ?, ?, ?, ?)`,
+          [id, childProject, parent, spec.title, childBody, childType, childTier, childPool, childAgent, childHitl],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
