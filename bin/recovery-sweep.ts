@@ -6,7 +6,8 @@
 import { Database } from "bun:sqlite";
 import { spawnSync } from "bun";
 import { existsSync } from "node:fs";
-import { sweepRecovery, sweepMergedPrDesync, type Probe, type SalvageHandoff, type SalvageInspection, type PrStateRunner } from "../src/ledger/recovery-sweep";
+import { sweepRecovery, sweepMergedPrDesync, type Probe, type SalvageHandoff, type SalvageInspection } from "../src/ledger/recovery-sweep";
+import { verifyPrMerged, defaultRunner } from "../src/ledger/merge-truth";
 
 const DB = process.argv[2] ?? `${process.env.HOME}/vault/ledger.db`;
 const REPO = new URL("..", import.meta.url).pathname;
@@ -51,12 +52,12 @@ function inspectSalvage(h: SalvageHandoff): SalvageInspection {
   return { branchExists: true, headMatches: head === h.head, commitsMatch: commits === h.commits, prState };
 }
 
-export const prState: PrStateRunner = (prUrl) => {
-  const r = spawnSync(["gh", "pr", "view", prUrl, "--json", "state", "--jq", ".state"]);
-  if (r.exitCode !== 0) return "unknown";
-  const state = new TextDecoder().decode(r.stdout).trim();
-  return state === "OPEN" || state === "MERGED" || state === "CLOSED" ? state : "unknown";
-};
+// ponytail: one shared runner for the whole sweep — the rows span projects but
+// defaultRunner only uses `project` to pick a cwd for `git merge-base`, and the
+// PR path passes --repo explicitly. Thread the row's project if a future
+// verifyPrMerged call ever goes through git.
+const mergedPrRunner = defaultRunner(null);
+export const checkPrMerged = (prUrl: string) => verifyPrMerged(prUrl, mergedPrRunner);
 
 export function runRecoverySweep(db: Database, sweepProbe = probe) {
   return sweepRecovery(db, { probe: sweepProbe, commandFor, inspectSalvage });
@@ -65,6 +66,6 @@ export function runRecoverySweep(db: Database, sweepProbe = probe) {
 if (import.meta.main) {
   const db = new Database(DB);
   const res = runRecoverySweep(db);
-  const desyncs = sweepMergedPrDesync(db, prState);
+  const desyncs = await sweepMergedPrDesync(db, checkPrMerged);
   console.log(JSON.stringify({ ts: new Date().toISOString(), db: DB, probes: res.probes, flipped: res.flipped.length, kept: res.kept.length, skipped: res.skipped.length, salvage: res.salvage, merged_pr_desyncs: desyncs }));
 }
