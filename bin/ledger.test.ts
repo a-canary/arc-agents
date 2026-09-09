@@ -3,9 +3,11 @@ import { $ } from "bun";
 import { Database } from "bun:sqlite";
 import { mkdtempSync, rmSync, writeFileSync, mkdirSync, existsSync, readFileSync } from "node:fs";
 import { tmpdir } from "node:os";
-import { join } from "node:path";
+import { join, dirname } from "node:path";
+import { loadConfig as loadAppConfig } from "../src/config/load";
 
 const cli = new URL("./ledger.ts", import.meta.url).pathname;
+const REPO_ROOT = dirname(dirname(cli));
 
 function freshDb(): { db: string; cleanup: () => void } {
   const dir = mkdtempSync(join(tmpdir(), "ledger-cli-"));
@@ -1736,21 +1738,24 @@ test("merged gate: legacy rows with null claimed_by skip self-review check", asy
 // ── alias-cmd / resolve-alias (PR-1 new verbs) ──────────────────────────────
 
 test("alias-cmd prints the full failover group, one candidate per line", async () => {
-  // Contract: output lines equal the configured candidate list for any alias
-  // in the live config, in order. (Previously hardcoded a 2-candidate `smart`
-  // group; the arc-llm-proxy cutover made all aliases single pi commands, so
-  // pinning an alias name + line count here would rot on every config change.)
-  const cfg = JSON.parse(
-    readFileSync(new URL("../config.json", import.meta.url).pathname, "utf8"),
-  ) as { exec_cli_alias: Record<string, string | string[]> };
-  const entry = Object.entries(cfg.exec_cli_alias)[0];
-  if (!entry) throw new Error("config.json exec_cli_alias is empty");
-  const [name, raw] = entry;
-  const group: string[] = Array.isArray(raw) ? raw : [raw];
+  // Contract, not routing: alias-cmd emits exactly the configured group for a
+  // real alias, one {prompt}-bearing candidate per line, order preserved.
+  // Pick a configured multi-candidate alias from config so this survives
+  // routing cutovers (see config.json `_note`) instead of pinning engine names.
+  const cfg = loadAppConfig(REPO_ROOT);
+  const entry = Object.entries(cfg.exec_cli_alias).find(
+    ([, g]) => Array.isArray(g) && g.length > 1,
+  );
+  // A single-candidate-only config is legal; fall back to the default alias.
+  const [name, group] = entry ?? [
+    cfg.default_alias,
+    cfg.exec_cli_alias[cfg.default_alias]!,
+  ];
+  const expected = typeof group === "string" ? [group] : group;
   const r = await runRawNoDb("alias-cmd", name);
   expect(r.exitCode).toBe(0);
   const lines = r.stdout.toString().trim().split("\n");
-  expect(lines).toEqual(group);
+  expect(lines).toEqual(expected);
   for (const l of lines) expect(l).toContain("{prompt}");
 });
 
