@@ -4,7 +4,10 @@ import {
   inferSkillFromTitle,
   levenshtein,
   normalizeTitle,
+  checkTaskDuplicate,
+  extractPaths,
   type ExistingRow,
+  type ExistingTaskRow,
 } from "./hygiene-dedup";
 
 describe("normalizeTitle", () => {
@@ -149,5 +152,100 @@ describe("inferSkillFromTitle", () => {
   });
   test("case-insensitive prefix", () => {
     expect(inferSkillFromTitle("Clarify-Docs: foo")).toBe("clarify-docs");
+  });
+});
+
+describe("extractPaths", () => {
+  test("pulls repo-ish paths, lowercased and deduped", () => {
+    expect(extractPaths("see bin/Foo.ts and bin/foo.ts and src/a/b.tsx")).toEqual([
+      "bin/foo.ts",
+      "src/a/b.tsx",
+    ]);
+  });
+  test("ignores bare words and bare filenames", () => {
+    expect(extractPaths("the foo.ts helper is broken in general")).toEqual([]);
+  });
+  test("no paths → empty", () => {
+    expect(extractPaths("nothing here")).toEqual([]);
+  });
+});
+
+describe("checkTaskDuplicate", () => {
+  const row = (o: Partial<ExistingTaskRow> & { id: string }): ExistingTaskRow => ({
+    title: "",
+    body: "",
+    tier: "tier_unset",
+    state: "ready",
+    project: "arc-agents",
+    skill: null,
+    ...o,
+  });
+
+  // The case that motivated this: three rows, dissimilar titles, same file.
+  test("dissimilar titles sharing a source path → shared-path hit", () => {
+    const existing = [
+      row({
+        id: "pr490",
+        title: "relocate fixture outside every allowlist prefix",
+        body: "moves the fixture in bin/write-lane-gate.test.ts to ~/.cache",
+      }),
+    ];
+    const hits = checkTaskDuplicate(
+      {
+        title: "re-anchor $HOME so ~-prefixes no longer cover the fixture",
+        body: "bin/write-lane-gate.test.ts fails on the out-of-lane canonical root",
+        project: "arc-agents",
+      },
+      existing,
+    );
+    expect(hits).toEqual([
+      { existingId: "pr490", reason: "shared-path", detail: "bin/write-lane-gate.test.ts" },
+    ]);
+  });
+
+  test("near-identical titles with no shared path → title hit", () => {
+    const hits = checkTaskDuplicate(
+      { title: "fix the flaky claim test", body: "", project: "arc-agents" },
+      [row({ id: "a", title: "fix the flaky claim tests" })],
+    );
+    expect(hits).toEqual([
+      { existingId: "a", reason: "title", detail: "fix the flaky claim tests" },
+    ]);
+  });
+
+  test("different project → ignored", () => {
+    const hits = checkTaskDuplicate(
+      { title: "x", body: "bin/foo.ts", project: "arc-agents" },
+      [row({ id: "a", body: "bin/foo.ts", project: "arc-director" })],
+    );
+    expect(hits).toEqual([]);
+  });
+
+  test("terminal states → ignored", () => {
+    const hits = checkTaskDuplicate(
+      { title: "x", body: "bin/foo.ts", project: "arc-agents" },
+      [
+        row({ id: "m", body: "bin/foo.ts", state: "merged" }),
+        row({ id: "c", body: "bin/foo.ts", state: "cancelled" }),
+      ],
+    );
+    expect(hits).toEqual([]);
+  });
+
+  test("unrelated rows → no hits", () => {
+    const hits = checkTaskDuplicate(
+      { title: "add retry to the spawner", body: "src/spawn.ts", project: "arc-agents" },
+      [row({ id: "a", title: "document the ledger schema", body: "docs/schema.md" })],
+    );
+    expect(hits).toEqual([]);
+  });
+
+  test("path signal wins over title for the same row (one hit, not two)", () => {
+    const hits = checkTaskDuplicate(
+      { title: "fix the gate", body: "bin/g.ts", project: "arc-agents" },
+      [row({ id: "a", title: "fix the gate", body: "bin/g.ts" })],
+    );
+    expect(hits).toHaveLength(1);
+    expect(hits[0]!.reason).toBe("shared-path");
   });
 });
