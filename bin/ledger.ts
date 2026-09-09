@@ -9,7 +9,7 @@ import { migrate } from "../src/ledger/migrate";
 import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, TYPE_VALUES, type Tier, type Pool, type Agent, type Type } from "../src/ledger/bookie-validator";
 import { routeProjectFromBody } from "../src/ledger/hygiene-project-route";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
-import { parseDiffReviewPayload, checkReviewerIndependence } from "../src/ledger/diff-review";
+import { parseDiffReviewPayload, checkReviewerIndependence, DIFF_REVIEW_EXAMPLE } from "../src/ledger/diff-review";
 import { SORT_KEY_SQL } from "../src/ledger/tier-pool-sort";
 import { CLAIM_SQL, buildClaimSQL, claimOnce } from "../src/ledger/claim";
 import { CLAIMABLE_KINDS_SQL } from "../src/ledger/kinds";
@@ -570,7 +570,7 @@ switch (cmd) {
           .get(id);
         if (!latestReview) {
           die(
-            `refuse merged: no diff_review event for ${id}. Run /diff-review skill, then log via 'ledger event ${id} diff_review <json>' before merging. If this row has no diff to review, use --no-diff --evidence "<why>" instead. If this work is a duplicate or was already shipped elsewhere, close it with --state cancelled --evidence "<why>" instead — no diff_review needed.`,
+            `refuse merged: no diff_review event for ${id}. Required fields: reviewer_identity, reviewed_sha, verdict. Run /diff-review skill, then log via ${DIFF_REVIEW_EXAMPLE.replace("<id>", id)} before merging. If this row has no diff to review, use --no-diff --evidence "<why>" instead. If this work is a duplicate or was already shipped elsewhere, close it with --state cancelled --evidence "<why>" instead — no diff_review needed.`,
           );
         }
         const reviewParse = parseDiffReviewPayload(latestReview.payload_md);

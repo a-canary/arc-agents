@@ -24,6 +24,11 @@ export type DiffReviewOk = { ok: true; payload: DiffReviewPayload };
 export type DiffReviewFail = { ok: false; reason: string };
 export type DiffReviewResult = DiffReviewOk | DiffReviewFail;
 
+// Copy-pasteable minimal payload for refusal messages. Single-quoted in the
+// example so shell word-splitting can't corrupt the JSON on the way back in.
+export const DIFF_REVIEW_EXAMPLE =
+  `ledger event <id> diff_review '{"reviewer_identity":"reviewer-subagent","reviewed_sha":"<7-40 hex>","verdict":"pass"}'`;
+
 export const REVIEWED_SHA_RE = /^[0-9a-f]{7,40}$/i;
 export const VERDICT_VALUES: readonly DiffReviewVerdict[] = ["pass", "fail", "comment"];
 
