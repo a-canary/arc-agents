@@ -1525,7 +1525,15 @@ test("update --state merged refuses without prior diff_review event", async () =
     )) as { id: string };
     const r = await runRaw(db, "update", c.id, "--state", "merged", "--evidence", "x");
     expect(r.exitCode).not.toBe(0);
-    expect(r.stderr.toString()).toMatch(/refuse merged: no diff_review/);
+    const err = r.stderr.toString();
+    expect(err).toMatch(/refuse merged: no diff_review/);
+    // The FIRST refusal must be self-describing: name all three required
+    // fields plus a copy-pasteable single-quoted payload example, so the
+    // caller doesn't discover the schema through successive rejections.
+    expect(err).toContain("reviewer_identity");
+    expect(err).toContain("reviewed_sha");
+    expect(err).toContain("verdict");
+    expect(err).toContain(`ledger event ${c.id} diff_review '{`);
   } finally {
     cleanup();
   }
