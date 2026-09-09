@@ -20,6 +20,7 @@ import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
 import { checkDuplicate, checkTaskDuplicate, type ExistingRow, type ExistingTaskRow } from "../src/ledger/hygiene-dedup";
+import { checkPrDuplicate, getOpenPrIndex, slugForProject, type PrDedupHit } from "../src/ledger/pr-dedup";
 import { parseFollowupTable } from "../src/ledger/followup-table";
 import { checkInPlaceGuard, checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
@@ -198,6 +199,18 @@ switch (cmd) {
       .all(project);
     const dupHits = checkTaskDuplicate({ title, body, project }, dupRows);
 
+    // Second dedup signal: open PRs whose changed files overlap the paths this
+    // ticket names. The ledger-row check above goes blind once the first row
+    // is claimed and its work lives only in a PR (#490/#495 were both open
+    // against one defect). Advisory and best-effort — no gh, no auth, or no
+    // ~/repos/<project> checkout just means no hits.
+    let prHits: PrDedupHit[] = [];
+    if (process.env.ARC_SKIP_PR_DEDUP !== "1") {
+      const slug = slugForProject(project);
+      const openPrs = slug ? getOpenPrIndex(slug) : null;
+      if (openPrs) prHits = checkPrDuplicate(`${title}\n${body}`, openPrs);
+    }
+
     const id = mintId(db, title);
     if (tier !== null && pool !== null) {
       db.run(
@@ -239,7 +252,18 @@ switch (cmd) {
         ],
       );
     }
-    out({ id, state, thread_id: thread, possible_duplicates: dupHits });
+    if (prHits.length > 0) {
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', ?, ?)`,
+        [
+          id,
+          getFlag("agent") ?? "cli",
+          `POSSIBLE DUPLICATE of ${prHits.length} open PR(s): ` +
+            prHits.map((h) => `#${h.prNumber} "${h.prTitle}" (shared: ${h.sharedPaths.join(", ")})`).join("; "),
+        ],
+      );
+    }
+    out({ id, state, thread_id: thread, possible_duplicates: dupHits, possible_duplicate_prs: prHits });
     break;
   }
 
