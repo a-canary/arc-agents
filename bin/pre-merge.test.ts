@@ -220,3 +220,68 @@ describe("pre-merge.sh bash parser smoke", () => {
     }
   });
 });
+
+// Run the real gate_ci_green function against a stub `gh` on PATH.
+// stubOut is the JSON `gh pr checks --json ...` prints; stubExit its status.
+function runCiGreen(stubOut: string, stubExit = 0): string {
+  const dir = mkdtempSync(join(tmpdir(), "ci-green-test-"));
+  try {
+    const bin = join(dir, "bin");
+    mkdirSync(bin);
+    const gh = join(bin, "gh");
+    writeFileSync(gh, `#!/bin/bash\ncat <<'EOF'\n${stubOut}\nEOF\nexit ${stubExit}\n`);
+    chmodSync(gh, 0o755);
+    const driver = [
+      `export PATH='${bin}':"$PATH"`,
+      `PR_NUM=511`,
+      `pass() { echo "PASS:$1:$2"; }`,
+      `fail() { echo "FAIL:$1:$2"; }`,
+      `skip() { echo "SKIP:$1:$2"; }`,
+      `log() { :; }`,
+      extractFn("gate_ci_green"),
+      `gate_ci_green`,
+    ].join("\n");
+    const res = spawnSync("bash", ["-c", driver], { encoding: "utf8" });
+    return res.stdout + res.stderr;
+  } finally {
+    rmSync(dir, { recursive: true, force: true });
+  }
+}
+
+describe("gate_ci_green", () => {
+  // Regression: gh pr checks exits 0 both for "all green" and for a PR whose
+  // only check is still pending, so the old exit-code gate PASSed PR #511 on
+  // incomplete CI. Buckets, not exit status, decide.
+  test("FAIL when the only check is pending (exit 0)", () => {
+    const out = runCiGreen(`[{"name":"Release Gate","bucket":"pending"}]`);
+    expect(out).toContain("FAIL:ci-green");
+    expect(out).toContain("Release Gate");
+  });
+
+  test("FAIL when one check is green and another pending", () => {
+    const out = runCiGreen(
+      `[{"name":"lint","bucket":"pass"},{"name":"Release Gate","bucket":"pending"}]`
+    );
+    expect(out).toContain("FAIL:ci-green");
+  });
+
+  test("FAIL on a failing check", () => {
+    const out = runCiGreen(`[{"name":"Release Gate","bucket":"fail"}]`, 1);
+    expect(out).toContain("FAIL:ci-green");
+  });
+
+  test("PASS when every check is pass or skipping", () => {
+    const out = runCiGreen(
+      `[{"name":"Release Gate","bucket":"pass"},{"name":"optional","bucket":"skipping"}]`
+    );
+    expect(out).toContain("PASS:ci-green");
+  });
+
+  // Empty list is the shape gh returns before any workflow registers — that is
+  // "CI has not started", never "CI is green".
+  test("does not PASS on an empty check list", () => {
+    const out = runCiGreen(`[]`);
+    expect(out).not.toContain("PASS:ci-green");
+    expect(out).toContain("SKIP:ci-green");
+  });
+});
