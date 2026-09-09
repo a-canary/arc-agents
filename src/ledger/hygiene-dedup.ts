@@ -112,3 +112,73 @@ export function inferSkillFromTitle(title: string): string | null {
   const candidate = m[1]!.toLowerCase();
   return KNOWN_HYGIENE_SKILLS.includes(candidate) ? candidate : null;
 }
+
+// ---------------------------------------------------------------------------
+// General task dedup (not hygiene-tier). Motivated by three workers being
+// dispatched at one defect: the three rows had *dissimilar titles* but every
+// body named the same file (bin/write-lane-gate.test.ts). Title similarity
+// alone would not have caught it, so the primary signal here is the set of
+// source paths mentioned in title+body.
+//
+// ponytail: advisory only — `create` reports the overlap and still inserts.
+// A hard block on creation is the wrong failure mode: creation is the only
+// way work enters the ledger, so a false positive strands real work, while a
+// false negative just costs one duplicate worker. Promote to a block only if
+// the advisory proves near-zero false-positive in practice.
+
+// Paths that look like repo source files: a/b/c.ts, bin/foo.sh, src/x/y.tsx.
+// Deliberately narrow — bare words and bare filenames produce too many
+// collisions to be a useful signal.
+const PATH_RE = /\b[\w.-]+(?:\/[\w.-]+)+\.[a-z]{1,5}\b/gi;
+
+export function extractPaths(text: string): string[] {
+  const hits = text.match(PATH_RE) ?? [];
+  return [...new Set(hits.map((p) => p.toLowerCase()))];
+}
+
+export type TaskDedupCandidate = {
+  title: string;
+  body: string;
+  project: string;
+};
+
+export type TaskDedupHit = {
+  existingId: string;
+  reason: "shared-path" | "title";
+  detail: string;
+};
+
+export type ExistingTaskRow = ExistingRow & { body: string; project: string };
+
+// Returns every open row in the same project that overlaps the candidate,
+// most-specific signal first. Empty array = no overlap found.
+export function checkTaskDuplicate(
+  candidate: TaskDedupCandidate,
+  existing: ExistingTaskRow[],
+  opts: DedupOptions = {},
+): TaskDedupHit[] {
+  const threshold = opts.threshold ?? 0.25;
+  const considerStates = opts.considerStates ?? ["ready", "blocked", "wip", "claimed", "review"];
+  const candPaths = new Set(extractPaths(`${candidate.title}\n${candidate.body}`));
+  const candTitle = normalizeTitle(candidate.title);
+  const hits: TaskDedupHit[] = [];
+
+  for (const row of existing) {
+    if (row.project !== candidate.project) continue;
+    if (!considerStates.includes(row.state)) continue;
+
+    const shared = extractPaths(`${row.title}\n${row.body}`).filter((p) => candPaths.has(p));
+    if (shared.length > 0) {
+      hits.push({ existingId: row.id, reason: "shared-path", detail: shared.join(", ") });
+      continue;
+    }
+
+    const other = normalizeTitle(row.title);
+    if (candTitle.length === 0 || other.length === 0) continue;
+    const ratio = levenshtein(candTitle, other) / Math.max(candTitle.length, other.length);
+    if (ratio <= threshold) {
+      hits.push({ existingId: row.id, reason: "title", detail: row.title });
+    }
+  }
+  return hits;
+}
