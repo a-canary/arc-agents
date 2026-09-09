@@ -31,20 +31,18 @@ test("resolveAlias returns the primary command of a known alias group", () => {
 
 test("getAliasCommands returns the full ordered failover group", () => {
   const cfg = loadConfig(repoRoot);
-  // Current routing (direct provider, captain standing plan 2026-08-27):
-  // `planning` is a single Veles workhorse command. A retired alias name
-  // (e.g. `minimax-build`, still referenced by row markers) falls back to
-  // default_alias.
-  const cmds = getAliasCommands("planning", cfg);
-  expect(cmds).toHaveLength(1);
-  expect(cmds[0]).toContain("pi --model Veles/unsloth/Qwen3.8-27B-GGUF");
-  expect(cmds[0]).toContain("{prompt}");
-  // `hard` is the escalation group: claude-afk opus first, Veles fallback.
-  const hard = getAliasCommands("hard", cfg);
-  expect(hard).toHaveLength(2);
-  expect(hard[0]!).toContain("claude-afk --model opus");
-  expect(hard[1]!).toContain("pi --model Veles/unsloth/Qwen3.8-27B-GGUF");
-  expect(getAliasCommands("minimax-build", cfg)).toEqual(
+  // Contract, not routing: every configured alias resolves to a non-empty
+  // ordered group of {prompt}-bearing commands, and an alias name absent from
+  // exec_cli_alias falls back to the default_alias group. Which engine each
+  // alias points at is a config decision (see config.json `_note`) and is
+  // deliberately NOT asserted here — that churns on every routing cutover.
+  for (const [name, group] of Object.entries(cfg.exec_cli_alias)) {
+    const cmds = getAliasCommands(name, cfg);
+    expect(cmds).toEqual(typeof group === "string" ? [group] : group);
+    expect(cmds.length).toBeGreaterThan(0);
+    for (const c of cmds) expect(c).toContain("{prompt}");
+  }
+  expect(getAliasCommands("retired-alias-name", cfg)).toEqual(
     getAliasCommands(cfg.default_alias, cfg),
   );
 });
