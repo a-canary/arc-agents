@@ -13,7 +13,8 @@
 #   5. tdd-green      — colocated *.test.ts for every prod .ts in diff
 #   6. todo-sweep     — TODO/FIXME/XXX reference a ledger task or PR
 #   7. merge-gate     — fixture + typecheck + bun test (bin/merge-gate.sh)
-#   8. ci-green       — gh pr checks <num> all PASS (if --pr passed)
+#   8. ci-green       — every PR check bucket is pass/skipping (if --pr passed);
+#                       pending or failing checks FAIL the gate
 #
 # Usage:
 #   bin/pre-merge.sh [--base <ref>] [--pr <num>] [--project <path>]
@@ -234,17 +235,31 @@ gate_ci_green() {
     skip "ci-green" "gh CLI not installed"
     return
   fi
-  # gh pr checks exits non-zero if any check failed/pending
-  if gh pr checks "$PR_NUM" >/tmp/ci-green-$$.log 2>&1; then
-    pass "ci-green" "all PR checks green"
-  else
-    if grep -qi 'no checks reported' /tmp/ci-green-$$.log 2>/dev/null; then
+  # Never trust `gh pr checks` exit status: it is 0 both for "all green" and
+  # for "nothing has registered yet", which let a PR clear this gate on
+  # incomplete CI (ledger pre-merge-ci-green-gate-treats-pending-c, PR #511).
+  # Inspect each check's bucket instead — only pass/skipping counts as green.
+  local json err="/tmp/ci-green-$$.err"
+  if ! json="$(gh pr checks "$PR_NUM" --json name,bucket 2>"$err")"; then
+    if grep -qi 'no checks reported' "$err" 2>/dev/null; then
       skip "ci-green" "no checks reported on PR"
-    elif grep -qE 'pending|in_progress' /tmp/ci-green-$$.log 2>/dev/null; then
-      fail "ci-green" "PR checks still pending"
     else
-      fail "ci-green" "one or more PR checks failed — see /tmp/ci-green-$$.log"
+      fail "ci-green" "gh pr checks failed — $(head -1 "$err" 2>/dev/null)"
     fi
+    return
+  fi
+  local total pending failed
+  total="$(printf '%s' "$json" | jq 'length')"
+  pending="$(printf '%s' "$json" | jq -r '[.[] | select(.bucket == "pending") | .name] | join(", ")')"
+  failed="$(printf '%s' "$json" | jq -r '[.[] | select(.bucket != "pending" and .bucket != "pass" and .bucket != "skipping") | .name + "(" + .bucket + ")"] | join(", ")')"
+  if [ "$total" = "0" ]; then
+    skip "ci-green" "no checks reported on PR"
+  elif [ -n "$failed" ]; then
+    fail "ci-green" "PR checks not green: $failed"
+  elif [ -n "$pending" ]; then
+    fail "ci-green" "PR checks still pending: $pending"
+  else
+    pass "ci-green" "all $total PR checks green"
   fi
 }
 
