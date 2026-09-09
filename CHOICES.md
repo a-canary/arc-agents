@@ -195,6 +195,19 @@ Cross-repo env var naming for vault/data directories.
 `resolveLedgerDb()` resolves `$ARC_LEDGER_DB` → `$ARC_VAULT_HOME/ledger.db` → `$HOME/vault/ledger.db`.
 Pre-existing installs with `ARC_LEDGER_DB` unset and no XDG migration continue working via legacy fallback.
 
+### I-0014: Host-Dependent Tests Skip in CI Rather Than Hard-Fail
+Tests that require host state the CI runner does not have (a sibling repo checkout, another project's `docs/adr/`) are gated with `test.skipIf(<dependency present>)` instead of hard-failing. **The tradeoff is deliberate: coverage on the runner is traded for gate signal.** A permanently-red gate cannot catch regressions — it cannot distinguish a real breakage from the standing set. Release Gate was red on main for 5+ consecutive runs from 2026-08-28 on the same 8 failures, and consequently gave no signal on PR #495 at all (the test that PR fixes failed in CI both with and without the patch; only a local run was usable evidence).
+
+Rejected alternative: provision the dependencies in CI (check out `arc-director`, fabricate a `~/repos/arc-agents/docs/adr` tree). That couples this repo's gate to sibling-repo availability and credentials to run assertions about *host layout*, not about this repo's logic. `write-lane-gate > checker exists in arc-director` is a fixture precondition, not a behaviour test — it belongs to the local gate, where `bin/merge-gate.sh` still runs the full suite with every dependency present.
+
+Scope of what is skipped, and what is deliberately NOT:
+- Skipped when `$ARC_DIRECTOR/src/policy/check.ts` is absent: the 5 `write-lane-gate` tests that need the shared checker to actually execute.
+- Still run everywhere: `fails closed (exit 2)` (asserts the missing-checker path itself), the `canon_root` tests (pure git), and the `merge-gate.sh gate_write_lane` wiring tests (stub-driven). The gate's fail-closed behaviour is therefore still verified on the runner.
+- Not skipped at all: the two `adrGroundingFor`/`buildEnrichedContext` arc-agents tests. arc-agents' own ADRs are in the checkout, so the test pins `ARC_PROJECT_REPO_ARC_AGENTS` to the repo root via the existing env seam in `src/project-repo-map.ts` — these gained coverage rather than losing it.
+- Skipped only when `~/repos/arc-webui/docs/adr` is absent: the one `buildEnrichedContext` test asserting on a genuinely foreign repo.
+
+Consequence to accept: a regression in the checker-dependent write-lane paths will be caught by `bin/merge-gate.sh` locally, not by CI. If that proves too weak, the escalation is to provision `arc-director` in the workflow — not to restore the hard failure.
+
 ### I-0011: triageUnset Auto-Classification
 `triageUnset(db, budget=10)` in `bin/factory.ts` runs each factory tick. Selects up to `budget` ready rows with `agent='agent_unset' OR pool='pool_unset'` ordered by SORT_KEY_SQL. Rules: agent — `source_module='arc-chat'` → `chat`; `kind='prd'` → `director`; else → `developer`. Pool — `tier IN (prod,trust,mvp)` → `build`; else → `explore`. Tier is never touched. Each triaged row gets a `kind='triaged'` event (migration 018). Escape hatch: `ARC_TRIAGE_DISABLE=1`. Budget override: `ARC_TRIAGE_BUDGET=N`.
 

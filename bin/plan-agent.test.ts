@@ -1,4 +1,6 @@
 import { test, expect } from "bun:test";
+import { existsSync } from "node:fs";
+import { join } from "node:path";
 import { buildPlanningPrompt, parsePlanJson, planToPlanArgs, serializeObjective, buildFallbackPlan, ARCH_CONTEXT, groundingFor, resolveProjectRepo, buildEnrichedContext, keRecallFor, adrGroundingFor } from "./plan-agent";
 
 test("buildPlanningPrompt embeds request + context, asks for the json shape, avoids the hang trigger", () => {
@@ -393,6 +395,19 @@ test("adrGroundingFor returns empty string for a project with no adr dir", () =>
   expect(result).toBe("");
 });
 
+// arc-agents' own ADRs live in this checkout, so point the resolver at the
+// repo root instead of ~/repos/arc-agents — the CI runner has the former and
+// not the latter. resolveProjectRepo already honours this env seam.
+const REPO_ROOT = join(import.meta.dir, "..");
+process.env.ARC_PROJECT_REPO_ARC_AGENTS ||= REPO_ROOT;
+
+// arc-webui is a sibling repo the CI runner does not check out. Skip rather
+// than hard-fail: a permanently-red gate cannot catch regressions.
+// NB: resolveProjectRepo returns null off-host — don't `?? ""`, which would make
+// this a RELATIVE "docs/adr" and match this repo's own ADR dir instead.
+const ARC_WEBUI_REPO = resolveProjectRepo("arc-webui");
+const ARC_WEBUI_ADRS = !!ARC_WEBUI_REPO && existsSync(join(ARC_WEBUI_REPO, "docs", "adr"));
+
 test("adrGroundingFor reads ADRs for arc-agents (the project that HAS them)", () => {
   const result = adrGroundingFor("arc-agents");
   // The arc-agents repo itself has docs/adr/ with ADR files
@@ -427,7 +442,7 @@ test("keRecallFor parses the human-readable ke recall output format", () => {
   }
 });
 
-test("buildEnrichedContext composes CONTEXT.md + ADRs + ke recall", () => {
+test.skipIf(!ARC_WEBUI_ADRS)("buildEnrichedContext composes CONTEXT.md + ADRs + ke recall", () => {
   const result = buildEnrichedContext("Add a dark mode toggle", "arc-webui");
   // CONTEXT.md grounding always present
   expect(result).toContain("PROJECT CONTEXT");
