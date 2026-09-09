@@ -26,6 +26,12 @@ let dbPath: string;
 let fakeClaude: string;
 let fakeBinDir: string;
 let prefix: string;
+// Throwaway git repo the boot-the-real-shell tests point ARC_PROJECT_REPO_ARC_AGENTS
+// at. Pointing it at REPO (the live checkout) made `git worktree add` register a
+// real worktree in the production repo's .git/worktrees/ that no test ever
+// deregistered — 12 stale gitdirs had accumulated by 2026-09-09. It lives under
+// workDir, so afterEach's rmSync takes the whole thing including the registry.
+let scratchRepo: string;
 
 function bun(args: string[], env: Record<string, string> = {}) {
   return spawnSync("bun", args, {
@@ -125,6 +131,17 @@ beforeEach(() => {
   }
 
   prefix = `arctest-${Math.random().toString(36).slice(2, 8)}`;
+
+  // Minimal git repo standing in for the arc-agents checkout. worker-shell.sh
+  // only needs a repo with a default branch: it fast-forwards main, runs
+  // `git worktree add`, and cd's in. One commit is enough.
+  scratchRepo = join(workDir, "scratch-repo");
+  spawnSync("git", ["init", "-q", "-b", "main", scratchRepo], { encoding: "utf8" });
+  spawnSync("git", ["-C", scratchRepo, "config", "user.email", "t@t"], { encoding: "utf8" });
+  spawnSync("git", ["-C", scratchRepo, "config", "user.name", "t"], { encoding: "utf8" });
+  writeFileSync(join(scratchRepo, "README"), "scratch\n");
+  spawnSync("git", ["-C", scratchRepo, "add", "README"], { encoding: "utf8" });
+  spawnSync("git", ["-C", scratchRepo, "commit", "-q", "-m", "init"], { encoding: "utf8" });
 
   // Init ledger
   const r = bun([LEDGER, "init"]);
@@ -418,11 +435,11 @@ test("worker-shell.sh survives systemd's stripped PATH (no ~/.bun/bin)", () => {
     PATH: strippedPath,
     ARC_LEDGER_DB: dbPath,
     CLAUDE_BIN: fakeClaude,
-    // Pin the worktree base to this checkout. The row's project=arc-agents
-    // else resolves to ~/repos/arc-agents (resolve_repo default), which is
-    // absent on CI runners — the worker would die "project repo not found"
-    // after claiming and strand the row at `claimed`.
-    ARC_PROJECT_REPO_ARC_AGENTS: REPO,
+    // Pin the worktree base to the throwaway scratch repo. The row's
+    // project=arc-agents else resolves to ~/repos/arc-agents (resolve_repo
+    // default) — absent on CI runners, and on a dev box it is the LIVE repo,
+    // where `git worktree add` leaves a stale gitdir registration behind.
+    ARC_PROJECT_REPO_ARC_AGENTS: scratchRepo,
     // Prevent pass(1) from blocking on auth token/API key retrieval in the test.
     // The shell checks these env vars before attempting `pass show`, so setting
     // them to dummy values bypasses the potentially-blocking pass lookup entirely.
@@ -521,7 +538,7 @@ test("worker-shell.sh restores ~/node_modules/.bin so `pi` resolves on a strippe
     PATH: strippedPath,
     ARC_LEDGER_DB: dbPath,
     CLAUDE_BIN: fakeClaude,
-    ARC_PROJECT_REPO_ARC_AGENTS: REPO,
+    ARC_PROJECT_REPO_ARC_AGENTS: scratchRepo,
   };
   const r = spawnSync("bash", [shell, "w-pi-strip"], { encoding: "utf8", env });
   expect(r.status).toBe(0);
@@ -735,9 +752,10 @@ test("worker-shell.sh claims atomically: only one of two parallel shells wins fo
   // Prepend the fake-pi bin dir: the winner resolves to the `pi -p` headless
   // engine and must find a controllable `pi` rather than the real (blocking)
   // one. The fake self-reports terminal and exits, so the winner returns fast.
-  // ARC_PROJECT_REPO_ARC_AGENTS pins the worktree base to this checkout — the
-  // row's project=arc-agents else resolves to ~/repos/arc-agents, absent on CI.
-  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude, ARC_PROJECT_REPO_ARC_AGENTS: REPO };
+  // ARC_PROJECT_REPO_ARC_AGENTS pins the worktree base to the throwaway scratch
+  // repo — the row's project=arc-agents else resolves to ~/repos/arc-agents,
+  // absent on CI and the live repo locally (stale-gitdir leak).
+  const env = { ...process.env, PATH: `${fakeBinDir}:${process.env.PATH}`, ARC_LEDGER_DB: dbPath, CLAUDE_BIN: fakeClaude, ARC_PROJECT_REPO_ARC_AGENTS: scratchRepo };
   // Run two shells in parallel; both attempt claim, exactly one should succeed.
   const r1 = spawnSync("bash", [shell, "w1"], { encoding: "utf8", env });
   const r2 = spawnSync("bash", [shell, "w2"], { encoding: "utf8", env });
