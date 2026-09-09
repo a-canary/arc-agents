@@ -403,7 +403,10 @@ process.env.ARC_PROJECT_REPO_ARC_AGENTS ||= REPO_ROOT;
 
 // arc-webui is a sibling repo the CI runner does not check out. Skip rather
 // than hard-fail: a permanently-red gate cannot catch regressions.
-const ARC_WEBUI_ADRS = existsSync(join(resolveProjectRepo("arc-webui") ?? "", "docs", "adr"));
+// NB: resolveProjectRepo returns null off-host — don't `?? ""`, which would make
+// this a RELATIVE "docs/adr" and match this repo's own ADR dir instead.
+const ARC_WEBUI_REPO = resolveProjectRepo("arc-webui");
+const ARC_WEBUI_ADRS = !!ARC_WEBUI_REPO && existsSync(join(ARC_WEBUI_REPO, "docs", "adr"));
 
 test("adrGroundingFor reads ADRs for arc-agents (the project that HAS them)", () => {
   const result = adrGroundingFor("arc-agents");
