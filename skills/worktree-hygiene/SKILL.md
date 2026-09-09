@@ -1,3 +1,8 @@
+---
+name: worktree-hygiene
+description: Daily driver that scans estate git worktrees, classifies each into cleanup/commit/finish/review, and files ONE ledger ticket per finding — tickets only, never executes git mutations. Use to audit stale worktrees, after worktree sprawl, or when wiring the 4am hygiene cron.
+---
+
 # worktree-hygiene
 
 Daily driver that scans estate git worktrees, classifies each into an action
