@@ -6,6 +6,12 @@
 # "docs", "profiles"). Top-level files (CLAUDE.md, CONTEXT.md, etc.) count as
 # area "_root".
 #
+# `.claude/` is a SATELLITE area, not an area of its own: agent/skill
+# definitions are prose describing behavior implemented in code elsewhere, and
+# `bun test` skips dotted dirs so the verifying test cannot be colocated there.
+# A `.claude/` doc + the code/test that proves it is one atomic slice. It only
+# counts as an area when it is the *only* thing staged.
+#
 # Bypass: SLICE_GUARD_SKIP=1 git commit ...
 
 set -euo pipefail
@@ -38,6 +44,11 @@ while IFS=$'\t' read -r added deleted path; do
   fi
   areas["$area"]=1
 done <<< "$diff_output"
+
+# Satellite: drop `.claude` unless it is the only area staged.
+if [[ -n "${areas[.claude]:-}" ]] && (( ${#areas[@]} > 1 )); then
+  unset 'areas[.claude]'
+fi
 
 area_count=${#areas[@]}
 area_list=$(printf '%s ' "${!areas[@]}")

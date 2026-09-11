@@ -193,3 +193,33 @@ test("hook: counts a top-level file (no slash) as area '_root' alongside another
   expect(r.status).not.toBe(0);
   expect(r.stderr).toMatch(/slice-guard/);
 });
+
+test("hook: .claude doc + its verifying test in another area passes (satellite)", () => {
+  runInstall();
+  stageFiles([
+    [".claude/agents/merger.md", "# merger\n"],
+    ["bin/ux-alive.ts", "x\n"],
+    ["bin/ux-alive.test.ts", "t\n"],
+  ]);
+  const r = commitViaShim();
+  expect(r.status).toBe(0);
+});
+
+test("hook: .claude-only commit still counts as one area and passes", () => {
+  runInstall();
+  stageFiles([[".claude/agents/merger.md", "# merger\n"]]);
+  const r = commitViaShim();
+  expect(r.status).toBe(0);
+});
+
+test("hook: .claude satellite does not excuse a genuine two-area breach", () => {
+  runInstall();
+  stageFiles([
+    [".claude/agents/merger.md", "# merger\n"],
+    ["bin/x.ts", "x\n"],
+    ["src/y.ts", "y\n"],
+  ]);
+  const r = commitViaShim();
+  expect(r.status).not.toBe(0);
+  expect(r.stderr).toMatch(/2 top-level areas/);
+});
