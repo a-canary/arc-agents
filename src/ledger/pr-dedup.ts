@@ -48,7 +48,10 @@ export function checkPrDuplicate(
 // Matches the GhRunner idiom in worktree-reaper.ts.
 export type CmdRunner = (cmd: string, args: string[]) => { ok: boolean; out: string };
 export const defaultCmdRunner: CmdRunner = (cmd, args) => {
-  const r = spawnSync(cmd, args, { encoding: "utf8" });
+  // Advisory runs on the synchronous create path, so a hung gh (dead network,
+  // captive portal, auth prompt) must not stall the insert. Timeout => !ok =>
+  // caller falls back to the stale cache, or to no hits.
+  const r = spawnSync(cmd, args, { encoding: "utf8", timeout: 10_000 });
   return { ok: r.status === 0, out: ((r.stdout ?? "") + (r.stderr ?? "")).trim() };
 };
 

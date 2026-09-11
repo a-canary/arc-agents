@@ -7,6 +7,7 @@ import {
   fetchOpenPrs,
   getOpenPrIndex,
   slugForProject,
+  defaultCmdRunner,
   type GhRunner,
   type OpenPr,
 } from "./pr-dedup";
@@ -143,3 +144,12 @@ test("slugForProject parses an https origin url", () => {
 test("slugForProject returns null when the repo has no origin", () => {
   expect(slugForProject("nope", () => ({ ok: false, out: "" }))).toBeNull();
 });
+
+// The advisory runs on the synchronous create path: a command that never
+// returns must not stall the insert. Fails (hangs) if the spawn timeout goes.
+test("defaultCmdRunner gives up on a hanging command instead of blocking", () => {
+  const started = Date.now();
+  const r = defaultCmdRunner("sleep", ["120"]);
+  expect(r.ok).toBe(false);
+  expect(Date.now() - started).toBeLessThan(30_000);
+}, 40_000);
