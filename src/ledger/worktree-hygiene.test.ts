@@ -10,6 +10,7 @@ const base: WorktreeFacts = {
   linkedRowState: "none",
   abandonDays: 14,
   headReachable: true,
+  worktreeAgeDays: 30,
 };
 
 // Table-driven: one case per rule, plus priority and healthy→null.
@@ -105,5 +106,48 @@ describe("classifyWorktree reachability", () => {
     const v = classifyWorktree({ ...abandoned, headReachable: true });
     expect(v?.action).toBe("cleanup");
     expect(v?.reason).not.toContain("archive before removing");
+  });
+});
+
+// Regression: the abandonment gate must measure the age of the WORKTREE, not the
+// age of its HEAD commit. A worker that branches off main and makes zero commits
+// inherits main's tip date, so on a repo with a stale main every fresh worktree
+// scored as "abandoned 54d ago" minutes after creation — the hygiene sweep then
+// filed cleanup tickets against worktrees that were still in use, including its
+// own. See docs analysis 2026-09-11 (48% of lifetime cleanup rows were self-made).
+describe("abandonment gates on worktree age, not HEAD-commit age", () => {
+  // pipeliner's real numbers: main tip 54d old, worktree created this morning.
+  const freshOnStaleMain: WorktreeFacts = {
+    ...base,
+    lastCommitAgeDays: 54,
+    worktreeAgeDays: 0,
+    linkedRowState: "none",
+  };
+
+  test("fresh worktree on a stale-main repo is not abandoned", () => {
+    expect(classifyWorktree(freshOnStaleMain)).toBeNull();
+  });
+
+  test("still abandoned once the directory itself ages past the gate", () => {
+    const v = classifyWorktree({ ...freshOnStaleMain, worktreeAgeDays: 20 });
+    expect(v?.action).toBe("cleanup");
+  });
+
+  test("a young worktree is never reaped no matter how old HEAD is", () => {
+    for (const headAge of [14, 54, 365]) {
+      expect(classifyWorktree({ ...freshOnStaleMain, lastCommitAgeDays: headAge })).toBeNull();
+    }
+  });
+
+  // Both clocks must pass: an old directory whose HEAD is recent means someone
+  // committed to it lately, so it is live work regardless of directory age.
+  test("old directory with a recent commit is not abandoned", () => {
+    const v = classifyWorktree({ ...base, worktreeAgeDays: 90, lastCommitAgeDays: 1, linkedRowState: "none" });
+    expect(v).toBeNull();
+  });
+
+  test("a live row still wins over both clocks", () => {
+    const v = classifyWorktree({ ...base, worktreeAgeDays: 90, lastCommitAgeDays: 90, linkedRowState: "live" });
+    expect(v).toBeNull();
   });
 });

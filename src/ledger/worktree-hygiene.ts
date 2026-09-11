@@ -14,6 +14,11 @@ export type WorktreeFacts = {
   dirtyFiles: number;
   unpushedCommits: number;
   lastCommitAgeDays: number;
+  // Age of the worktree DIRECTORY itself. Distinct from lastCommitAgeDays: a
+  // worker that branches off main and commits nothing inherits main's tip date,
+  // so on a repo with a stale main HEAD age says nothing about how long this
+  // worktree has existed. Abandonment needs the directory clock.
+  worktreeAgeDays: number;
   branch: string;
   linkedRowState: "live" | "terminal" | "none";
   abandonDays: number;
@@ -39,13 +44,17 @@ export function classifyWorktree(f: WorktreeFacts): WorktreeVerdict | null {
   if (f.unpushedCommits > 0 && f.linkedRowState === "live") {
     return { action: "finish", reason: `${f.unpushedCommits} unpushed commit(s) on a live row` };
   }
-  if (f.lastCommitAgeDays >= f.abandonDays && f.linkedRowState !== "live") {
+  // Both clocks must pass the gate. Directory age alone would reap a long-lived
+  // worktree someone committed to yesterday; HEAD age alone reaps worktrees
+  // created minutes ago on any repo whose default branch has gone quiet.
+  const staleEnough = f.lastCommitAgeDays >= f.abandonDays && f.worktreeAgeDays >= f.abandonDays;
+  if (staleEnough && f.linkedRowState !== "live") {
     const orphan = f.headReachable
       ? ""
       : " — HEAD is on no branch and not an ancestor of the default branch: archive before removing";
     return {
       action: "cleanup",
-      reason: `abandoned: last commit ${f.lastCommitAgeDays}d ago (>= ${f.abandonDays}d), linked row ${f.linkedRowState}${orphan}`,
+      reason: `abandoned: worktree ${f.worktreeAgeDays}d old, last commit ${f.lastCommitAgeDays}d ago (both >= ${f.abandonDays}d), linked row ${f.linkedRowState}${orphan}`,
     };
   }
   if (f.dirtyFiles > 0 || f.unpushedCommits > 0) {

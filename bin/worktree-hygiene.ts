@@ -19,7 +19,7 @@
 // Failure posture (same as recovery-sweep): one bad worktree/repo logs and
 // continues; the sweep never aborts. Exit 0 ok, 2 config error.
 
-import { readFileSync, existsSync, appendFileSync } from "node:fs";
+import { readFileSync, existsSync, appendFileSync, statSync } from "node:fs";
 import { spawnSync } from "node:child_process";
 import { join } from "node:path";
 import { parse as parseYaml } from "yaml";
@@ -92,6 +92,7 @@ export type CollectedFacts = {
   // "main..HEAD (no upstream — ahead-of-default, not unpushed-to-branch)"
   unpushedBasis: string;
   lastCommitAgeDays: number;
+  worktreeAgeDays: number;
   // HEAD is an ancestor of the default branch. False ⇒ removing the worktree
   // orphans its commits, so the ticket must not suggest `remove --force`.
   headReachable: boolean;
@@ -117,6 +118,7 @@ export function collectWorktreeFacts(
     unpushedCommits: 0,
     unpushedBasis: "(prunable — worktree dir gone)",
     lastCommitAgeDays: 0,
+    worktreeAgeDays: 0,
     headReachable: true,
   };
   if (entry.prunable) return empty; // dir gone — nothing to read
@@ -125,6 +127,7 @@ export function collectWorktreeFacts(
   let dirtyTop: string[] = [];
   let unpushedCommits = 0;
   let lastCommitAgeDays = 0;
+  let worktreeAgeDays = 0;
 
   const status = run(["-C", entry.path, "status", "--porcelain"]);
   if (status.rc === 0) {
@@ -137,6 +140,18 @@ export function collectWorktreeFacts(
   if (last.rc === 0) {
     const ts = Number(last.stdout.trim());
     if (Number.isFinite(ts) && ts > 0) lastCommitAgeDays = Math.max(0, Math.floor((now - ts) / DAY));
+  }
+
+  // Directory age. .git in a worktree is a file written once at `git worktree
+  // add`, so its mtime is the creation time and does not move when the tree is
+  // worked in — exactly the "how long has this existed" clock the gate wants.
+  // Unreadable → 0, which fails the gate and keeps the worktree. Never reap on
+  // a fact we could not read.
+  try {
+    const st = statSync(join(entry.path, ".git"));
+    worktreeAgeDays = Math.max(0, Math.floor((now - st.mtimeMs / 1000) / DAY));
+  } catch {
+    worktreeAgeDays = 0;
   }
 
   // Best-effort fetch so origin refs reflect remote state at scan time.
@@ -185,7 +200,7 @@ export function collectWorktreeFacts(
   const ancestor = run(["-C", entry.path, "merge-base", "--is-ancestor", "HEAD", defaultBranch(entry.path, run)]);
   const headReachable = ancestor.rc === 0;
 
-  return { entry, dirtyFiles, dirtyTop, unpushedCommits, unpushedBasis, lastCommitAgeDays, headReachable };
+  return { entry, dirtyFiles, dirtyTop, unpushedCommits, unpushedBasis, lastCommitAgeDays, worktreeAgeDays, headReachable };
 }
 
 // ---- ledger join + writer ----------------------------------------------------
@@ -239,6 +254,7 @@ export function findingBody(
     `- branch: ${e.branch || "(detached)"}`,
     `- HEAD: ${e.head || "(unknown)"}`,
     `- last commit: ${facts.lastCommitAgeDays}d ago`,
+    `- worktree age: ${facts.worktreeAgeDays}d`,
     `- dirty files: ${facts.dirtyFiles}`,
   ];
   if (facts.dirtyTop.length > 0) lines.push(...facts.dirtyTop.map((p) => `  - ${p}`));
@@ -319,6 +335,7 @@ export function runWorktreeHygiene(opts: {
           dirtyFiles: facts.dirtyFiles,
           unpushedCommits: facts.unpushedCommits,
           lastCommitAgeDays: facts.lastCommitAgeDays,
+          worktreeAgeDays: facts.worktreeAgeDays,
           branch: entry.branch,
           linkedRowState: linked.state,
           abandonDays: opts.abandonDays,
