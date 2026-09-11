@@ -19,7 +19,7 @@ import { loadThreadContext } from "../src/worker/thread-context";
 import { loadConfig, pickModulesForHitl } from "../src/ledger/ux-config";
 import { hitlKind, type HitlKind } from "../src/ledger/hitl-schemas";
 import { buildPayload, insertHitlPrompt } from "../src/ledger/hitl-prompt";
-import { checkDuplicate, type ExistingRow } from "../src/ledger/hygiene-dedup";
+import { checkDuplicate, checkTaskDuplicate, type ExistingRow, type ExistingTaskRow } from "../src/ledger/hygiene-dedup";
 import { parseFollowupTable } from "../src/ledger/followup-table";
 import { checkInPlaceGuard, checkMergeGuard } from "../src/ledger/merge-guard";
 import { loadConfig as loadAppConfig, getAliasCommands } from "../src/config/load";
@@ -200,6 +200,20 @@ switch (cmd) {
     const pool = input.pool ?? null;
 
     const db = openWithMigrate(getFlag("db"));
+
+    // Advisory dedup: surface open rows in the same project that name any of
+    // the same source paths (or have a near-identical title). Three workers
+    // were once dispatched at one defect because nothing checked. This does
+    // NOT block the insert — see hygiene-dedup.ts for why advisory-only.
+    const dupRows = db
+      .query<ExistingTaskRow, [string]>(
+        `SELECT id, title, tier, state, project, COALESCE(body_md,'') AS body, NULL AS skill
+         FROM issues
+         WHERE project=? AND state IN ('ready','blocked','wip','claimed','review')`,
+      )
+      .all(project);
+    const dupHits = checkTaskDuplicate({ title, body, project }, dupRows);
+
     const id = mintId(db, title);
     if (tier !== null && pool !== null) {
       db.run(
@@ -230,7 +244,18 @@ switch (cmd) {
       `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
       [id, getFlag("agent") ?? "cli", title],
     );
-    out({ id, state, thread_id: thread });
+    if (dupHits.length > 0) {
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'note', ?, ?)`,
+        [
+          id,
+          getFlag("agent") ?? "cli",
+          `POSSIBLE DUPLICATE of ${dupHits.length} open row(s): ` +
+            dupHits.map((h) => `${h.existingId} (${h.reason}: ${h.detail})`).join("; "),
+        ],
+      );
+    }
+    out({ id, state, thread_id: thread, possible_duplicates: dupHits });
     break;
   }
 
