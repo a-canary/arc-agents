@@ -171,12 +171,15 @@ Do NOT push, do NOT merge. The branch stays as-is on the remote.
    ```
 
 3. Delegate to bookie to mark the originating PR task as blocked on the new follow-up:
+   Two calls, in this order — `update` refuses `--blocked-by`, and
+   `repoint-blocked-by` refuses a row that is not already `blocked`:
    ```
    bookie: update <pr-task-id>
      --state blocked
-     --blocked-by <new-followup-id>
      --evidence "clarity gate denied; opened <new-followup-id> for remediation"
      --agent bookie
+
+   bookie: repoint-blocked-by <pr-task-id> <new-followup-id> --agent bookie
    ```
 
 4. Post a brief PR comment summarizing the verdict (so the worker who reads the PR sees it):
@@ -221,12 +224,17 @@ So a hard refusal is the same two-step you already use for soft-deny, with
    lane — the operator decides on the page, and approve/reject is the cascade.
 
 2. Block the originating PR task on it:
+   Two calls, in this order. `ledger update` hard-refuses `--blocked-by`
+   (it silently dropped the value, masking failed decompositions), and
+   `repoint-blocked-by` refuses a row that is not already `blocked` — so
+   the state flip must land first or the HITL row ends up orphaned:
    ```
    bookie: update <pr-task-id>
      --state blocked
-     --blocked-by <new-hitl-id>
      --evidence "<gate> FAIL; opened <new-hitl-id> for operator decision"
      --agent bookie
+
+   bookie: repoint-blocked-by <pr-task-id> <new-hitl-id> --agent bookie
    ```
 
 If the refusal needs more than a paragraph of context (a diff, a gate log, a
