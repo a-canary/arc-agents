@@ -25,7 +25,7 @@ Do **not** use this skill to debug a single failed row — use `triage-failed` f
 
 ## Deliverable shape
 
-1. A short markdown report under `~/vault/agents/director/inbox/analysis-<unix-ts>.md` containing:
+1. A short markdown report under `~/vault/director/inbox/analysis-<unix-ts>.md` containing:
    - **Window:** time range + row count examined.
    - **Pattern(s) found:** each pattern named, with ≥3 row-ids as evidence.
    - **Root cause hypothesis:** one paragraph per pattern.
@@ -52,7 +52,7 @@ Do **not** use this skill to debug a single failed row — use `triage-failed` f
 **Step 1 — Stage the analysis report.**
 
 ```bash
-TARGET_DIR="~/vault/agents/director/inbox"
+TARGET_DIR="~/vault/director/inbox"
 REPORT_PATH="$TARGET_DIR/analysis-<unix-ts>.md"
 mkdir -p "$TARGET_DIR"
 # ... write the report to $REPORT_PATH
