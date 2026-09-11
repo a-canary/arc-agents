@@ -1,5 +1,5 @@
 import { describe, expect, test, beforeAll, afterAll } from "bun:test";
-import { mkdtempSync, rmSync } from "node:fs";
+import { mkdtempSync, rmSync, writeFileSync, utimesSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { execFileSync } from "node:child_process";
@@ -377,4 +377,46 @@ describe("unpushed count end-to-end (real git, bare remote)", () => {
       expect(f.unpushedCommits).toBe(1);
       expect(f.unpushedBasis).toContain("post-fetch");
     });
+});
+
+// Regression: worktreeAgeDays must come from the real `.git` mtime on disk.
+// The fixture-repo test above cannot catch a break here — its frozen NOW sits
+// years ahead of wall-clock, so every freshly created fixture dir reads as
+// ancient and passes the gate no matter what the collector computes.
+describe("collectWorktreeFacts worktree age", () => {
+  const mkWorktree = (ageDays: number) => {
+    const dir = mkdtempSync(join(tmpdir(), "wt-age-"));
+    const gitFile = join(dir, ".git");
+    writeFileSync(gitFile, "gitdir: /nowhere\n");
+    const t = new Date((NOW - ageDays * 86400) * 1000);
+    utimesSync(gitFile, t, t);
+    return dir;
+  };
+  const run: RunGit = () => ({ rc: 1, stdout: "" });
+  const entryAt = (path: string): WorktreeEntry => ({
+    path, branch: "feature", detached: false, prunable: false, head: "abc", isMain: false,
+  });
+
+  test("reads directory age from .git mtime", () => {
+    const dir = mkWorktree(21);
+    try {
+      expect(collectWorktreeFacts(entryAt(dir), run, NOW).worktreeAgeDays).toBe(21);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  test("a worktree created moments ago reads as 0 days old", () => {
+    const dir = mkWorktree(0);
+    try {
+      expect(collectWorktreeFacts(entryAt(dir), run, NOW).worktreeAgeDays).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  // Fail-safe: never reap on a fact we could not read. 0 fails the abandon gate.
+  test("unreadable .git → 0, which keeps the worktree", () => {
+    expect(collectWorktreeFacts(entryAt("/nonexistent/worktree"), run, NOW).worktreeAgeDays).toBe(0);
+  });
 });
