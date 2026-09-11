@@ -20,6 +20,8 @@
 //       row WITH at-risk commits is PRESERVED (outcome=has-commits) so the
 //       human can decide salvage. blocked is still excluded — decomposition parents need
 //       their worktree until children resolve.
+//       Merged rows are gated on hygiene_complete=1 (021) for a 6h grace
+//       period; past that the gate is dropped — see HYGIENE_GRACE_S.
 //   (c) 7-day backstop      — backstopPurgeWorktrees() below: a disk-scan for
 //       orphan worktrees that no live row references (the pre-startup sweep
 //       nulled/cancelled their rows, so (a)/(b) can never reach them).
@@ -185,6 +187,13 @@ function ghPrMerged(branch: string, slug: string | null, runner: GhRunner): bool
   }
 }
 
+// Grace period for the hygiene gate on merged rows. A merged row whose
+// hygiene-emit never ran keeps hygiene_complete=0 forever; after this long
+// the owning worker session is certainly dead, so the gate is dropped and the
+// worktree reaped normally. 6h > the factory's 4h worker reap age, so a live
+// worker can never have its worktree pulled out from under it.
+const HYGIENE_GRACE_S = 6 * 60 * 60;
+
 export function reapWorktrees(db: Db): ReapedWorktree[] {
   // (a) merged + (b) failed/cancelled. blocked stays excluded (decomposition
   // parents). ready/wip/claimed/review are live — never reaped here.
@@ -192,13 +201,21 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
   // finish before the worktree is reaped so workers can still emit hygiene
   // followups in the same session. Failed/cancelled rows have no hygiene phase
   // and are reaped unconditionally.
+  //
+  // HYGIENE_GRACE_S backstop: a worker that merges and never runs hygiene-emit
+  // at all leaves hygiene_complete=0 forever, so the gate above would pin the
+  // worktree permanently (34 such rows observed 2026-09-11, oldest 66h). The
+  // gate is a grace period for the still-running session, not a consent
+  // requirement — once the session is long gone the worktree is scratch like
+  // any other merged row. Reap it.
   const rows = db
     .query(
       `SELECT id, state, worktree_path, branch FROM issues
        WHERE state IN ('merged','failed','cancelled') AND worktree_path IS NOT NULL
-         AND (state != 'merged' OR hygiene_complete = 1)`,
+         AND (state != 'merged' OR hygiene_complete = 1
+              OR updated_at <= strftime('%s','now') - ?)`,
     )
-    .all() as { id: string; state: string; worktree_path: string; branch: string | null }[];
+    .all(HYGIENE_GRACE_S) as { id: string; state: string; worktree_path: string; branch: string | null }[];
 
   const reaped: ReapedWorktree[] = [];
   for (const row of rows) {

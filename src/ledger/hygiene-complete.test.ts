@@ -118,3 +118,27 @@ test("reapWorktrees reaps cancelled rows regardless of hygiene_complete", () => 
   const ids = reaped.map((r) => r.issue_id);
   expect(ids).toContain("t-cancelled");
 });
+
+// ── Grace-period backstop: merged + hygiene_complete=0 forever ───────────────
+// A worker that merges and never runs hygiene-emit leaves hygiene_complete=0
+// permanently, which would pin the worktree forever. After HYGIENE_GRACE_S the
+// reaper drops the gate.
+
+test("reapWorktrees reaps a merged hygiene_complete=0 row older than the grace period", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, hygiene_complete, updated_at)
+     VALUES ('t-stale','p','t','b','quality','merged','task','/tmp/does-not-exist-stale',0, strftime('%s','now') - 7*60*60)`,
+  );
+  const reaped = reapWorktrees(db);
+  expect(reaped.map((r) => r.issue_id)).toContain("t-stale");
+});
+
+test("reapWorktrees still skips a merged hygiene_complete=0 row inside the grace period", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, hygiene_complete, updated_at)
+     VALUES ('t-fresh','p','t','b','quality','merged','task','/tmp/does-not-exist-fresh',0, strftime('%s','now') - 60)`,
+  );
+  expect(reapWorktrees(db).map((r) => r.issue_id)).not.toContain("t-fresh");
+});
