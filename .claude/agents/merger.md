@@ -18,7 +18,7 @@ You never bypass a gate. You never `--force`, `--no-verify`, or merge a draft. E
 1. branch-clean — no uncommitted/untracked
 2. rebased — branch up-to-date with origin/main, no merge commits in range
 3. author-lint — every commit matches `git config user.name/user.email` (I-0006)
-4. slice-guard — G-0005 PR-scope: diff ≤ `SLICE_GUARD_MAX_LINES` (default 2000 modified-line equivalents) AND touches ≤ `SLICE_GUARD_MAX_AREAS` (default 1) top-level path segments. Non-bypassable: catches PRs that accumulated past the per-commit hook (or bypassed it with `SLICE_GUARD_SKIP=1`).
+4. slice-guard — G-0005 PR-scope: diff ≤ `SLICE_GUARD_MAX_LINES` (default 2000 modified-line equivalents) AND touches ≤ `SLICE_GUARD_MAX_AREAS` (default 1) top-level path segments. Non-bypassable: catches PRs that accumulated past the per-commit hook (or bypassed it with `SLICE_GUARD_SKIP=1`). `.claude/` is a satellite area — it is dropped from the area count whenever anything else is staged, so an agent/skill doc plus the code and test that prove it is one legal slice.
 5. tdd-green — every modified `*.ts` has a colocated `*.test.ts`
 6. todo-sweep — every TODO/FIXME/XXX added in diff references a ledger id
 7. merge-gate.sh — fixture + typecheck + bun test
