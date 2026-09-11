@@ -6,6 +6,7 @@ import { Database } from "bun:sqlite";
 import { readFileSync } from "node:fs";
 import { open, openWithMigrate, mintId, shortId } from "../src/ledger/db";
 import { migrate } from "../src/ledger/migrate";
+import { resolveEventAgent } from "../src/ledger/event-agent";
 import { validateCreate, validateDecompose, validateStateTransition, validateProjectLowerCase, type CreateInput, TIER_VALUES, POOL_VALUES, AGENT_VALUES, TYPE_VALUES, type Tier, type Pool, type Agent, type Type } from "../src/ledger/bookie-validator";
 import { routeProjectFromBody } from "../src/ledger/hygiene-project-route";
 import { verifyMergeTruth, defaultRunner } from "../src/ledger/merge-truth";
@@ -358,7 +359,7 @@ switch (cmd) {
     if (parentRow.state === "merged" || parentRow.state === "cancelled") {
       die(`cannot decompose from terminal state '${parentRow.state}'`);
     }
-    const agent = getFlag("agent") ?? "bookie";
+    const agent = resolveEventAgent(getFlag("agent"));
     const created: { id: string; title: string }[] = [];
     db.exec("BEGIN");
     try {
@@ -901,7 +902,7 @@ switch (cmd) {
     const anchorRepo = getFlag("anchor-repo");
     const anchorBranch = getFlag("anchor-branch");
     const anchorCommit = getFlag("anchor-commit");
-    const emittedBy = getFlag("emitted-by") ?? getFlag("agent") ?? "bookie";
+    const emittedBy = resolveEventAgent(getFlag("emitted-by") ?? getFlag("agent"));
 
     if (cls === "taste" && recommended === undefined)
       die("--recommended required for class=taste");
@@ -1076,7 +1077,7 @@ switch (cmd) {
     if (rows.length === 0) die(`no follow-up table parsed from ${ap}`);
     const db = openWithMigrate(getFlag("db"));
     const observed = getFlag("observed-in-task");
-    const agent = getFlag("agent") ?? "bookie";
+    const agent = resolveEventAgent(getFlag("agent"));
     // Empty/whitespace --project must NOT propagate empty to the followup rows
     // (same trap as create + plan + chat-reply — analysis-1783934070.md Pattern 3).
     const project = getFlag("project")?.trim() || "arc-agents";
@@ -2004,6 +2005,8 @@ function printHelp(): void {
                                        --agent/--project patch the row (metadata update, no
                                        --state). With --state, --agent names the event author;
                                        use --agent-set to reassign the row's agent alongside a state change.
+                                       NOTE: --agent is self-declared free text, not provenance --
+                                       it records what the caller typed, not who ran. Unset = 'cli'.
   event <id> <kind> <payload>          append event row
   hitl emit --class taste|impact --kind <K> --prompt <q> [--option ...]
             [--recommended X --timeout-sec N --divergence forward_fix|replay]
