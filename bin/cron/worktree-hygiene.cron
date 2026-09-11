@@ -1,0 +1,15 @@
+# arc-agents cron entries
+# Format: minute hour day month weekday
+#
+# Install (idempotent):
+#   crontab -l | grep -v 'worktree-hygiene' | { cat; cat bin/cron/worktree-hygiene.cron; } | crontab -
+#
+# Restore / uninstall:
+#   crontab -l | grep -v 'worktree-hygiene-tick' | crontab -
+
+# worktree-hygiene — nightly worktree sweep; files ledger rows for abandoned /
+# dirty / unpushed worktrees. Runs via the tick wrapper, NOT via
+# `bun bin/worktree-hygiene.ts` directly: the wrapper runs COMMITTED code from a
+# pinned ref in a dedicated checkout, so the sweep no longer executes whatever
+# branch ~/repos/arc-agents happens to be parked on. See the wrapper header.
+0 4 * * * /home/aaron/repos/arc-agents/bin/worktree-hygiene-tick.sh >> /home/aaron/.cache/arc-worktree-hygiene.log 2>&1
