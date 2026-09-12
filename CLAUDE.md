@@ -31,6 +31,32 @@ arc-agents' live crontab entries are managed marker blocks (bin/cron/*.cron). Ed
 
 CLI verbs (see `I-0001`): `init, create, claim, update, event, list, show, tick, spawn-ready, compact, vacuum`.
 
+### Terminal-state invocations (verbatim — don't re-derive via `--help`)
+
+`$L` = `bun bin/ledger.ts --db ~/vault/ledger.db`. A `merged` row needs both a
+merge-truth route — one of `--pr`, `--local-merged-sha`, `--in-place` (`--pr` and
+`--in-place` are mutually exclusive) — and a `diff_review` event, unless `--no-diff`
+is supplied.
+
+```
+# merged, real diff, PR route — log the review first or the merge is refused
+$L event <id> diff_review '{"reviewer_identity":"reviewer-subagent","reviewed_sha":"<7-40 hex>","verdict":"pass"}' --agent developer
+$L update <id> --state merged --pr <url> --evidence "bun test 214 pass; typecheck clean" --agent developer
+
+# merged, real diff, merged locally (no PR) — same diff_review prerequisite
+$L update <id> --state merged --local-merged-sha "$(git rev-parse HEAD)" --evidence "<receipt>" --agent developer
+
+# merged, zero diff (analysis/hygiene tasks) — --no-diff and --in-place each REQUIRE --evidence; --in-place caps it at 280 chars
+$L update <id> --state merged --in-place --no-diff --evidence "analysis-only task; report written to inbox, zero code diff" --agent developer
+
+# failed — evidence is the whole point of the row
+$L update <id> --state failed --evidence "bun test: 3 failures in foo.test.ts; root cause unknown" --agent developer
+```
+
+`update` rejects unknown flags rather than dropping them, so a typo fails loudly
+instead of merging a row with no evidence. `--blocked-by` is not honoured on
+`update` — use `decompose`.
+
 Install bins on PATH (only after merge to main, per `I-0005`):
 ```
 bun link && bun link arc-agents      # registers ledger, wait-for-ledger
