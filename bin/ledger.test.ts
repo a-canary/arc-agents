@@ -2741,3 +2741,60 @@ test("non-exec worker transition and human-actor claim on type=HITL stay open", 
     expect((h as { updated?: boolean }).updated).toBe(true); // captain works his own row
   } finally { cleanup(); }
 });
+
+test("update --body replaces body_md, emits a note event, and touches nothing else", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "b", "--body", "old body", "--acceptance", "acc")) as {
+      id: string;
+    };
+    const before = (await run(db, "show", c.id)) as { issue: Record<string, unknown> };
+    await run(db, "update", c.id, "--body", "new body");
+    const after = (await run(db, "show", c.id)) as {
+      issue: Record<string, unknown>;
+      events: { kind: string; payload_md: string }[];
+    };
+    expect(after.issue.body_md).toBe("new body");
+    for (const col of ["state", "hitl", "evidence_md", "title", "type", "kind", "acceptance_md", "branch", "worktree_path", "pr_url", "parent_id", "project", "hygiene_complete"]) {
+      expect(after.issue[col]).toEqual(before.issue[col]);
+    }
+    const note = after.events.find((e) => e.kind === "note" && e.payload_md.startsWith("body_md replaced"));
+    expect(note).toBeDefined();
+    expect(note!.payload_md).toContain("old body");
+    expect(note!.payload_md).toContain("new body");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update --append-body appends instead of replacing", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "b", "--body", "orig")) as {
+      id: string;
+    };
+    await run(db, "update", c.id, "--append-body", "addendum");
+    const shown = (await run(db, "show", c.id)) as { issue: { body_md: string } };
+    expect(shown.issue.body_md).toBe("orig\n\naddendum");
+  } finally {
+    cleanup();
+  }
+});
+
+test("update rejects --body together with --append-body", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    await run(db, "init");
+    const c = (await run(db, "create", "--kind", "task", "--type", "mvp", "--title", "b")) as {
+      id: string;
+    };
+    const r = await runRaw(db, "update", c.id, "--body", "x", "--append-body", "y");
+    expect(r.exitCode).not.toBe(0);
+    const shown = (await run(db, "show", c.id)) as { issue: { body_md: string | null } };
+    expect(shown.issue.body_md).toBe("");
+  } finally {
+    cleanup();
+  }
+});
