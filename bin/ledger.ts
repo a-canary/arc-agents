@@ -198,6 +198,12 @@ switch (cmd) {
     // (tier_unset / pool_unset) so unchanged callers stay compatible.
     const tier = input.tier ?? null;
     const pool = input.pool ?? null;
+    // type=HITL is a human-decision row: no agent may resolve it. The `hitl`
+    // column is what spawn-ready and cross-repo-gate filter on, but it was
+    // never set here, so such rows landed at the schema default hitl=0 and
+    // stayed claimable until someone ran `update --hitl 1` by hand (live:
+    // human-gate-worktree-removal-ownership-re, claimed 38s after creation).
+    const hitl = type === "HITL" ? 1 : 0;
 
     const db = openWithMigrate(getFlag("db"));
 
@@ -217,27 +223,27 @@ switch (cmd) {
     const id = mintId(db, title);
     if (tier !== null && pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, pool)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, pool],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, pool, hitl)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, pool, hitl],
       );
     } else if (tier !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, tier, hitl)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, tier, hitl],
       );
     } else if (pool !== null) {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, pool)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, pool],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, pool, hitl)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, pool, hitl],
       );
     } else {
       db.run(
-        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module)
-         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
-        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule],
+        `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, thread_id, source_module, hitl)
+         VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)`,
+        [id, project, parent, title, body, acceptance, type, state, kind, blockedBy, thread, sourceModule, hitl],
       );
     }
     db.run(
@@ -419,9 +425,9 @@ switch (cmd) {
         const childProject = spec.project ?? parentRow.project;
         const childBody = spec.body ?? "";
         db.run(
-          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent)
-           VALUES (?, ?, ?, ?, ?, '', ?, 'ready', 'task', NULL, ?, ?, ?)`,
-          [id, childProject, parent, spec.title, childBody, childType, childTier, childPool, childAgent],
+          `INSERT INTO issues (id, project, parent_id, title, body_md, acceptance_md, type, state, kind, blocked_by, tier, pool, agent, hitl)
+           VALUES (?, ?, ?, ?, ?, '', ?, 'ready', 'task', NULL, ?, ?, ?, ?)`,
+          [id, childProject, parent, spec.title, childBody, childType, childTier, childPool, childAgent, childType === "HITL" ? 1 : 0],
         );
         db.run(
           `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, 'created', ?, ?)`,
@@ -1304,9 +1310,9 @@ switch (cmd) {
     // --pool X: filter by pool column (preferred). --type X: deprecated alias.
     const pool = getFlag("pool") ?? getFlag("type");
     const db = openWithMigrate(getFlag("db"));
-    // hitl=0 mirrors buildClaimSQL (src/ledger/claim.ts) — a ready row that
-    // can never be claimed must not appear in spawn-ready output.
-    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND hitl=0 AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
+    // hitl=0 AND type <> 'HITL' mirrors buildClaimSQL (src/ledger/claim.ts) —
+    // a ready row that can never be claimed must not appear in spawn-ready output.
+    const sql = `SELECT id, kind, type, title FROM issues WHERE state='ready' AND hitl=0 AND type <> 'HITL' AND kind IN (${CLAIMABLE_KINDS_SQL}) ${
       pool ? "AND pool=?" : ""
     } ORDER BY ${SORT_KEY_SQL}`;
     out(pool ? db.query(sql).all(pool) : db.query(sql).all());

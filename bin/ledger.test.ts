@@ -2798,3 +2798,70 @@ test("update rejects --body together with --append-body", async () => {
     cleanup();
   }
 });
+
+// ── type=HITL rows must land hitl=1 at insert ─────────────────────────────
+// Regression: `create --type HITL` left hitl=0, so a human-decision row was
+// claimable by the generic ready queue until someone ran `update --hitl 1`.
+// Live incident: human-gate-worktree-removal-ownership-re, claimed 38s after
+// creation. claim.ts also guards on `type <> 'HITL'`; this covers the column
+// itself, which spawn-ready and cross-repo-gate filter on.
+describe("HITL derivation at insert", () => {
+  test("create --type HITL lands hitl=1 and stays out of both claim and spawn-ready", async () => {
+    const { db, cleanup } = freshDb();
+    try {
+      const made = (await run(db, "create", "--kind", "task", "--type", "HITL",
+        "--title", "operator must decide")) as { id: string };
+      const conn = new Database(db);
+      const row = conn.query<{ hitl: number }, [string]>(
+        "SELECT hitl FROM issues WHERE id=?").get(made.id);
+      expect(row?.hitl).toBe(1);
+      conn.close();
+
+      const ready = (await run(db, "spawn-ready")) as { id: string }[];
+      expect(ready.map((r) => r.id)).not.toContain(made.id);
+
+      const claimed = await runRaw(db, "claim", "w1");
+      expect(claimed.stdout.toString()).not.toContain(made.id);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("create with a non-HITL type still lands hitl=0 and is claimable", async () => {
+    const { db, cleanup } = freshDb();
+    try {
+      const made = (await run(db, "create", "--kind", "task", "--type", "quality",
+        "--title", "ordinary work")) as { id: string };
+      const conn = new Database(db);
+      const row = conn.query<{ hitl: number }, [string]>(
+        "SELECT hitl FROM issues WHERE id=?").get(made.id);
+      expect(row?.hitl).toBe(0);
+      conn.close();
+
+      const ready = (await run(db, "spawn-ready")) as { id: string }[];
+      expect(ready.map((r) => r.id)).toContain(made.id);
+    } finally {
+      cleanup();
+    }
+  });
+
+  test("decompose children inheriting type=HITL land hitl=1", async () => {
+    const { db, cleanup } = freshDb();
+    try {
+      const parent = (await run(db, "create", "--kind", "task", "--type", "HITL",
+        "--title", "human gate parent")) as { id: string };
+      const kids = (await run(db, "decompose", parent.id,
+        "--child", "first question", "--child", "second question")) as { children: { id: string }[] };
+      const conn = new Database(db);
+      for (const k of kids.children) {
+        const row = conn.query<{ hitl: number; type: string }, [string]>(
+          "SELECT hitl, type FROM issues WHERE id=?").get(k.id);
+        expect(row?.type).toBe("HITL");
+        expect(row?.hitl).toBe(1);
+      }
+      conn.close();
+    } finally {
+      cleanup();
+    }
+  });
+});
