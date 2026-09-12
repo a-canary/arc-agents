@@ -76,7 +76,7 @@ git rebase origin/main
 If rebase aborts with conflicts:
 - Check `git status` for files with `UU`.
 - If conflicts are trivial (import lines, lockfiles, single non-logic hunk), resolve them, `git add`, `git rebase --continue`.
-- If non-trivial, `git rebase --abort` and refuse — emit a HITL `--class impact --kind notify` prompt via bookie explaining the conflict, then return.
+- If non-trivial, `git rebase --abort` and refuse — open a `type=HITL` decision row via bookie explaining the conflict (see **Failure → HITL routing**), then return.
 
 ### Step 4 — Run hard pre-merge gate
 
@@ -86,7 +86,7 @@ If rebase aborts with conflicts:
 bin/pre-merge.sh --base origin/main --pr <num>
 ```
 
-Read the SUMMARY. If `Overall: PASS`, proceed to Step 5. If `Overall: FAIL`, refuse — emit a HITL `--class taste --kind ask_choice` prompt via bookie listing the failed gate(s) with options like `["retry","reject","override-hitl"]`, then return.
+Read the SUMMARY. If `Overall: PASS`, proceed to Step 5. If `Overall: FAIL`, refuse — open a `type=HITL` decision row via bookie listing the failed gate(s) with options `retry` / `reject` / `override` (see **Failure → HITL routing**), then return.
 
 ### Step 5 — Soft clarity gate
 
@@ -171,12 +171,15 @@ Do NOT push, do NOT merge. The branch stays as-is on the remote.
    ```
 
 3. Delegate to bookie to mark the originating PR task as blocked on the new follow-up:
+   Two calls, in this order — `update` refuses `--blocked-by`, and
+   `repoint-blocked-by` refuses a row that is not already `blocked`:
    ```
    bookie: update <pr-task-id>
      --state blocked
-     --blocked-by <new-followup-id>
      --evidence "clarity gate denied; opened <new-followup-id> for remediation"
      --agent bookie
+
+   bookie: repoint-blocked-by <pr-task-id> <new-followup-id> --agent bookie
    ```
 
 4. Post a brief PR comment summarizing the verdict (so the worker who reads the PR sees it):
@@ -188,20 +191,72 @@ Return soft-deny ack and stop.
 
 ## Failure → HITL routing
 
-Hard-gate refusals MUST result in a bookie call so the user (via arc-tui or other UX module) sees the block:
+Hard-gate refusals MUST result in a bookie call so the operator sees the block on
+arc-webui `/approvals`.
 
-- **Hard gate FAIL** (tdd-green, todo-sweep, merge-gate, author-lint, rebased, branch-clean): `hitl emit --class taste --kind ask_choice --prompt "PR #<num> failed <gate>; how to proceed?" --option retry --option reject --option override-hitl --recommended retry --agent bookie`
-- **slice-guard FAIL** (oversized or multi-area PR): `hitl emit --class taste --kind ask_choice --prompt "PR #<num> failed slice-guard: <detail>; how to proceed?" --option split --option reject --option override-hitl --recommended split --agent bookie`. Default recommendation is **split** — the worker should land the slice in pieces, one PR per thin-vertical. `override-hitl` exists for legit accumulated changes (e.g. squashing 30 mechanical commits) but should be rare.
-- **Non-trivial conflict**: `hitl emit --class impact --kind notify --prompt "PR #<num> has non-trivial conflict with main on <file>" --agent bookie`
-- **CI red**: `hitl emit --class taste --kind ask_choice --prompt "PR #<num> CI red on <check>" --option retry --option reject --recommended reject --agent bookie`
-- **Draft PR**: just refuse, no HITL — drafts are intentional and not your problem.
-- **Soft clarity FAIL**: NO HITL. The follow-up task IS the resolution path. The worker reads the PR comment + new task and iterates.
+**Do not use `hitl emit`.** `hitl emit` targets the ADR 0002 UX-module lane
+(`hitl_prompts` + `hitl_deliveries`), which requires an *alive* module that
+implements the verb (heartbeat within 300s). Nothing drives those heartbeats —
+`arc-tui` is the only configured module and it last beat on 2026-06-13 — so every
+emit is rejected with `no alive UX module implements '<kind>'` and the ask
+surfaces nowhere. A refusal routed that way strands the PR silently. Confirm for
+yourself any time with `bun bin/ux-alive.ts`.
+
+The live operator-review lane is a `type=HITL` ledger row. arc-webui renders
+these on `/approvals` (`pendingHitlReviews`), and the captain's approve/reject
+cascades back to the ledger (`decideHitlReview`: approve → `merged`, which fires
+the `unblock_dependents` trigger; reject → `cancelled`).
+
+So a hard refusal is the same two-step you already use for soft-deny, with
+`--type HITL`:
+
+1. Open the decision row:
+   ```
+   bookie: create
+     --kind task
+     --type HITL
+     --title "PR #<num>: <gate> FAIL — how to proceed?"
+     --body "PR #<num> failed <gate>.\n\n<detail>\n\nOptions:\n- retry — <what a retry would change>\n- reject — close the PR, work is shelved\n- override — merge anyway (<why that might be legitimate>)\n\nRecommended: <one option>."
+     --parent <pr-originating-task-id-if-known>
+     --agent bookie
+   ```
+   Put the options in the body as a list. There is no `--option` flag on this
+   lane — the operator decides on the page, and approve/reject is the cascade.
+
+2. Block the originating PR task on it:
+   Two calls, in this order. `ledger update` hard-refuses `--blocked-by`
+   (it silently dropped the value, masking failed decompositions), and
+   `repoint-blocked-by` refuses a row that is not already `blocked` — so
+   the state flip must land first or the HITL row ends up orphaned:
+   ```
+   bookie: update <pr-task-id>
+     --state blocked
+     --evidence "<gate> FAIL; opened <new-hitl-id> for operator decision"
+     --agent bookie
+
+   bookie: repoint-blocked-by <pr-task-id> <new-hitl-id> --agent bookie
+   ```
+
+If the refusal needs more than a paragraph of context (a diff, a gate log, a
+comparison table), write it as a self-contained HTML page to
+`~/vault/director/reviews/<file>.html` and reference `/review/<file>.html` in the
+body — arc-webui links it from the row (`reviewArtifactLink`). Otherwise keep it
+inline; most refusals do not need an artifact.
+
+Per-gate bodies:
+
+- **Hard gate FAIL** (tdd-green, todo-sweep, merge-gate, author-lint, rebased, branch-clean): options `retry` / `reject` / `override`, recommend **retry**.
+- **slice-guard FAIL** (oversized or multi-area PR): options `split` / `reject` / `override`, recommend **split** — the worker should land the slice in pieces, one PR per thin-vertical. `override` exists for legit accumulated changes (e.g. squashing 30 mechanical commits) but should be rare.
+- **Non-trivial conflict**: no options to weigh — state the conflicting file(s) and that the branch needs a manual rebase. Recommend **rebase-by-hand**.
+- **CI red**: options `retry` / `reject`, recommend **reject**.
+- **Draft PR**: just refuse, no HITL row — drafts are intentional and not your problem.
+- **Soft clarity FAIL**: NO HITL row. The follow-up task IS the resolution path. The worker reads the PR comment + new task and iterates.
 
 ## Output
 
 After every invocation, return a brief structured ack:
 - On merge: `{ verb: "merge", pr: <num>, url: <pr-url>, squash: true, gates_pass: N, ledger_event: <task-id-or-event-id> }`
-- On hard refuse: `{ verb: "refuse", pr: <num>, reason: "<gate-name>: <detail>", hitl_emitted: <hitl-id-or-none> }`
+- On hard refuse: `{ verb: "refuse", pr: <num>, reason: "<gate-name>: <detail>", hitl_id: <hitl-row-id-or-none> }`
 - On soft-deny: `{ verb: "soft-deny", pr: <num>, reason: "clarity: <one-line>", followup_task: <new-task-id>, blocked_task: <pr-task-id> }`
 
 Do not narrate progress. Do not summarize the diff. The user already has the PR open; brevity is correctness.
