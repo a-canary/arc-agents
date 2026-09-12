@@ -25,7 +25,12 @@ bun bin/ledger.ts <verb>             # invoke CLI without install
 bin/merge-gate.sh                    # pipeline merge gate: fixture + typecheck + secret scan + bun test + write-lane (invariant 7, fail-closed)
 bun bin/cron-install.ts install --dry-run --from <tab> bin/cron/*.cron  # upsert cron manifests as marker blocks
 bun bin/cron-lint.ts [crontab-file]  # fail on unpinned-PATH bun/pi entries
+bun bin/denial-attribute.ts --tally ~/.claude/projects/<proj>/*.jsonl  # attribute permission denials to the tool+args that caused them
 ```
+
+A permission denial's text is constant harness boilerplate ("Reason: Blocked by classifier"), so a denial cluster looks unattributable in a transcript.
+It is not — the denial `tool_result` carries a `tool_use_id` that resolves to the `tool_use` block holding the tool name and full input.
+`denial-attribute.ts` does that join; use it instead of reporting a denial cluster as root-cause-unknown.
 
 arc-agents' live crontab entries are managed marker blocks (bin/cron/*.cron). Edit the manifest and re-run cron-install — never hand-edit a `# >>> name >>>` block in the live crontab. A daily cron-lint entry (06:00 UTC) lints the whole live crontab and reports violations via report-error.sh.
 
