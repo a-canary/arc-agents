@@ -462,6 +462,7 @@ switch (cmd) {
       "--state", "--evidence", "--pr", "--local-merged-sha", "--branch",
       "--worktree", "--hitl", "--agent", "--agent-set", "--project",
       "--pool", "--tier", "--db",
+      "--body", "--append-body",
       "--in-place", "--force-in-place", "--no-diff",
       "--blocked-by", // has its own dedicated refusal below
     ]);
@@ -521,6 +522,16 @@ switch (cmd) {
     if (tierFlag !== undefined && !(TIER_VALUES as readonly string[]).includes(tierFlag)) {
       die(`--tier must be one of: ${TIER_VALUES.join(", ")}`);
     }
+    // --body / --append-body: body_md corrections used to require a raw
+    // `UPDATE issues SET body_md=...`, which bypasses the CLI audit surface.
+    // Replace vs append are mutually exclusive so a correction can't silently
+    // do both.
+    const bodyFlag = getFlag("body");
+    const appendBody = getFlag("append-body");
+    if (bodyFlag !== undefined && appendBody !== undefined) {
+      die("--body (replace) and --append-body are mutually exclusive \u2014 pick one.");
+    }
+
     // --blocked-by is intentionally NOT honoured on `update` — silent drops
     // masked real decomposition attempts as successful no-ops. The
     // purpose-built `decompose` verb wires parent.blocked_by + parent.state
@@ -704,8 +715,30 @@ switch (cmd) {
       sets.push("project=?");
       vals.push(projectFlag);
     }
+    // Read the old body before the write so the event can carry before/after.
+    let bodyBefore: string | null = null;
+    let bodyAfter: string | null = null;
+    if (bodyFlag !== undefined || appendBody !== undefined) {
+      bodyBefore = db
+        .query<{ body_md: string | null }, [string]>("SELECT body_md FROM issues WHERE id=?")
+        .get(id)!.body_md ?? "";
+      bodyAfter = bodyFlag !== undefined ? bodyFlag : `${bodyBefore}\n\n${appendBody}`;
+      sets.push("body_md=?");
+      vals.push(bodyAfter);
+    }
     vals.push(id);
     db.run(`UPDATE issues SET ${sets.join(", ")} WHERE id=?`, vals);
+    if (bodyAfter !== null) {
+      db.run(
+        `INSERT INTO issue_events (issue_id, kind, agent, payload_md) VALUES (?, ?, ?, ?)`,
+        [
+          id,
+          "note",
+          getFlag("agent") ?? "cli",
+          `body_md ${bodyFlag !== undefined ? "replaced" : "appended"}\n\n--- before ---\n${bodyBefore}\n\n--- after ---\n${bodyAfter}`,
+        ],
+      );
+    }
     if (state) {
       // [no-diff] prefix lets stats/sweeper heuristics (claim-stale-sweeper
       // cooldown, hygiene dashboards) distinguish a correct negative result
@@ -2080,7 +2113,7 @@ function printHelp(): void {
   repoint-blocked-by <id> <blockerId...>
                                        repoint an existing blocked row's blocked_by to
                                        different sibling id(s); row must be state=blocked
-  update <id> [--state --evidence --pr --local-merged-sha --in-place --no-diff --branch --worktree --hitl 0|1 --agent --project --pool --tier]
+  update <id> [--state --evidence --pr --local-merged-sha --in-place --no-diff --branch --worktree --hitl 0|1 --agent --project --pool --tier --body --append-body]
                                        state=merged requires one of:
                                          --pr <url-or-#num>        gh pr view must say MERGED
                                          --local-merged-sha <sha>  sha must be on origin/main
