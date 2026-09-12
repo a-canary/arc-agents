@@ -4,7 +4,7 @@
 import { test, expect } from "bun:test";
 import { Database } from "bun:sqlite";
 import { migrate } from "./migrate";
-import { reapWorktrees } from "./worktree-reaper";
+import { reapWorktrees, HYGIENE_GRACE_SEC } from "./worktree-reaper";
 
 function fresh(): Database {
   const db = new Database(":memory:");
@@ -117,4 +117,34 @@ test("reapWorktrees reaps cancelled rows regardless of hygiene_complete", () => 
   const reaped = reapWorktrees(db);
   const ids = reaped.map((r) => r.issue_id);
   expect(ids).toContain("t-cancelled");
+});
+
+// ── Grace expiry: the gate is a window, not an indefinite hold ───────────────
+// hooks/stop.sh does not enforce the hygiene phase, so a worker can mark merged
+// and exit leaving hygiene_complete=0 forever. Measured 2026-09-12: 32 merged
+// rows stuck at 0, all still holding a worktree. Past HYGIENE_GRACE_SEC the
+// session is gone and the worktree must be reaped anyway.
+
+test("reapWorktrees reaps merged hygiene_complete=0 rows older than the grace period", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, hygiene_complete, updated_at)
+     VALUES ('t-stale','p','t','b','mvp','merged','task','/tmp/nonexistent', 0,
+             strftime('%s','now') - ?)`,
+    [HYGIENE_GRACE_SEC + 60],
+  );
+  const ids = reapWorktrees(db).map((r) => r.issue_id);
+  expect(ids).toContain("t-stale");
+});
+
+test("reapWorktrees still holds merged hygiene_complete=0 rows inside the grace period", () => {
+  const db = fresh();
+  db.run(
+    `INSERT INTO issues (id, project, title, body_md, type, state, kind, worktree_path, hygiene_complete, updated_at)
+     VALUES ('t-fresh','p','t','b','mvp','merged','task','/tmp/nonexistent', 0,
+             strftime('%s','now') - ?)`,
+    [HYGIENE_GRACE_SEC - 60],
+  );
+  const ids = reapWorktrees(db).map((r) => r.issue_id);
+  expect(ids).not.toContain("t-fresh");
 });

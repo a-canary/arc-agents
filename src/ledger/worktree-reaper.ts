@@ -40,6 +40,13 @@
 import { spawnSync } from "node:child_process";
 import { existsSync, readdirSync, statSync } from "node:fs";
 import { join } from "node:path";
+
+// How long a merged row may hold its worktree waiting on a hygiene phase that
+// may never come. hooks/stop.sh does not enforce the phase, so the flag is only
+// ever flipped by a worker that volunteers. 30min outlives any real worker
+// session; past it the session is gone and the worktree is pure leak.
+// ponytail: fixed grace, make it configurable if sessions ever run longer.
+export const HYGIENE_GRACE_SEC = 30 * 60;
 // eslint-disable-next-line @typescript-eslint/no-explicit-any
 type Db = any;
 
@@ -181,13 +188,23 @@ export function reapWorktrees(db: Db): ReapedWorktree[] {
   // finish before the worktree is reaped so workers can still emit hygiene
   // followups in the same session. Failed/cancelled rows have no hygiene phase
   // and are reaped unconditionally.
+  //
+  // The gate protects a SESSION-LIFETIME window, so it expires. hooks/stop.sh
+  // passes through as soon as the row is terminal and calls the hygiene phase
+  // "not enforced", so a worker can mark merged and exit without ever flipping
+  // the flag — measured 2026-09-12: 32 merged rows stuck at hygiene_complete=0,
+  // all still holding a worktree, oldest 3 days old, `merged` the last event on
+  // every one. Without an expiry those worktrees leak forever, and the disk-scan
+  // backstop skips them because a live row still names the path. After
+  // HYGIENE_GRACE_SEC past updated_at the session is provably gone, so reap.
   const rows = db
     .query(
       `SELECT id, state, worktree_path, branch FROM issues
        WHERE state IN ('merged','failed','cancelled') AND worktree_path IS NOT NULL
-         AND (state != 'merged' OR hygiene_complete = 1)`,
+         AND (state != 'merged' OR hygiene_complete = 1
+              OR updated_at <= strftime('%s','now') - ?)`,
     )
-    .all() as { id: string; state: string; worktree_path: string; branch: string | null }[];
+    .all(HYGIENE_GRACE_SEC) as { id: string; state: string; worktree_path: string; branch: string | null }[];
 
   const reaped: ReapedWorktree[] = [];
   for (const row of rows) {
