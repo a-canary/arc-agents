@@ -1386,6 +1386,26 @@ export const migrations: Migration[] = [
       );
     },
   },
+  {
+    id: "030_hitl_backfill_open_rows",
+    // The t08 door guard used to key on the type='HITL' label; it now keys on
+    // hitl=1 (the real human-decision marker). hitl=1 has only been derived at
+    // insert since 9554a44 (#525), so rows filed before that sit at hitl=0 and
+    // would silently lose their guard under the rescope — including genuine
+    // gates like "visit the Tailscale admin console and enable Funnel" or
+    // "generate a Cloudflare tunnel API token", which no agent can action.
+    //
+    // Backfill the marker onto the open ones only. Terminal rows (merged /
+    // cancelled / failed) are deliberately excluded: 85 type=HITL rows have
+    // legitimately merged as routine triaged work, and re-marking settled
+    // history would neither protect anything nor stay true to what those rows
+    // were. Idempotent — reruns match nothing once the marker is set.
+    up: (db) => {
+      db.exec(`UPDATE issues SET hitl=1
+               WHERE type='HITL' AND hitl=0
+                 AND state NOT IN ('merged','cancelled','failed')`);
+    },
+  },
 ];
 
 export function migrateUpTo(db: Database, stopAfterId: string): string[] {
