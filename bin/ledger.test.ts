@@ -2732,17 +2732,62 @@ for (const s of ["claimed", "wip", "merged"]) {
 
 // The guard keys on hitl=1, not the type='HITL' label: routine triage rows
 // carrying that label at hitl=0 are the project's normal completion path
-// (85 such rows merged live before this was scoped down).
-test("update lets an agent close a type=HITL row whose hitl=0", async () => {
+// (85 such rows merged live before this was scoped down). Build the row at
+// hitl=0 directly — downgrading a hitl=1 row is itself guarded (below).
+test("update lets an agent close a triage row whose hitl=0", async () => {
   const { db, cleanup } = freshDb();
   try {
     const id = await hitlRow(db);
-    await run(db, "update", id, "--hitl", "0");
+    await run(db, "update", id, "--hitl", "0"); // default actor is cli, a human
     for (const s of ["claimed", "wip"]) {
       const r = await runRawNoDb("update", id, "--state", s, "--agent", "arc-worker-test", "--db", db);
       expect(r.stderr.toString()).not.toContain("refuse --state");
       expect(r.exitCode).toBe(0);
     }
+  } finally { cleanup(); }
+});
+
+// Without this, the door guard is a four-command bypass: an agent strips the
+// marker with `--hitl 0`, then walks the row claimed → wip → merged.
+test("update refuses a non-human actor clearing hitl=1", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = await hitlRow(db);
+    const r = await runRawNoDb("update", id, "--hitl", "0", "--agent", "arc-worker-test", "--db", db);
+    expect(r.exitCode).not.toBe(0);
+    expect(r.stderr.toString()).toContain("refuse --hitl 0");
+    // marker survived, so the door guard still bites
+    const after = (await run(db, "show", id)) as { issue: { hitl: number } };
+    expect(after.issue.hitl).toBe(1);
+    const walk = await runRawNoDb("update", id, "--state", "claimed", "--agent", "arc-worker-test", "--db", db);
+    expect(walk.exitCode).not.toBe(0);
+  } finally { cleanup(); }
+});
+
+test("update lets a human actor clear hitl=1, and anyone raise it", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = await hitlRow(db);
+    const down = await run(db, "update", id, "--hitl", "0");
+    expect((down as { updated?: boolean }).updated).toBe(true);
+    // raising is open to anyone — escalating a row to a gate is always allowed
+    const up = await run(db, "update", id, "--hitl", "1");
+    expect((up as { updated?: boolean }).updated).toBe(true);
+  } finally { cleanup(); }
+});
+
+// With no --state, --agent writes the agent column. Actor names reachable from
+// the HITL guards' escape hatch ('captain') are not agent-enum values, so this
+// used to surface as a raw SQLiteError CHECK failure.
+test("update rejects an out-of-enum agent column write readably", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = await hitlRow(db);
+    const r = await runRawNoDb("update", id, "--hitl", "0", "--agent", "captain", "--db", db);
+    expect(r.exitCode).not.toBe(0);
+    const err = r.stderr.toString();
+    expect(err).toContain("invalid agent 'captain'");
+    expect(err).not.toContain("SQLiteError");
   } finally { cleanup(); }
 });
 
