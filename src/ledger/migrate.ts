@@ -1399,7 +1399,14 @@ export const migrations: Migration[] = [
     // cancelled / failed) are deliberately excluded: 85 type=HITL rows have
     // legitimately merged as routine triaged work, and re-marking settled
     // history would neither protect anything nor stay true to what those rows
-    // were. Idempotent — reruns match nothing once the marker is set.
+    // were. Idempotent — reruns match nothing once the marker is set, so a
+    // row a human later clears back to hitl=0 stays cleared.
+    //
+    // On ~/vault/ledger.db as of 2026-09-13 this matches ZERO rows: every
+    // open gate is already hitl=1 and every hitl=0 type=HITL row is terminal.
+    // It is kept for the other ledgers (dev copies, fresh replays) that can
+    // still hold open pre-#525 rows — it closes the gap by construction
+    // rather than by luck of when the canonical DB happened to be inspected.
     up: (db) => {
       db.exec(`UPDATE issues SET hitl=1
                WHERE type='HITL' AND hitl=0
