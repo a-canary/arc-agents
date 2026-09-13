@@ -573,8 +573,8 @@ switch (cmd) {
     }
 
     if (state) {
-      const cur = db.query<{ state: string; pr_url: string | null; type: string }, [string]>(
-        "SELECT state, pr_url, type FROM issues WHERE id=?",
+      const cur = db.query<{ state: string; pr_url: string | null; type: string; hitl: number }, [string]>(
+        "SELECT state, pr_url, type, hitl FROM issues WHERE id=?",
       ).get(id);
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
@@ -585,10 +585,18 @@ switch (cmd) {
       // reached mainline. Execution-implying transitions need a declared
       // human actor. Advisory (spoofable --agent); the kernel wall is
       // per-uid ledgers (privacy policy v2 / T09).
+      //
+      // Scoped to hitl=1, NOT type='HITL'. type=HITL is a routine triage
+      // label — 85 type=HITL rows with hitl=0 have legitimately merged via
+      // agent bookie — so guarding the label blocked the normal completion
+      // path and pushed workers toward spoofing --agent. hitl=1 is the real
+      // human-decision marker: set explicitly, or derived at insert from
+      // type=HITL since #525. Selection SQL (src/ledger/claim.ts) still
+      // screens on both, so no agent picks up either flavour on its own.
       const EXEC_STATES = new Set(["claimed", "wip", "merged"]);
       const HUMAN_ACTORS = new Set(["cli", "human", "captain", "director", "aaron"]);
-      if (cur.type === "HITL" && EXEC_STATES.has(state) && !HUMAN_ACTORS.has(getFlag("agent") ?? "cli")) {
-        die(`refuse --state ${state} on type=HITL row ${id}: human-decision rows are captain-facing (actor '${getFlag("agent") ?? "cli"}' is not a human actor). Resolve via a human actor or move the work into a child task.`);
+      if (cur.hitl === 1 && EXEC_STATES.has(state) && !HUMAN_ACTORS.has(getFlag("agent") ?? "cli")) {
+        die(`refuse --state ${state} on hitl=1 row ${id}: human-decision rows are captain-facing (actor '${getFlag("agent") ?? "cli"}' is not a human actor). Resolve via a human actor or move the work into a child task.`);
       }
       // Fetch the row's project once when we're headed toward state=merged
       // — used by both the merge-guard (checkMergeGuard) and the runner

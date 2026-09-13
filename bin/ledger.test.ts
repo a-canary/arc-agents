@@ -2719,7 +2719,7 @@ async function hitlRow(db: string): Promise<string> {
 }
 
 for (const s of ["claimed", "wip", "merged"]) {
-  test(`update refuses worker --state ${s} on type=HITL rows`, async () => {
+  test(`update refuses worker --state ${s} on hitl=1 rows`, async () => {
     const { db, cleanup } = freshDb();
     try {
       const id = await hitlRow(db);
@@ -2729,6 +2729,22 @@ for (const s of ["claimed", "wip", "merged"]) {
     } finally { cleanup(); }
   });
 }
+
+// The guard keys on hitl=1, not the type='HITL' label: routine triage rows
+// carrying that label at hitl=0 are the project's normal completion path
+// (85 such rows merged live before this was scoped down).
+test("update lets an agent close a type=HITL row whose hitl=0", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = await hitlRow(db);
+    await run(db, "update", id, "--hitl", "0");
+    for (const s of ["claimed", "wip"]) {
+      const r = await runRawNoDb("update", id, "--state", s, "--agent", "arc-worker-test", "--db", db);
+      expect(r.stderr.toString()).not.toContain("refuse --state");
+      expect(r.exitCode).toBe(0);
+    }
+  } finally { cleanup(); }
+});
 
 test("non-exec worker transition and human-actor claim on type=HITL stay open", async () => {
   const { db, cleanup } = freshDb();
