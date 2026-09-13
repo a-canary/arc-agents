@@ -3,6 +3,7 @@ import { classifyWorktree, suggestedCommand, type WorktreeAction, type WorktreeF
 
 const base: WorktreeFacts = {
   prunable: false,
+  isMain: false,
   dirtyFiles: 0,
   unpushedCommits: 0,
   lastCommitAgeDays: 1,
@@ -51,6 +52,25 @@ const cases: Array<{ name: string; facts: WorktreeFacts; want: WorktreeAction | 
     want: null,
   },
   { name: "fully clean, no row → null (healthy)", facts: { ...base }, want: null },
+  // Ticket 000128: the main worktree of a quiet repo was classified "cleanup"
+  // with `git worktree remove --force <repo>` as the suggested command. git
+  // refuses that, and an operator who forces it destroys the object store the
+  // linked worktrees share. isMain must veto cleanup regardless of age.
+  {
+    name: "main worktree, old + terminal row → null, never cleanup",
+    facts: { ...base, isMain: true, lastCommitAgeDays: 32, worktreeAgeDays: 32, linkedRowState: "terminal" },
+    want: null,
+  },
+  {
+    name: "main worktree, prunable flag → still never cleanup",
+    facts: { ...base, isMain: true, prunable: true },
+    want: null,
+  },
+  {
+    name: "main worktree with residue → review (surfaced, but a human call)",
+    facts: { ...base, isMain: true, dirtyFiles: 4, lastCommitAgeDays: 99, worktreeAgeDays: 99 },
+    want: "review",
+  },
 ];
 
 describe("classifyWorktree", () => {
