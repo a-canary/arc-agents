@@ -2738,7 +2738,9 @@ test("update lets an agent close a triage row whose hitl=0", async () => {
   const { db, cleanup } = freshDb();
   try {
     const id = await hitlRow(db);
-    await run(db, "update", id, "--hitl", "0"); // default actor is cli, a human
+    // non-TTY, so a human actor must be named explicitly; 'director' is both
+    // an agent-enum value and a declared human actor
+    await run(db, "update", id, "--hitl", "0", "--agent-set", "director");
     for (const s of ["claimed", "wip"]) {
       const r = await runRawNoDb("update", id, "--state", s, "--agent", "arc-worker-test", "--db", db);
       expect(r.stderr.toString()).not.toContain("refuse --state");
@@ -2768,11 +2770,33 @@ test("update lets a human actor clear hitl=1, and anyone raise it", async () => 
   const { db, cleanup } = freshDb();
   try {
     const id = await hitlRow(db);
-    const down = await run(db, "update", id, "--hitl", "0");
+    const down = await run(db, "update", id, "--hitl", "0", "--agent-set", "director");
     expect((down as { updated?: boolean }).updated).toBe(true);
     // raising is open to anyone — escalating a row to a gate is always allowed
-    const up = await run(db, "update", id, "--hitl", "1");
+    const up = await run(db, "update", id, "--hitl", "1", "--agent-set", "developer");
     expect((up as { updated?: boolean }).updated).toBe(true);
+  } finally { cleanup(); }
+});
+
+// The cheapest bypass used to be *omitting* --agent, not spoofing it: a
+// missing actor defaulted to "cli", itself a human actor. That is the default
+// shape of an AFK worker invocation, so the guard was near-free to walk past.
+// Unattended (no TTY) writes now resolve to a non-human sentinel.
+test("update refuses an unattended walk to merged when --agent is omitted", async () => {
+  const { db, cleanup } = freshDb();
+  try {
+    const id = await hitlRow(db);
+    for (const st of ["wip", "merged"]) {
+      const r = await runRawNoDb("update", id, "--state", st, "--db", db);
+      expect(r.exitCode).not.toBe(0);
+      expect(r.stderr.toString()).toContain("refuse --state");
+    }
+    const after = (await run(db, "show", id)) as { issue: { state: string } };
+    expect(after.issue.state).not.toBe("merged");
+    // same for silently clearing the marker with no actor named
+    const d = await runRawNoDb("update", id, "--hitl", "0", "--db", db);
+    expect(d.exitCode).not.toBe(0);
+    expect(d.stderr.toString()).toContain("refuse --hitl 0");
   } finally { cleanup(); }
 });
 

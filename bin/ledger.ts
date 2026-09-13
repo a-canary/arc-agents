@@ -34,6 +34,17 @@ import { realpathSync } from "node:fs";
 // ledgers (privacy policy v2 / T09).
 const HUMAN_ACTORS = new Set(["cli", "human", "captain", "director", "aaron"]);
 
+// Resolve the acting identity for the HITL guards. A missing --agent used to
+// default to "cli", which is itself a human actor — so the cheapest way past
+// the guard was to *omit* a flag rather than spoof one, and omitting --agent
+// is the default shape of an AFK worker invocation. Fall back to "cli" only
+// when stdin is a real TTY (a human at a terminal); otherwise attribute the
+// write to a non-human sentinel so the guard bites. Still advisory — the
+// kernel wall is per-uid ledgers (privacy policy v2 / T09).
+function actingIdentity(): string {
+  return getFlag("agent-set") ?? getFlag("agent") ?? (process.stdin.isTTY ? "cli" : "unattended");
+}
+
 const KNOWN_HYGIENE_SKILLS = [
   "clarify-docs",
   "improve-architecture",
@@ -599,8 +610,8 @@ switch (cmd) {
       // type=HITL since #525. Selection SQL (src/ledger/claim.ts) still
       // screens on both, so no agent picks up either flavour on its own.
       const EXEC_STATES = new Set(["claimed", "wip", "merged"]);
-      if (cur.hitl === 1 && EXEC_STATES.has(state) && !HUMAN_ACTORS.has(getFlag("agent") ?? "cli")) {
-        die(`refuse --state ${state} on hitl=1 row ${id}: human-decision rows are captain-facing (actor '${getFlag("agent") ?? "cli"}' is not a human actor). Resolve via a human actor or move the work into a child task.`);
+      if (cur.hitl === 1 && EXEC_STATES.has(state) && !HUMAN_ACTORS.has(actingIdentity())) {
+        die(`refuse --state ${state} on hitl=1 row ${id}: human-decision rows are captain-facing (actor '${actingIdentity()}' is not a human actor). Resolve via a human actor or move the work into a child task.`);
       }
       // Fetch the row's project once when we're headed toward state=merged
       // — used by both the merge-guard (checkMergeGuard) and the runner
@@ -727,7 +738,7 @@ switch (cmd) {
         const curHitl = db
           .query<{ hitl: number }, [string]>("SELECT hitl FROM issues WHERE id=?")
           .get(id)?.hitl;
-        const actor = getFlag("agent-set") ?? getFlag("agent") ?? "cli";
+        const actor = actingIdentity();
         if (curHitl === 1 && !HUMAN_ACTORS.has(actor)) {
           die(`refuse --hitl 0 on row ${id}: clearing the human-decision marker is itself a human decision (actor '${actor}' is not a human actor).`);
         }
