@@ -29,6 +29,22 @@ import { brief as directorBrief, type GitLogEntry } from "../src/director/direct
 import { dirname, join } from "node:path";
 import { realpathSync } from "node:fs";
 
+// Declared human actors for the HITL guards (door guard + --hitl 0
+// downgrade). Advisory — --agent is spoofable; the kernel wall is per-uid
+// ledgers (privacy policy v2 / T09).
+const HUMAN_ACTORS = new Set(["cli", "human", "captain", "director", "aaron"]);
+
+// Resolve the acting identity for the HITL guards. A missing --agent used to
+// default to "cli", which is itself a human actor — so the cheapest way past
+// the guard was to *omit* a flag rather than spoof one, and omitting --agent
+// is the default shape of an AFK worker invocation. Fall back to "cli" only
+// when stdin is a real TTY (a human at a terminal); otherwise attribute the
+// write to a non-human sentinel so the guard bites. Still advisory — the
+// kernel wall is per-uid ledgers (privacy policy v2 / T09).
+function actingIdentity(): string {
+  return getFlag("agent-set") ?? getFlag("agent") ?? (process.stdin.isTTY ? "cli" : "unattended");
+}
+
 const KNOWN_HYGIENE_SKILLS = [
   "clarify-docs",
   "improve-architecture",
@@ -573,8 +589,8 @@ switch (cmd) {
     }
 
     if (state) {
-      const cur = db.query<{ state: string; pr_url: string | null; type: string }, [string]>(
-        "SELECT state, pr_url, type FROM issues WHERE id=?",
+      const cur = db.query<{ state: string; pr_url: string | null; type: string; hitl: number }, [string]>(
+        "SELECT state, pr_url, type, hitl FROM issues WHERE id=?",
       ).get(id);
       if (!cur) die(`no such issue: ${id}`);
       const errs = validateStateTransition(cur.state as never, state as never);
@@ -585,10 +601,17 @@ switch (cmd) {
       // reached mainline. Execution-implying transitions need a declared
       // human actor. Advisory (spoofable --agent); the kernel wall is
       // per-uid ledgers (privacy policy v2 / T09).
+      //
+      // Scoped to hitl=1, NOT type='HITL'. type=HITL is a routine triage
+      // label — 85 type=HITL rows with hitl=0 have legitimately merged via
+      // agent bookie — so guarding the label blocked the normal completion
+      // path and pushed workers toward spoofing --agent. hitl=1 is the real
+      // human-decision marker: set explicitly, or derived at insert from
+      // type=HITL since #525. Selection SQL (src/ledger/claim.ts) still
+      // screens on both, so no agent picks up either flavour on its own.
       const EXEC_STATES = new Set(["claimed", "wip", "merged"]);
-      const HUMAN_ACTORS = new Set(["cli", "human", "captain", "director", "aaron"]);
-      if (cur.type === "HITL" && EXEC_STATES.has(state) && !HUMAN_ACTORS.has(getFlag("agent") ?? "cli")) {
-        die(`refuse --state ${state} on type=HITL row ${id}: human-decision rows are captain-facing (actor '${getFlag("agent") ?? "cli"}' is not a human actor). Resolve via a human actor or move the work into a child task.`);
+      if (cur.hitl === 1 && EXEC_STATES.has(state) && !HUMAN_ACTORS.has(actingIdentity())) {
+        die(`refuse --state ${state} on hitl=1 row ${id}: human-decision rows are captain-facing (actor '${actingIdentity()}' is not a human actor). Resolve via a human actor or move the work into a child task.`);
       }
       // Fetch the row's project once when we're headed toward state=merged
       // — used by both the merge-guard (checkMergeGuard) and the runner
@@ -706,11 +729,34 @@ switch (cmd) {
     }
     if (hitl !== undefined) {
       if (hitl !== "0" && hitl !== "1") die("--hitl must be 0 or 1");
+      // Downgrade guard: the door guard below keys on hitl=1, so an
+      // unguarded `--hitl 0` would be a four-command bypass (strip the
+      // marker, then walk the row to merged). Clearing the marker is itself
+      // a human decision and needs the same declared human actor. Raising
+      // it (--hitl 1) stays open — anyone may escalate a row to a gate.
+      if (hitl === "0") {
+        const curHitl = db
+          .query<{ hitl: number }, [string]>("SELECT hitl FROM issues WHERE id=?")
+          .get(id)?.hitl;
+        const actor = actingIdentity();
+        if (curHitl === 1 && !HUMAN_ACTORS.has(actor)) {
+          die(`refuse --hitl 0 on row ${id}: clearing the human-decision marker is itself a human decision (actor '${actor}' is not a human actor).`);
+        }
+      }
       sets.push("hitl=?");
       vals.push(Number(hitl));
     }
     const agentFlag = getFlag("agent-set") ?? (state ? undefined : getFlag("agent"));
     if (agentFlag !== undefined) {
+      // Without --state, a bare --agent is reinterpreted as an agent-column
+      // write, so an actor name ('captain', 'cli') that is fine as an actor
+      // hits the column CHECK and surfaces as a raw SQLiteError. That path is
+      // reachable from the HITL guards' own escape hatch
+      // (`update <id> --hitl 0 --agent captain`), so fail it as a readable
+      // error instead of a stack trace.
+      if (!AGENT_VALUES.includes(agentFlag as Agent)) {
+        die(`invalid agent '${agentFlag}' — must be one of: ${AGENT_VALUES.join(", ")}. (With no --state, --agent sets the row's agent column; use --agent-set to be explicit.)`);
+      }
       sets.push("agent=?");
       vals.push(agentFlag);
     }

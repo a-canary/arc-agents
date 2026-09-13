@@ -546,6 +546,32 @@ test("017 column-resilience: extra product column survives", () => {
 
 // ── Change 4: 026_event_kind_operator_landed CHECK expansion ────────────────
 
+test("030 backfills hitl=1 on open type=HITL rows, leaving terminal ones alone", () => {
+  const db = new Database(":memory:");
+  migrateUpTo(db, "029_blog_pr_url");
+  const seed = (id: string, state: string) =>
+    db.run(
+      `INSERT INTO issues (id, project, title, body_md, type, state, kind, hitl)
+       VALUES (?,'p','t','b','HITL',?,'task',0)`,
+      [id, state],
+    );
+  seed("h-blocked", "blocked");   // pre-#525 human gate, the row this protects
+  seed("h-review", "review");
+  seed("h-merged", "merged");     // routine triaged work that already closed
+  seed("h-cancelled", "cancelled");
+  db.run(`INSERT INTO issues (id, project, title, body_md, type, state, kind, hitl)
+          VALUES ('n-open','p','t','b','mvp','blocked','task',0)`);
+  migrate(db);
+
+  const hitl = (id: string) =>
+    db.query<{ hitl: number }, [string]>("SELECT hitl FROM issues WHERE id=?").get(id)!.hitl;
+  expect(hitl("h-blocked")).toBe(1);
+  expect(hitl("h-review")).toBe(1);
+  expect(hitl("h-merged")).toBe(0);    // settled history stays as it was
+  expect(hitl("h-cancelled")).toBe(0);
+  expect(hitl("n-open")).toBe(0);      // non-HITL untouched
+});
+
 test("026 accepts operator_landed; CHECK still rejects unknown kinds", () => {
   const db = fresh();
   db.run(`INSERT INTO issues (id, project, title, body_md, type, state, kind)
