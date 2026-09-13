@@ -332,6 +332,7 @@ export function runWorktreeHygiene(opts: {
         const linked = linkedRowState(opts.db, entry.path, entry.branch);
         const verdict = classifyWorktree({
           prunable: entry.prunable,
+          isMain: entry.isMain,
           dirtyFiles: facts.dirtyFiles,
           unpushedCommits: facts.unpushedCommits,
           lastCommitAgeDays: facts.lastCommitAgeDays,

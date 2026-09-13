@@ -11,6 +11,9 @@
 
 export type WorktreeFacts = {
   prunable: boolean;
+  // The repo's own checkout (first `git worktree list` entry), not a linked
+  // worktree. It owns the shared object store, so it is never removable.
+  isMain: boolean;
   dirtyFiles: number;
   unpushedCommits: number;
   lastCommitAgeDays: number;
@@ -35,6 +38,20 @@ export type WorktreeVerdict = {
 };
 
 export function classifyWorktree(f: WorktreeFacts): WorktreeVerdict | null {
+  // The main worktree hosts the object store every linked worktree shares.
+  // `git worktree remove` refuses it outright, so a cleanup verdict here is
+  // always un-actionable noise at best — and an operator who works around the
+  // refusal destroys the repo and every linked worktree with it. Residue is
+  // still worth surfacing, but only ever as a human call.
+  if (f.isMain) {
+    if (f.dirtyFiles > 0 || f.unpushedCommits > 0) {
+      return {
+        action: "review",
+        reason: "main worktree with residue (dirty or unpushed) — never removable, human call",
+      };
+    }
+    return null;
+  }
   if (f.prunable) {
     return { action: "cleanup", reason: "prunable: worktree dir missing/invalid (git worktree prune candidate)" };
   }
